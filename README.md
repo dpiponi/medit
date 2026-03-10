@@ -81,7 +81,7 @@ colors = forest.json
 - `t<char>` move up to the next matching character on the line
 - `T<char>` move backward up to the previous matching character on the line
 - `n` jump to the next search match
-- `p` jump to the previous search match
+- `b` jump to the previous search match
 - `PageUp`, `PageDown` move by a screen
 - `Ctrl-U`, `Ctrl-D` move by a half screen
 - Left mouse click moves the cursor to the clicked buffer position
@@ -89,7 +89,7 @@ colors = forest.json
 - `G` jump to the bottom of the file
 - `0`, `$` move to line start/end
 - `x` delete character under cursor
-- `gp` paste after the cursor
+- `p` paste after the cursor
 - `P` paste before the cursor
 - `dd` delete current line
 - In visual mode, `d` deletes the selection

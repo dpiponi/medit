@@ -482,17 +482,15 @@ void test_keybinding_dispatch() {
         search.action.has_value() && *search.action == EditorAction::EnterSearchMode,
         "/ should map to search mode");
 
-    KeyDispatch search_prev = dispatch_key_sequence(keybindings, "normal", pending, "p", false);
+    KeyDispatch search_prev = dispatch_key_sequence(keybindings, "normal", pending, "b", false);
     expect(
         search_prev.action.has_value() && *search_prev.action == EditorAction::SearchPrevious,
-        "p should map to previous search result");
+        "b should map to previous search result");
 
-    KeyDispatch paste_prefix = dispatch_key_sequence(keybindings, "normal", pending, "g", false);
-    expect(paste_prefix.matched && paste_prefix.waiting_for_more, "g should wait for gp as well as gg");
     KeyDispatch paste_after = dispatch_key_sequence(keybindings, "normal", pending, "p", false);
     expect(
         paste_after.action.has_value() && *paste_after.action == EditorAction::PasteAfter,
-        "gp should map to paste after");
+        "p should map to paste after");
 
     KeyDispatch inner_first = dispatch_key_sequence(keybindings, "visual", pending, "i", false);
     expect(inner_first.matched && inner_first.waiting_for_more, "visual i should wait for iw");
