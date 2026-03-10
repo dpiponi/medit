@@ -863,7 +863,9 @@ void handle_mouse_input(EditorState &state) {
     if (getmouse(&event) != OK) {
         return;
     }
-    if ((event.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED | BUTTON1_RELEASED)) == 0) {
+    mmask_t accepted =
+        BUTTON1_CLICKED | BUTTON1_DOUBLE_CLICKED | BUTTON1_TRIPLE_CLICKED | BUTTON1_PRESSED | BUTTON1_RELEASED;
+    if ((event.bstate & accepted) == 0) {
         return;
     }
 
