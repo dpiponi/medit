@@ -9,6 +9,7 @@
 #include <exception>
 #include <ncursesw/curses.h>
 #include <optional>
+#include <memory>
 #include <regex>
 #include <sstream>
 #include <string>
@@ -50,6 +51,9 @@ struct EditorState {
     std::optional<std::size_t> current_search_match_index;
     Position search_origin;
     bool search_pattern_valid = true;
+    std::string compiled_search_pattern_utf8;
+    std::unique_ptr<std::regex> compiled_search_regex;
+    std::size_t search_matches_version = 0;
 };
 
 std::wstring u32_to_wstring(const std::u32string &text) {
@@ -280,17 +284,6 @@ void execute_command(EditorState &state) {
     }
 }
 
-std::u32string buffer_text(const EditorState &state) {
-    std::u32string text;
-    for (std::size_t row = 0; row < state.core.line_count(); ++row) {
-        text += state.core.lines()[row];
-        if (row + 1 < state.core.line_count()) {
-            text.push_back(U'\n');
-        }
-    }
-    return text;
-}
-
 void set_search_status(EditorState &state, const std::string &suffix = "") {
     std::string prompt = "/" + u32_to_utf8(state.search_buffer);
     if (!suffix.empty()) {
@@ -299,54 +292,87 @@ void set_search_status(EditorState &state, const std::string &suffix = "") {
     set_status(state, prompt);
 }
 
-void refresh_search_matches(EditorState &state, bool move_to_best_match) {
+std::size_t column_for_utf8_offset_in_line(const std::u32string &line, std::size_t offset) {
+    std::size_t remaining = offset;
+    for (std::size_t column = 0; column < line.size(); ++column) {
+        std::size_t width = u32_to_utf8(std::u32string(1, line[column])).size();
+        if (remaining < width) {
+            return column;
+        }
+        remaining -= width;
+    }
+    return line.size();
+}
+
+void rebuild_search_matches(EditorState &state) {
     state.search_matches.clear();
     state.current_search_match_index.reset();
     state.search_pattern_valid = true;
+    state.search_matches_version = state.core.document_version();
 
     if (state.active_search_pattern.empty()) {
+        state.compiled_search_pattern_utf8.clear();
+        state.compiled_search_regex.reset();
         return;
     }
 
     try {
-        std::regex pattern(u32_to_utf8(state.active_search_pattern), std::regex::ECMAScript);
-        std::string text = u32_to_utf8(buffer_text(state));
-        Position anchor = move_to_best_match ? state.search_origin : state.core.cursor();
-        std::size_t origin_offset = state.core.utf8_offset_for_position(anchor);
-        std::size_t best_index = 0;
-        bool found_best = false;
+        state.compiled_search_pattern_utf8 = u32_to_utf8(state.active_search_pattern);
+        state.compiled_search_regex =
+            std::make_unique<std::regex>(state.compiled_search_pattern_utf8, std::regex::ECMAScript | std::regex::optimize);
 
-        for (std::sregex_iterator it(text.begin(), text.end(), pattern), end; it != end; ++it) {
-            if (it->length() == 0) {
-                continue;
-            }
-            std::size_t start_offset = static_cast<std::size_t>(it->position());
-            std::size_t end_offset = start_offset + static_cast<std::size_t>(it->length());
-            Range range{
-                state.core.position_for_utf8_offset(start_offset),
-                state.core.position_for_utf8_offset(end_offset),
-            };
-            state.search_matches.push_back(range);
-            if (!found_best && start_offset >= origin_offset) {
-                best_index = state.search_matches.size() - 1;
-                found_best = true;
-            }
-        }
-
-        if (!state.search_matches.empty()) {
-            state.current_search_match_index = found_best ? best_index : 0;
-            if (move_to_best_match) {
-                state.core.set_cursor(state.search_matches[*state.current_search_match_index].start);
+        for (std::size_t row = 0; row < state.core.line_count(); ++row) {
+            const std::u32string &line = state.core.lines()[row];
+            std::string line_utf8 = u32_to_utf8(line);
+            for (std::sregex_iterator it(line_utf8.begin(), line_utf8.end(), *state.compiled_search_regex), end; it != end; ++it) {
+                if (it->length() == 0) {
+                    continue;
+                }
+                std::size_t start_offset = static_cast<std::size_t>(it->position());
+                std::size_t end_offset = start_offset + static_cast<std::size_t>(it->length());
+                state.search_matches.push_back(
+                    {{row, column_for_utf8_offset_in_line(line, start_offset)},
+                     {row, column_for_utf8_offset_in_line(line, end_offset)}});
             }
         }
     } catch (const std::regex_error &) {
         state.search_pattern_valid = false;
+        state.compiled_search_regex.reset();
+    }
+}
+
+void refresh_search_matches(EditorState &state, bool move_to_best_match) {
+    if (state.search_matches_version != state.core.document_version() ||
+        state.compiled_search_pattern_utf8 != u32_to_utf8(state.active_search_pattern)) {
+        rebuild_search_matches(state);
+    }
+
+    if (!state.search_pattern_valid || state.search_matches.empty()) {
+        if (move_to_best_match) {
+            state.current_search_match_index.reset();
+        }
+        return;
+    }
+
+    Position anchor = move_to_best_match ? state.search_origin : state.core.cursor();
+    std::size_t best_index = 0;
+    bool found_best = false;
+    for (std::size_t index = 0; index < state.search_matches.size(); ++index) {
+        if (!position_less_than(state.search_matches[index].start, anchor)) {
+            best_index = index;
+            found_best = true;
+            break;
+        }
+    }
+    state.current_search_match_index = found_best ? best_index : 0;
+    if (move_to_best_match) {
+        state.core.set_cursor(state.search_matches[*state.current_search_match_index].start);
     }
 }
 
 void navigate_search_match(EditorState &state, bool forward) {
     if (state.search_matches.empty()) {
-        set_status(state, "No search matches");
+        set_status(state, state.search_pattern_valid ? "No search matches" : "invalid regex");
         return;
     }
 
