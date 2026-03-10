@@ -311,7 +311,8 @@ void refresh_search_matches(EditorState &state, bool move_to_best_match) {
     try {
         std::regex pattern(u32_to_utf8(state.active_search_pattern), std::regex::ECMAScript);
         std::string text = u32_to_utf8(buffer_text(state));
-        std::size_t origin_offset = state.core.utf8_offset_for_position(state.search_origin);
+        Position anchor = move_to_best_match ? state.search_origin : state.core.cursor();
+        std::size_t origin_offset = state.core.utf8_offset_for_position(anchor);
         std::size_t best_index = 0;
         bool found_best = false;
 
