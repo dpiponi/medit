@@ -100,8 +100,8 @@ void setup_terminal(const Theme &theme) {
     noecho();
     keypad(stdscr, TRUE);
     timeout(-1);
-    mouseinterval(0);
-    mousemask(ALL_MOUSE_EVENTS, nullptr);
+    mouseinterval(150);
+    mousemask(BUTTON1_CLICKED | BUTTON1_DOUBLE_CLICKED | BUTTON1_TRIPLE_CLICKED, nullptr);
     start_color();
     use_default_colors();
     for (int role_index = 0; role_index <= static_cast<int>(StyleRole::DiagnosticWarning); ++role_index) {
@@ -863,8 +863,7 @@ void handle_mouse_input(EditorState &state) {
     if (getmouse(&event) != OK) {
         return;
     }
-    mmask_t accepted =
-        BUTTON1_CLICKED | BUTTON1_DOUBLE_CLICKED | BUTTON1_TRIPLE_CLICKED | BUTTON1_PRESSED | BUTTON1_RELEASED;
+    mmask_t accepted = BUTTON1_CLICKED | BUTTON1_DOUBLE_CLICKED | BUTTON1_TRIPLE_CLICKED;
     if ((event.bstate & accepted) == 0) {
         return;
     }
