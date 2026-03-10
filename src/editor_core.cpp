@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cwctype>
 #include <fstream>
+#include <filesystem>
 #include <locale>
 #include <sstream>
 #include <utility>
@@ -15,6 +16,35 @@ namespace {
 std::wstring_convert<std::codecvt_utf8<char32_t>, char32_t> &utf8_converter() {
     static std::wstring_convert<std::codecvt_utf8<char32_t>, char32_t> converter;
     return converter;
+}
+
+std::uint64_t next_untitled_id() {
+    static std::uint64_t next_id = 1;
+    return next_id++;
+}
+
+std::string file_uri_for_path(const std::string &path) {
+    std::filesystem::path absolute = std::filesystem::absolute(path);
+    return "file://" + absolute.string();
+}
+
+std::u32string buffer_text(const std::vector<std::u32string> &lines) {
+    std::u32string text;
+    for (std::size_t row = 0; row < lines.size(); ++row) {
+        text += lines[row];
+        if (row + 1 < lines.size()) {
+            text.push_back(U'\n');
+        }
+    }
+    return text;
+}
+
+Range full_document_range(const std::vector<std::u32string> &lines) {
+    if (lines.empty()) {
+        return {{0, 0}, {0, 0}};
+    }
+    std::size_t last_row = lines.size() - 1;
+    return {{0, 0}, {last_row, lines[last_row].size()}};
 }
 
 struct InsertCodepointCommand : EditCommand {
@@ -336,6 +366,8 @@ Position EditorCommandAccess::position_after_text(
 
 EditorCore::EditorCore() {
     lines_.push_back(U"");
+    untitled_id_ = next_untitled_id();
+    document_uri_ = "untitled://medit/" + std::to_string(untitled_id_);
 }
 
 const std::vector<std::u32string> &EditorCore::lines() const {
@@ -348,6 +380,10 @@ const std::optional<std::string> &EditorCore::file_path() const {
 
 std::string EditorCore::display_file_name() const {
     return file_path_ ? *file_path_ : "[No Name]";
+}
+
+std::string EditorCore::document_uri() const {
+    return document_uri_;
 }
 
 Position EditorCore::cursor() const {
@@ -399,6 +435,16 @@ SelectionMode EditorCore::yank_mode() const {
     return yank_mode_;
 }
 
+const std::vector<EditorEvent> &EditorCore::pending_events() const {
+    return pending_events_;
+}
+
+std::vector<EditorEvent> EditorCore::take_events() {
+    std::vector<EditorEvent> events = std::move(pending_events_);
+    pending_events_.clear();
+    return events;
+}
+
 Range EditorCore::line_range(std::size_t row) const {
     return {{row, 0}, {row, line_length(row)}};
 }
@@ -432,9 +478,7 @@ bool EditorCore::is_dirty() const {
 }
 
 void EditorCore::set_cursor(Position position) {
-    cursor_ = position;
-    clamp_cursor();
-    update_preferred_column();
+    set_cursor_internal(position, true);
 }
 
 Position EditorCore::position_after_character(Position position) const {
@@ -488,11 +532,63 @@ Position EditorCore::clamped_position(Position position) const {
     return position;
 }
 
+void EditorCore::emit_event(EditorEvent event) {
+    pending_events_.push_back(std::move(event));
+}
+
+void EditorCore::emit_document_closed(const std::string &document_uri, std::size_t document_version) {
+    emit_event({EditorEventType::DocumentClosed, document_uri, document_version, cursor_, std::nullopt, U""});
+}
+
+void EditorCore::emit_document_opened() {
+    emit_event({
+        EditorEventType::DocumentOpened,
+        document_uri_,
+        document_version_,
+        cursor_,
+        full_document_range(lines_),
+        buffer_text(lines_),
+    });
+}
+
+void EditorCore::emit_document_saved() {
+    emit_event({EditorEventType::DocumentSaved, document_uri_, document_version_, cursor_, std::nullopt, U""});
+}
+
+void EditorCore::emit_document_changed(const std::vector<std::u32string> &before_lines) {
+    emit_event({
+        EditorEventType::DocumentChanged,
+        document_uri_,
+        document_version_,
+        cursor_,
+        full_document_range(before_lines),
+        buffer_text(lines_),
+    });
+}
+
+void EditorCore::emit_cursor_moved(Position previous_cursor) {
+    if (suppress_cursor_events_ || positions_equal(previous_cursor, cursor_)) {
+        return;
+    }
+    emit_event({EditorEventType::CursorMoved, document_uri_, document_version_, cursor_, std::nullopt, U""});
+}
+
+void EditorCore::set_cursor_internal(Position position, bool emit_cursor_event) {
+    Position previous_cursor = cursor_;
+    cursor_ = position;
+    clamp_cursor();
+    update_preferred_column();
+    if (emit_cursor_event) {
+        emit_cursor_moved(previous_cursor);
+    }
+}
+
 void EditorCore::update_preferred_column() {
     preferred_column_ = cursor_.column;
 }
 
 void EditorCore::move_left() {
+    Position previous_cursor = cursor_;
     if (cursor_.column > 0) {
         --cursor_.column;
     } else if (cursor_.row > 0) {
@@ -500,9 +596,11 @@ void EditorCore::move_left() {
         cursor_.column = line_length(cursor_.row);
     }
     update_preferred_column();
+    emit_cursor_moved(previous_cursor);
 }
 
 void EditorCore::move_right() {
+    Position previous_cursor = cursor_;
     std::size_t max_column = line_length(cursor_.row);
     if (cursor_.column < max_column) {
         ++cursor_.column;
@@ -511,9 +609,11 @@ void EditorCore::move_right() {
         cursor_.column = 0;
     }
     update_preferred_column();
+    emit_cursor_moved(previous_cursor);
 }
 
 void EditorCore::move_up() {
+    Position previous_cursor = cursor_;
     if (cursor_.row > 0) {
         --cursor_.row;
         clamp_cursor();
@@ -521,9 +621,11 @@ void EditorCore::move_up() {
             cursor_.column = preferred_column_;
         }
     }
+    emit_cursor_moved(previous_cursor);
 }
 
 void EditorCore::move_down() {
+    Position previous_cursor = cursor_;
     if (cursor_.row + 1 < lines_.size()) {
         ++cursor_.row;
         clamp_cursor();
@@ -531,9 +633,11 @@ void EditorCore::move_down() {
             cursor_.column = preferred_column_;
         }
     }
+    emit_cursor_moved(previous_cursor);
 }
 
 void EditorCore::move_by_lines(int delta) {
+    Position previous_cursor = cursor_;
     if (delta == 0) {
         return;
     }
@@ -551,32 +655,41 @@ void EditorCore::move_by_lines(int delta) {
     if (cursor_.column > preferred_column_) {
         cursor_.column = preferred_column_;
     }
+    emit_cursor_moved(previous_cursor);
 }
 
 void EditorCore::move_line_start() {
+    Position previous_cursor = cursor_;
     cursor_.column = 0;
     update_preferred_column();
+    emit_cursor_moved(previous_cursor);
 }
 
 void EditorCore::move_line_end() {
+    Position previous_cursor = cursor_;
     cursor_.column = line_length(cursor_.row);
     update_preferred_column();
+    emit_cursor_moved(previous_cursor);
 }
 
 void EditorCore::move_to_first_line() {
+    Position previous_cursor = cursor_;
     cursor_.row = 0;
     clamp_cursor();
     if (cursor_.column > preferred_column_) {
         cursor_.column = preferred_column_;
     }
+    emit_cursor_moved(previous_cursor);
 }
 
 void EditorCore::move_to_last_line() {
+    Position previous_cursor = cursor_;
     cursor_.row = lines_.empty() ? 0 : lines_.size() - 1;
     clamp_cursor();
     if (cursor_.column > preferred_column_) {
         cursor_.column = preferred_column_;
     }
+    emit_cursor_moved(previous_cursor);
 }
 
 bool EditorCore::move_to_character_forward(char32_t target, bool inclusive) {
@@ -703,12 +816,19 @@ bool EditorCore::load_file(const std::string &path) {
         loaded_lines.push_back(utf8_to_u32(current_line));
     }
 
+    std::string previous_uri = document_uri_;
+    std::size_t previous_version = document_version_;
+
     lines_ = loaded_lines.empty() ? std::vector<std::u32string>{U""} : loaded_lines;
     file_path_ = path;
+    document_uri_ = file_uri_for_path(path);
     cursor_ = {0, 0};
     selection_anchor_.reset();
+    selection_mode_ = SelectionMode::Character;
     preferred_column_ = 0;
     reset_history();
+    emit_document_closed(previous_uri, previous_version);
+    emit_document_opened();
     return true;
 }
 
@@ -736,16 +856,25 @@ bool EditorCore::save_current_file() {
     }
     saved_revision_ = current_revision_;
     saved_document_version_ = document_version_;
+    emit_document_saved();
     return true;
 }
 
 bool EditorCore::save_current_file_as(const std::string &path) {
+    std::string previous_uri = document_uri_;
+    std::size_t previous_version = document_version_;
     if (!save_file(path)) {
         return false;
     }
     file_path_ = path;
+    document_uri_ = file_uri_for_path(path);
     saved_revision_ = current_revision_;
     saved_document_version_ = document_version_;
+    if (previous_uri != document_uri_) {
+        emit_document_closed(previous_uri, previous_version);
+        emit_document_opened();
+    }
+    emit_document_saved();
     return true;
 }
 
@@ -973,11 +1102,17 @@ std::optional<Range> EditorCore::a_word_range() const {
 }
 
 void EditorCore::apply_command(std::unique_ptr<EditCommand> command) {
+    std::vector<std::u32string> before_lines = lines_;
+    Position previous_cursor = cursor_;
+    suppress_cursor_events_ = true;
     command->apply(*this);
+    suppress_cursor_events_ = false;
     undo_stack_.push_back(std::move(command));
     redo_stack_.clear();
     ++current_revision_;
     ++document_version_;
+    emit_document_changed(before_lines);
+    emit_cursor_moved(previous_cursor);
 }
 
 void EditorCore::raw_insert_codepoint(Position position, char32_t codepoint) {
@@ -1248,14 +1383,20 @@ bool EditorCore::undo() {
     if (undo_stack_.empty()) {
         return false;
     }
+    std::vector<std::u32string> before_lines = lines_;
+    Position previous_cursor = cursor_;
     std::unique_ptr<EditCommand> command = std::move(undo_stack_.back());
     undo_stack_.pop_back();
+    suppress_cursor_events_ = true;
     command->undo(*this);
+    suppress_cursor_events_ = false;
     redo_stack_.push_back(std::move(command));
     if (current_revision_ > 0) {
         --current_revision_;
     }
     ++document_version_;
+    emit_document_changed(before_lines);
+    emit_cursor_moved(previous_cursor);
     return true;
 }
 
@@ -1263,11 +1404,17 @@ bool EditorCore::redo() {
     if (redo_stack_.empty()) {
         return false;
     }
+    std::vector<std::u32string> before_lines = lines_;
+    Position previous_cursor = cursor_;
     std::unique_ptr<EditCommand> command = std::move(redo_stack_.back());
     redo_stack_.pop_back();
+    suppress_cursor_events_ = true;
     command->apply(*this);
+    suppress_cursor_events_ = false;
     undo_stack_.push_back(std::move(command));
     ++current_revision_;
     ++document_version_;
+    emit_document_changed(before_lines);
+    emit_cursor_moved(previous_cursor);
     return true;
 }

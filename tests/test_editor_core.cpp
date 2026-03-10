@@ -45,6 +45,10 @@ void expect_cursor(const EditorCore &core, Position expected, const std::string 
             ") got (" + std::to_string(actual.row) + "," + std::to_string(actual.column) + ")");
 }
 
+void expect_event_type(const EditorEvent &event, EditorEventType expected, const std::string &message) {
+    expect(event.type == expected, message);
+}
+
 void test_insert_unicode_and_undo() {
     EditorCore core;
     core.insert_codepoint(U'a');
@@ -347,6 +351,72 @@ void test_document_version_is_monotonic() {
     expect(core.document_version() == 3, "redo increments document version");
 }
 
+void test_document_identity_and_events() {
+    EditorCore core;
+    expect(core.document_uri().rfind("untitled://medit/", 0) == 0, "new buffer has untitled document uri");
+    expect(core.pending_events().empty(), "new buffer starts with no queued events");
+
+    core.insert_codepoint(U'a');
+    std::vector<EditorEvent> edit_events = core.take_events();
+    expect(edit_events.size() == 2, "edit should emit change and cursor events");
+    expect_event_type(edit_events[0], EditorEventType::DocumentChanged, "edit emits document changed first");
+    expect(edit_events[0].document_uri == core.document_uri(), "changed event uses current document uri");
+    expect(edit_events[0].document_version == core.document_version(), "changed event carries current version");
+    expect(edit_events[0].range.has_value(), "changed event carries replaced range");
+    expect(u32_to_utf8(edit_events[0].text) == "a", "changed event carries new buffer text");
+    expect_event_type(edit_events[1], EditorEventType::CursorMoved, "edit emits cursor moved");
+
+    core.set_cursor({0, 0});
+    std::vector<EditorEvent> move_events = core.take_events();
+    expect(move_events.size() == 1, "explicit cursor set emits one cursor event");
+    expect_event_type(move_events[0], EditorEventType::CursorMoved, "cursor set emits cursor moved");
+}
+
+void test_open_save_and_save_as_events() {
+    char path[] = "/tmp/medit-open-XXXXXX";
+    int fd = mkstemp(path);
+    expect(fd >= 0, "mkstemp for open event test should succeed");
+    close(fd);
+    {
+        std::ofstream file(path);
+        file << "hello";
+    }
+
+    EditorCore core;
+    std::string previous_uri = core.document_uri();
+    expect(core.load_file(path), "load_file should succeed for event test");
+    std::vector<EditorEvent> load_events = core.take_events();
+    expect(load_events.size() == 2, "load should emit close and open events");
+    expect_event_type(load_events[0], EditorEventType::DocumentClosed, "load emits close for previous document");
+    expect(load_events[0].document_uri == previous_uri, "close event uses previous document uri");
+    expect_event_type(load_events[1], EditorEventType::DocumentOpened, "load emits open for new document");
+    expect(load_events[1].document_uri == core.document_uri(), "open event uses new document uri");
+    expect(u32_to_utf8(load_events[1].text) == "hello", "open event includes loaded buffer text");
+
+    expect(core.save_current_file(), "save_current_file should succeed for event test");
+    std::vector<EditorEvent> save_events = core.take_events();
+    expect(save_events.size() == 1, "save should emit one event");
+    expect_event_type(save_events[0], EditorEventType::DocumentSaved, "save emits saved event");
+
+    char path2[] = "/tmp/medit-save-as-XXXXXX";
+    int fd2 = mkstemp(path2);
+    expect(fd2 >= 0, "mkstemp for save-as event test should succeed");
+    close(fd2);
+
+    std::string loaded_uri = core.document_uri();
+    expect(core.save_current_file_as(path2), "save_current_file_as should succeed");
+    std::vector<EditorEvent> save_as_events = core.take_events();
+    expect(save_as_events.size() == 3, "save as should emit close, open, and save events when uri changes");
+    expect_event_type(save_as_events[0], EditorEventType::DocumentClosed, "save as closes previous document identity");
+    expect(save_as_events[0].document_uri == loaded_uri, "save as close event uses old uri");
+    expect_event_type(save_as_events[1], EditorEventType::DocumentOpened, "save as opens new document identity");
+    expect(save_as_events[1].document_uri == core.document_uri(), "save as open event uses new uri");
+    expect_event_type(save_as_events[2], EditorEventType::DocumentSaved, "save as emits saved event");
+
+    std::remove(path);
+    std::remove(path2);
+}
+
 void test_unicode_position_conversions() {
     EditorCore core;
     expect(
@@ -505,6 +575,8 @@ int main() {
         test_text_edit_transactions();
         test_text_edit_transaction_rejects_overlaps();
         test_document_version_is_monotonic();
+        test_document_identity_and_events();
+        test_open_save_and_save_as_events();
         test_unicode_position_conversions();
         test_keybinding_dispatch();
         test_config_file_selects_keybindings_and_colors();

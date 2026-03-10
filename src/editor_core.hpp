@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -63,6 +64,23 @@ struct Utf16Position {
     std::size_t column = 0;
 };
 
+enum class EditorEventType {
+    DocumentOpened,
+    DocumentChanged,
+    DocumentSaved,
+    DocumentClosed,
+    CursorMoved,
+};
+
+struct EditorEvent {
+    EditorEventType type = EditorEventType::DocumentChanged;
+    std::string document_uri;
+    std::size_t document_version = 0;
+    Position cursor;
+    std::optional<Range> range;
+    std::u32string text;
+};
+
 class EditorCore;
 
 struct EditCommand {
@@ -101,6 +119,7 @@ class EditorCore {
     const std::vector<std::u32string> &lines() const;
     const std::optional<std::string> &file_path() const;
     std::string display_file_name() const;
+    std::string document_uri() const;
     Position cursor() const;
     Range line_range(std::size_t row) const;
     std::size_t line_count() const;
@@ -116,6 +135,8 @@ class EditorCore {
     std::optional<Range> selection_range() const;
     std::u32string yank_buffer() const;
     SelectionMode yank_mode() const;
+    const std::vector<EditorEvent> &pending_events() const;
+    std::vector<EditorEvent> take_events();
 
     void set_cursor(Position position);
     void move_left();
@@ -181,10 +202,21 @@ class EditorCore {
     std::size_t saved_document_version_ = 0;
     std::u32string yank_buffer_;
     SelectionMode yank_mode_ = SelectionMode::Character;
+    std::string document_uri_;
+    std::uint64_t untitled_id_ = 0;
+    std::vector<EditorEvent> pending_events_;
+    bool suppress_cursor_events_ = false;
 
     void ensure_buffer_not_empty();
     void clamp_cursor();
     Position clamped_position(Position position) const;
+    void emit_event(EditorEvent event);
+    void emit_document_closed(const std::string &document_uri, std::size_t document_version);
+    void emit_document_opened();
+    void emit_document_saved();
+    void emit_document_changed(const std::vector<std::u32string> &before_lines);
+    void emit_cursor_moved(Position previous_cursor);
+    void set_cursor_internal(Position position, bool emit_event);
     void update_preferred_column();
     Position position_after_character(Position position) const;
     Position position_before(Position position) const;

@@ -12,7 +12,9 @@ Items are ordered roughly by dependency and architectural leverage. Update this 
 - Done: atomic multi-edit transactions with single-step undo/redo
 - Done: explicit document version tracking in the core
 - Done: UTF-8 and UTF-16 position conversion utilities in the core
-- In progress: building a reusable editor core API around stable document semantics and protocol-facing tests
+- Done: document identity model in the core
+- Done: structured core events for document lifecycle and cursor movement
+- In progress: building a reusable editor core API around protocol-facing tests and service boundaries
 - Not started: everything else below
 
 ## Outstanding Requirements
@@ -38,9 +40,11 @@ Items are ordered roughly by dependency and architectural leverage. Update this 
    This is required for correct diagnostics, edits, hover ranges, and completion insertions.
 
 5. Clear document identity model
+   Status: done in [editor_core.hpp](/home/dan/de/src/editor_core.hpp), [editor_core.cpp](/home/dan/de/src/editor_core.cpp), and [test_editor_core.cpp](/home/dan/de/tests/test_editor_core.cpp)
    Add durable document identifiers and URI handling so buffers can be addressed the way LSP clients expect.
 
 6. Change event pipeline
+   Status: done in [editor_core.hpp](/home/dan/de/src/editor_core.hpp), [editor_core.cpp](/home/dan/de/src/editor_core.cpp), and [test_editor_core.cpp](/home/dan/de/tests/test_editor_core.cpp)
    The core should emit structured events for:
    document opened
    document changed
