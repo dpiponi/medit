@@ -25,11 +25,14 @@
     "x": "delete_char",
     "u": "undo",
     "r": "redo",
-    "p": "paste_after",
+    "g p": "paste_after",
     "P": "paste_before",
     "g g": "goto_top",
     "G": "goto_bottom",
+    "/": "enter_search_mode",
     ":": "enter_command_mode",
+    "n": "search_next",
+    "p": "search_previous",
     "d d": "delete_line",
     "ctrl-d": "half_page_down",
     "ctrl-u": "half_page_up",
@@ -55,6 +58,7 @@
     "$": "move_line_end",
     "g g": "goto_top",
     "G": "goto_bottom",
+    "n": "search_next",
     "c": "change_selection",
     "d": "delete_selection",
     "y": "yank_selection",
@@ -83,5 +87,11 @@
     "enter": "command_execute",
     "backspace": "command_backspace",
     "printable": "command_insert"
+  },
+  "search": {
+    "esc": "enter_normal_mode",
+    "enter": "search_execute",
+    "backspace": "search_backspace",
+    "printable": "search_insert"
   }
 }

@@ -40,11 +40,14 @@ constexpr const char *kEmbeddedDefaultKeybindings = R"json(
     "x": "delete_char",
     "u": "undo",
     "r": "redo",
-    "p": "paste_after",
+    "g p": "paste_after",
     "P": "paste_before",
     "g g": "goto_top",
     "G": "goto_bottom",
+    "/": "enter_search_mode",
     ":": "enter_command_mode",
+    "n": "search_next",
+    "p": "search_previous",
     "d d": "delete_line",
     "ctrl-d": "half_page_down",
     "ctrl-u": "half_page_up",
@@ -70,6 +73,7 @@ constexpr const char *kEmbeddedDefaultKeybindings = R"json(
     "$": "move_line_end",
     "g g": "goto_top",
     "G": "goto_bottom",
+    "n": "search_next",
     "c": "change_selection",
     "d": "delete_selection",
     "y": "yank_selection",
@@ -98,6 +102,12 @@ constexpr const char *kEmbeddedDefaultKeybindings = R"json(
     "enter": "command_execute",
     "backspace": "command_backspace",
     "printable": "command_insert"
+  },
+  "search": {
+    "esc": "enter_normal_mode",
+    "enter": "search_execute",
+    "backspace": "search_backspace",
+    "printable": "search_insert"
   }
 }
 )json";
@@ -143,6 +153,7 @@ std::optional<EditorAction> action_from_name(const std::string &name) {
         {"goto_top", EditorAction::GotoTop},
         {"goto_bottom", EditorAction::GotoBottom},
         {"enter_command_mode", EditorAction::EnterCommandMode},
+        {"enter_search_mode", EditorAction::EnterSearchMode},
         {"delete_line", EditorAction::DeleteLine},
         {"half_page_down", EditorAction::HalfPageDown},
         {"half_page_up", EditorAction::HalfPageUp},
@@ -155,6 +166,11 @@ std::optional<EditorAction> action_from_name(const std::string &name) {
         {"command_backspace", EditorAction::CommandBackspace},
         {"self_insert", EditorAction::SelfInsert},
         {"command_insert", EditorAction::CommandInsert},
+        {"search_execute", EditorAction::SearchExecute},
+        {"search_backspace", EditorAction::SearchBackspace},
+        {"search_insert", EditorAction::SearchInsert},
+        {"search_next", EditorAction::SearchNext},
+        {"search_previous", EditorAction::SearchPrevious},
         {"delete_selection", EditorAction::DeleteSelection},
         {"change_selection", EditorAction::ChangeSelection},
         {"yank_selection", EditorAction::YankSelection},

@@ -9,10 +9,11 @@
 #include <exception>
 #include <ncursesw/curses.h>
 #include <optional>
-#include <vector>
+#include <regex>
 #include <sstream>
 #include <string>
 #include <utility>
+#include <vector>
 
 enum class Mode {
     Normal,
@@ -20,6 +21,7 @@ enum class Mode {
     Visual,
     VisualLine,
     Command,
+    Search,
 };
 
 enum class PendingMotion {
@@ -39,9 +41,15 @@ struct EditorState {
     bool should_quit = false;
     Mode mode = Mode::Normal;
     std::u32string command_buffer;
+    std::u32string search_buffer;
     std::string status_message = "NORMAL";
     std::vector<std::string> pending_tokens;
     PendingMotion pending_motion = PendingMotion::None;
+    std::u32string active_search_pattern;
+    std::vector<Range> search_matches;
+    std::optional<std::size_t> current_search_match_index;
+    Position search_origin;
+    bool search_pattern_valid = true;
 };
 
 std::wstring u32_to_wstring(const std::u32string &text) {
@@ -91,6 +99,8 @@ std::string mode_name(Mode mode) {
             return "VISUAL LINE";
         case Mode::Command:
             return "COMMAND";
+        case Mode::Search:
+            return "SEARCH";
     }
     return "UNKNOWN";
 }
@@ -133,6 +143,7 @@ void enter_normal_mode(EditorState &state) {
     state.command_buffer.clear();
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
+    state.search_buffer.clear();
     Position cursor = state.core.cursor();
     std::size_t length = state.core.line_length(cursor.row);
     if (cursor.column > 0 && cursor.column == length) {
@@ -146,6 +157,7 @@ void enter_insert_mode(EditorState &state) {
     state.mode = Mode::Insert;
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
+    state.search_buffer.clear();
     set_status(state, mode_name(state.mode));
 }
 
@@ -155,7 +167,18 @@ void enter_command_mode(EditorState &state) {
     state.command_buffer.clear();
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
+    state.search_buffer.clear();
     set_status(state, ":");
+}
+
+void enter_search_mode(EditorState &state) {
+    state.core.clear_selection();
+    state.mode = Mode::Search;
+    state.search_buffer = state.active_search_pattern;
+    state.search_origin = state.core.cursor();
+    state.pending_tokens.clear();
+    state.pending_motion = PendingMotion::None;
+    set_status(state, "/");
 }
 
 bool can_quit_without_force(const EditorState &state) {
@@ -255,6 +278,86 @@ void execute_command(EditorState &state) {
         state.command_buffer.clear();
         state.pending_tokens.clear();
     }
+}
+
+std::u32string buffer_text(const EditorState &state) {
+    std::u32string text;
+    for (std::size_t row = 0; row < state.core.line_count(); ++row) {
+        text += state.core.lines()[row];
+        if (row + 1 < state.core.line_count()) {
+            text.push_back(U'\n');
+        }
+    }
+    return text;
+}
+
+void set_search_status(EditorState &state, const std::string &suffix = "") {
+    std::string prompt = "/" + u32_to_utf8(state.search_buffer);
+    if (!suffix.empty()) {
+        prompt += "  " + suffix;
+    }
+    set_status(state, prompt);
+}
+
+void refresh_search_matches(EditorState &state, bool move_to_best_match) {
+    state.search_matches.clear();
+    state.current_search_match_index.reset();
+    state.search_pattern_valid = true;
+
+    if (state.active_search_pattern.empty()) {
+        return;
+    }
+
+    try {
+        std::regex pattern(u32_to_utf8(state.active_search_pattern), std::regex::ECMAScript);
+        std::string text = u32_to_utf8(buffer_text(state));
+        std::size_t origin_offset = state.core.utf8_offset_for_position(state.search_origin);
+        std::size_t best_index = 0;
+        bool found_best = false;
+
+        for (std::sregex_iterator it(text.begin(), text.end(), pattern), end; it != end; ++it) {
+            if (it->length() == 0) {
+                continue;
+            }
+            std::size_t start_offset = static_cast<std::size_t>(it->position());
+            std::size_t end_offset = start_offset + static_cast<std::size_t>(it->length());
+            Range range{
+                state.core.position_for_utf8_offset(start_offset),
+                state.core.position_for_utf8_offset(end_offset),
+            };
+            state.search_matches.push_back(range);
+            if (!found_best && start_offset >= origin_offset) {
+                best_index = state.search_matches.size() - 1;
+                found_best = true;
+            }
+        }
+
+        if (!state.search_matches.empty()) {
+            state.current_search_match_index = found_best ? best_index : 0;
+            if (move_to_best_match) {
+                state.core.set_cursor(state.search_matches[*state.current_search_match_index].start);
+            }
+        }
+    } catch (const std::regex_error &) {
+        state.search_pattern_valid = false;
+    }
+}
+
+void navigate_search_match(EditorState &state, bool forward) {
+    if (state.search_matches.empty()) {
+        set_status(state, "No search matches");
+        return;
+    }
+
+    std::size_t index = state.current_search_match_index.value_or(0);
+    if (forward) {
+        index = (index + 1) % state.search_matches.size();
+    } else {
+        index = index == 0 ? state.search_matches.size() - 1 : index - 1;
+    }
+    state.current_search_match_index = index;
+    state.core.set_cursor(state.search_matches[index].start);
+    set_status(state, forward ? "Next match" : "Previous match");
 }
 
 std::size_t display_width_until(const std::u32string &line, std::size_t limit) {
@@ -379,6 +482,24 @@ std::vector<HighlightSpan> collect_line_highlights(const EditorState &state, std
             spans.push_back({line_selection, StyleRole::Selection, 100});
         }
     }
+    for (std::size_t index = 0; index < state.search_matches.size(); ++index) {
+        const Range &match = state.search_matches[index];
+        if (row < match.start.row || row > match.end.row) {
+            continue;
+        }
+        Range line_match{
+            {row, row == match.start.row ? match.start.column : 0},
+            {row, row == match.end.row ? match.end.column : state.core.line_length(row)}};
+        if (positions_equal(line_match.start, line_match.end)) {
+            continue;
+        }
+        StyleRole role =
+            state.current_search_match_index && *state.current_search_match_index == index
+                ? StyleRole::SearchMatchCurrent
+                : StyleRole::SearchMatch;
+        int priority = role == StyleRole::SearchMatchCurrent ? 95 : 90;
+        spans.push_back({line_match, role, priority});
+    }
     return spans;
 }
 
@@ -479,6 +600,14 @@ void draw_message_bar(const EditorState &state, int screen_rows, int screen_cols
         TextStyle style = theme_style(state.theme, StyleRole::CommandLine);
         attron(curses_attributes(style, StyleRole::CommandLine));
         std::string command = ":" + u32_to_utf8(state.command_buffer);
+        mvaddnstr(screen_rows - 1, 0, command.c_str(), screen_cols);
+        attroff(curses_attributes(style, StyleRole::CommandLine));
+        return;
+    }
+    if (state.mode == Mode::Search) {
+        TextStyle style = theme_style(state.theme, StyleRole::CommandLine);
+        attron(curses_attributes(style, StyleRole::CommandLine));
+        std::string command = "/" + u32_to_utf8(state.search_buffer);
         mvaddnstr(screen_rows - 1, 0, command.c_str(), screen_cols);
         attroff(curses_attributes(style, StyleRole::CommandLine));
         return;
@@ -699,6 +828,8 @@ std::string mode_key(const EditorState &state) {
             return "visual";
         case Mode::Command:
             return "command";
+        case Mode::Search:
+            return "search";
     }
     return "normal";
 }
@@ -818,6 +949,11 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
         case EditorAction::EnterCommandMode:
             enter_command_mode(state);
             break;
+        case EditorAction::EnterSearchMode:
+            enter_search_mode(state);
+            refresh_search_matches(state, true);
+            set_search_status(state);
+            break;
         case EditorAction::DeleteLine:
             state.core.delete_current_line();
             set_status(state, "Deleted line");
@@ -856,6 +992,38 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             break;
         case EditorAction::CommandInsert:
             state.command_buffer.push_back(static_cast<char32_t>(key));
+            break;
+        case EditorAction::SearchExecute:
+            state.active_search_pattern = state.search_buffer;
+            refresh_search_matches(state, true);
+            if (!state.search_pattern_valid) {
+                set_search_status(state, "invalid regex");
+                break;
+            }
+            state.mode = Mode::Normal;
+            set_status(state, state.search_matches.empty() ? "No search matches" : "Search applied");
+            break;
+        case EditorAction::SearchBackspace:
+            if (!state.search_buffer.empty()) {
+                state.search_buffer.pop_back();
+            }
+            state.active_search_pattern = state.search_buffer;
+            refresh_search_matches(state, true);
+            set_search_status(state, state.search_pattern_valid ? "" : "invalid regex");
+            break;
+        case EditorAction::SearchInsert:
+            state.search_buffer.push_back(static_cast<char32_t>(key));
+            state.active_search_pattern = state.search_buffer;
+            refresh_search_matches(state, true);
+            set_search_status(state, state.search_pattern_valid ? "" : "invalid regex");
+            break;
+        case EditorAction::SearchNext:
+            refresh_search_matches(state, false);
+            navigate_search_match(state, true);
+            break;
+        case EditorAction::SearchPrevious:
+            refresh_search_matches(state, false);
+            navigate_search_match(state, false);
             break;
         case EditorAction::DeleteSelection:
             {
@@ -963,9 +1131,14 @@ void handle_mouse_input(EditorState &state) {
     }
 
     state.pending_tokens.clear();
+    state.pending_motion = PendingMotion::None;
     state.core.set_cursor(*clicked);
     if (state.mode == Mode::Command) {
         set_status(state, ":");
+        return;
+    }
+    if (state.mode == Mode::Search) {
+        set_search_status(state, state.search_pattern_valid ? "" : "invalid regex");
         return;
     }
     set_status(state, mode_name(state.mode));

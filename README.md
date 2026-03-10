@@ -70,6 +70,7 @@ colors = forest.json
 - `i` enter insert mode
 - `v` enter visual selection mode
 - `V` enter linewise visual selection mode
+- `/` enter regex search mode
 - `a` append after cursor
 - `o` open line below
 - `O` open line above
@@ -79,6 +80,8 @@ colors = forest.json
 - `F<char>` move backward to the previous matching character on the line
 - `t<char>` move up to the next matching character on the line
 - `T<char>` move backward up to the previous matching character on the line
+- `n` jump to the next search match
+- `p` jump to the previous search match
 - `PageUp`, `PageDown` move by a screen
 - `Ctrl-U`, `Ctrl-D` move by a half screen
 - Left mouse click moves the cursor to the clicked buffer position
@@ -86,7 +89,7 @@ colors = forest.json
 - `G` jump to the bottom of the file
 - `0`, `$` move to line start/end
 - `x` delete character under cursor
-- `p` paste after the cursor
+- `gp` paste after the cursor
 - `P` paste before the cursor
 - `dd` delete current line
 - In visual mode, `d` deletes the selection
@@ -95,6 +98,7 @@ colors = forest.json
 - In visual mode, `p` or `P` replaces the selection with the yanked text
 - In visual mode, `iw` extends the selection to include the inner word at the cursor
 - In visual mode, `aw` extends the selection to include the word plus adjacent spaces at the cursor
+- Search updates dynamically as you type and highlights all matches, with the current match highlighted separately
 - `u` undo last edit
 - `r` redo last undone edit
 - `:w` write
