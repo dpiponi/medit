@@ -413,6 +413,11 @@ void test_keybinding_dispatch() {
     expect(
         inner_second.action.has_value() && *inner_second.action == EditorAction::SelectInnerWord,
         "visual iw should map to select inner word");
+
+    KeyDispatch change = dispatch_key_sequence(keybindings, "visual", pending, "c", false);
+    expect(
+        change.action.has_value() && *change.action == EditorAction::ChangeSelection,
+        "visual c should map to change selection");
 }
 
 void test_config_file_selects_keybindings_and_colors() {

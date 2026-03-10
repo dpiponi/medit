@@ -47,6 +47,7 @@ enum class EditorAction {
     SelfInsert,
     CommandInsert,
     DeleteSelection,
+    ChangeSelection,
     YankSelection,
     ReplaceSelectionWithYank,
     SelectInnerWord,

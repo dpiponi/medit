@@ -90,6 +90,7 @@ colors = forest.json
 - `P` paste before the cursor
 - `dd` delete current line
 - In visual mode, `d` deletes the selection
+- In visual mode, `c` deletes the selection and enters insert mode to replace it
 - In visual mode, `y` yanks the selection
 - In visual mode, `p` or `P` replaces the selection with the yanked text
 - In visual mode, `iw` extends the selection to include the inner word at the cursor

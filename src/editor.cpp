@@ -880,6 +880,15 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
                 set_status(state, "No selection");
             }
             break;
+        case EditorAction::ChangeSelection:
+            {
+            if (state.core.delete_selection()) {
+                enter_insert_mode(state);
+            } else {
+                set_status(state, "No selection");
+            }
+            break;
+            }
         case EditorAction::ReplaceSelectionWithYank:
             {
             SelectionMode selection_mode = state.core.selection_mode();

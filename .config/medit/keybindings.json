@@ -55,6 +55,7 @@
     "$": "move_line_end",
     "g g": "goto_top",
     "G": "goto_bottom",
+    "c": "change_selection",
     "d": "delete_selection",
     "y": "yank_selection",
     "p": "replace_selection_with_yank",
