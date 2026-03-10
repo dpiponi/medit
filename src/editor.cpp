@@ -100,6 +100,8 @@ void setup_terminal(const Theme &theme) {
     noecho();
     keypad(stdscr, TRUE);
     timeout(-1);
+    mouseinterval(0);
+    mousemask(ALL_MOUSE_EVENTS, nullptr);
     start_color();
     use_default_colors();
     for (int role_index = 0; role_index <= static_cast<int>(StyleRole::DiagnosticWarning); ++role_index) {
@@ -494,6 +496,44 @@ std::pair<int, int> cursor_screen_position(const EditorState &state, int line_nu
     return {screen_row, screen_col};
 }
 
+std::size_t column_for_display_width(const std::u32string &line, std::size_t target_width) {
+    std::size_t width = 0;
+    for (std::size_t column = 0; column < line.size(); ++column) {
+        std::size_t next_width = width + static_cast<std::size_t>(codepoint_width(line[column]));
+        if (target_width < next_width) {
+            return column;
+        }
+        width = next_width;
+    }
+    return line.size();
+}
+
+std::optional<Position> buffer_position_from_screen_point(const EditorState &state, int screen_row, int screen_col) {
+    int total_rows = 0;
+    int total_cols = 0;
+    getmaxyx(stdscr, total_rows, total_cols);
+    (void)total_cols;
+
+    int buffer_rows = total_rows - 2;
+    if (screen_row < 0 || screen_row >= buffer_rows) {
+        return std::nullopt;
+    }
+
+    std::size_t row = state.row_offset + static_cast<std::size_t>(screen_row);
+    if (row >= state.core.line_count()) {
+        return std::nullopt;
+    }
+
+    int gutter_start = line_number_width(state) + 1;
+    std::size_t visual_column = state.col_offset;
+    if (screen_col > gutter_start) {
+        visual_column += static_cast<std::size_t>(screen_col - gutter_start);
+    }
+
+    const std::u32string &line = state.core.lines()[row];
+    return Position{row, column_for_display_width(line, visual_column)};
+}
+
 void draw_editor(const EditorState &state) {
     int screen_rows = 0;
     int screen_cols = 0;
@@ -818,11 +858,39 @@ void handle_keymap_input(EditorState &state, wint_t key, bool is_special) {
     }
 }
 
+void handle_mouse_input(EditorState &state) {
+    MEVENT event;
+    if (getmouse(&event) != OK) {
+        return;
+    }
+    if ((event.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED | BUTTON1_RELEASED)) == 0) {
+        return;
+    }
+
+    std::optional<Position> clicked = buffer_position_from_screen_point(state, event.y, event.x);
+    if (!clicked) {
+        return;
+    }
+
+    state.pending_tokens.clear();
+    state.core.set_cursor(*clicked);
+    if (state.mode == Mode::Command) {
+        set_status(state, ":");
+        return;
+    }
+    set_status(state, mode_name(state.mode));
+}
+
 void handle_input(EditorState &state) {
     wint_t key = 0;
     int result = get_wch(&key);
     bool is_special = result == KEY_CODE_YES;
     if (result == ERR) {
+        return;
+    }
+
+    if (is_special && key == KEY_MOUSE) {
+        handle_mouse_input(state);
         return;
     }
 

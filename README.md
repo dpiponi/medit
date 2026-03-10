@@ -77,6 +77,7 @@ colors = forest.json
 - `h`, `j`, `k`, `l` move
 - `PageUp`, `PageDown` move by a screen
 - `Ctrl-U`, `Ctrl-D` move by a half screen
+- Left mouse click moves the cursor to the clicked buffer position
 - `gg` jump to the top of the file
 - `G` jump to the bottom of the file
 - `0`, `$` move to line start/end
