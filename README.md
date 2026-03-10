@@ -75,6 +75,10 @@ colors = forest.json
 - `O` open line above
 - `Esc` return to normal mode
 - `h`, `j`, `k`, `l` move
+- `f<char>` move to the next matching character on the line
+- `F<char>` move backward to the previous matching character on the line
+- `t<char>` move up to the next matching character on the line
+- `T<char>` move backward up to the previous matching character on the line
 - `PageUp`, `PageDown` move by a screen
 - `Ctrl-U`, `Ctrl-D` move by a half screen
 - Left mouse click moves the cursor to the clicked buffer position
@@ -88,6 +92,8 @@ colors = forest.json
 - In visual mode, `d` deletes the selection
 - In visual mode, `y` yanks the selection
 - In visual mode, `p` or `P` replaces the selection with the yanked text
+- In visual mode, `iw` extends the selection to include the inner word at the cursor
+- In visual mode, `aw` extends the selection to include the word plus adjacent spaces at the cursor
 - `u` undo last edit
 - `r` redo last undone edit
 - `:w` write

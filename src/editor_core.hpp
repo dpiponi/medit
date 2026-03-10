@@ -127,8 +127,12 @@ class EditorCore {
     void move_line_end();
     void move_to_first_line();
     void move_to_last_line();
+    bool move_to_character_forward(char32_t target, bool inclusive);
+    bool move_to_character_backward(char32_t target, bool inclusive);
     void begin_selection(SelectionMode mode = SelectionMode::Character);
     void clear_selection();
+    bool set_selection_range(Range range, SelectionMode mode = SelectionMode::Character);
+    bool extend_selection_to_range(Range range);
 
     bool load_file(const std::string &path);
     bool save_current_file();
@@ -142,6 +146,8 @@ class EditorCore {
     Position position_for_utf8_offset(std::size_t offset) const;
     Utf16Position utf16_position_for_position(Position position) const;
     Position position_for_utf16(Utf16Position position) const;
+    std::optional<Range> inner_word_range() const;
+    std::optional<Range> a_word_range() const;
 
     void insert_codepoint(char32_t codepoint);
     void insert_newline();
@@ -181,6 +187,7 @@ class EditorCore {
     Position clamped_position(Position position) const;
     void update_preferred_column();
     Position position_after_character(Position position) const;
+    Position position_before(Position position) const;
     std::u32string read_range(Range range) const;
     Position position_after_text(Position position, const std::u32string &text) const;
     bool save_file(const std::string &path) const;

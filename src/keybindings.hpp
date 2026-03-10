@@ -14,6 +14,10 @@ enum class EditorAction {
     MoveDown,
     MoveLineStart,
     MoveLineEnd,
+    FindForward,
+    FindBackward,
+    TillForward,
+    TillBackward,
     EnterInsertMode,
     AppendAfterCursor,
     EnterVisualMode,
@@ -45,6 +49,8 @@ enum class EditorAction {
     DeleteSelection,
     YankSelection,
     ReplaceSelectionWithYank,
+    SelectInnerWord,
+    SelectAroundWord,
 };
 
 struct KeyBinding {

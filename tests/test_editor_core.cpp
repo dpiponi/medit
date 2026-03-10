@@ -216,6 +216,65 @@ void test_navigation() {
     expect_cursor(core, {1, 0}, "move_line_start");
 }
 
+void test_find_and_till_character_motions() {
+    EditorCore core;
+    expect(core.insert_text({0, 0}, utf8_to_u32("abc def ghi")), "seed find motion buffer");
+
+    core.set_cursor({0, 0});
+    expect(core.move_to_character_forward(U'd', true), "find forward should succeed");
+    expect_cursor(core, {0, 4}, "find forward lands on target");
+
+    core.set_cursor({0, 0});
+    expect(core.move_to_character_forward(U'd', false), "till forward should succeed");
+    expect_cursor(core, {0, 3}, "till forward lands before target");
+
+    core.set_cursor({0, 8});
+    expect(core.move_to_character_backward(U'd', true), "find backward should succeed");
+    expect_cursor(core, {0, 4}, "find backward lands on target");
+
+    core.set_cursor({0, 8});
+    expect(core.move_to_character_backward(U'd', false), "till backward should succeed");
+    expect_cursor(core, {0, 5}, "till backward lands after target");
+}
+
+void test_word_object_ranges() {
+    EditorCore core;
+    expect(core.insert_text({0, 0}, utf8_to_u32("  alpha, beta  ")), "seed word object buffer");
+
+    core.set_cursor({0, 3});
+    std::optional<Range> inner = core.inner_word_range();
+    expect(inner.has_value(), "inner word range should exist");
+    expect(inner->start.column == 2 && inner->end.column == 7, "inner word selects bare word");
+
+    core.set_cursor({0, 9});
+    std::optional<Range> around = core.a_word_range();
+    expect(around.has_value(), "around word range should exist");
+    expect(around->start.column == 9 && around->end.column == 15, "around word includes trailing spaces");
+
+    core.set_cursor({0, 7});
+    std::optional<Range> punctuation = core.inner_word_range();
+    expect(punctuation.has_value(), "punctuation object should exist");
+    expect(
+        punctuation->start.column == 7 && punctuation->end.column == 8,
+        "inner word on punctuation selects punctuation run");
+}
+
+void test_extend_selection_to_word_object() {
+    EditorCore core;
+    expect(core.insert_text({0, 0}, utf8_to_u32("alpha beta")), "seed selection extension buffer");
+
+    core.set_cursor({0, 0});
+    core.begin_selection(SelectionMode::Character);
+    core.move_right();
+    std::optional<Range> around = core.a_word_range();
+    expect(around.has_value(), "around word range should exist for extension");
+    expect(core.extend_selection_to_range(*around), "selection should extend to around-word range");
+
+    std::optional<Range> selection = core.selection_range();
+    expect(selection.has_value(), "extended selection should exist");
+    expect(selection->start.column == 0 && selection->end.column == 6, "selection extends to include whole first word");
+}
+
 void test_generic_range_edit_api() {
     EditorCore core;
     expect(core.insert_text({0, 0}, utf8_to_u32("alpha\nbeta\ngamma")), "insert_text should succeed");
@@ -344,6 +403,16 @@ void test_keybinding_dispatch() {
     expect(
         linewise.action.has_value() && *linewise.action == EditorAction::EnterVisualLineMode,
         "V should map to linewise visual mode");
+
+    KeyDispatch find = dispatch_key_sequence(keybindings, "normal", pending, "f", false);
+    expect(find.action.has_value() && *find.action == EditorAction::FindForward, "f should map to find forward");
+
+    KeyDispatch inner_first = dispatch_key_sequence(keybindings, "visual", pending, "i", false);
+    expect(inner_first.matched && inner_first.waiting_for_more, "visual i should wait for iw");
+    KeyDispatch inner_second = dispatch_key_sequence(keybindings, "visual", pending, "w", false);
+    expect(
+        inner_second.action.has_value() && *inner_second.action == EditorAction::SelectInnerWord,
+        "visual iw should map to select inner word");
 }
 
 void test_config_file_selects_keybindings_and_colors() {
@@ -424,6 +493,9 @@ int main() {
         test_replace_selection_with_yank();
         test_file_io_and_dirty_tracking();
         test_navigation();
+        test_find_and_till_character_motions();
+        test_word_object_ranges();
+        test_extend_selection_to_word_object();
         test_generic_range_edit_api();
         test_text_edit_transactions();
         test_text_edit_transaction_rejects_overlaps();

@@ -22,6 +22,14 @@ enum class Mode {
     Command,
 };
 
+enum class PendingMotion {
+    None,
+    FindForward,
+    FindBackward,
+    TillForward,
+    TillBackward,
+};
+
 struct EditorState {
     EditorCore core;
     KeyBindings keybindings;
@@ -33,6 +41,7 @@ struct EditorState {
     std::u32string command_buffer;
     std::string status_message = "NORMAL";
     std::vector<std::string> pending_tokens;
+    PendingMotion pending_motion = PendingMotion::None;
 };
 
 std::wstring u32_to_wstring(const std::u32string &text) {
@@ -123,6 +132,7 @@ void enter_normal_mode(EditorState &state) {
     state.mode = Mode::Normal;
     state.command_buffer.clear();
     state.pending_tokens.clear();
+    state.pending_motion = PendingMotion::None;
     Position cursor = state.core.cursor();
     std::size_t length = state.core.line_length(cursor.row);
     if (cursor.column > 0 && cursor.column == length) {
@@ -135,6 +145,7 @@ void enter_insert_mode(EditorState &state) {
     state.core.clear_selection();
     state.mode = Mode::Insert;
     state.pending_tokens.clear();
+    state.pending_motion = PendingMotion::None;
     set_status(state, mode_name(state.mode));
 }
 
@@ -143,6 +154,7 @@ void enter_command_mode(EditorState &state) {
     state.mode = Mode::Command;
     state.command_buffer.clear();
     state.pending_tokens.clear();
+    state.pending_motion = PendingMotion::None;
     set_status(state, ":");
 }
 
@@ -595,6 +607,7 @@ void half_page_down(EditorState &state) {
 void enter_visual_mode(EditorState &state) {
     state.mode = Mode::Visual;
     state.pending_tokens.clear();
+    state.pending_motion = PendingMotion::None;
     state.core.begin_selection(SelectionMode::Character);
     set_status(state, mode_name(state.mode));
 }
@@ -602,8 +615,37 @@ void enter_visual_mode(EditorState &state) {
 void enter_visual_line_mode(EditorState &state) {
     state.mode = Mode::VisualLine;
     state.pending_tokens.clear();
+    state.pending_motion = PendingMotion::None;
     state.core.begin_selection(SelectionMode::Line);
     set_status(state, mode_name(state.mode));
+}
+
+bool motion_is_character_based(PendingMotion motion) {
+    return motion != PendingMotion::None;
+}
+
+bool execute_pending_motion(EditorState &state, char32_t target) {
+    bool moved = false;
+    switch (state.pending_motion) {
+        case PendingMotion::FindForward:
+            moved = state.core.move_to_character_forward(target, true);
+            break;
+        case PendingMotion::FindBackward:
+            moved = state.core.move_to_character_backward(target, true);
+            break;
+        case PendingMotion::TillForward:
+            moved = state.core.move_to_character_forward(target, false);
+            break;
+        case PendingMotion::TillBackward:
+            moved = state.core.move_to_character_backward(target, false);
+            break;
+        case PendingMotion::None:
+            return false;
+    }
+    state.pending_motion = PendingMotion::None;
+    state.pending_tokens.clear();
+    set_status(state, moved ? mode_name(state.mode) : "Target not found");
+    return true;
 }
 
 std::optional<std::string> key_token(wint_t key, bool is_special) {
@@ -696,6 +738,22 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             break;
         case EditorAction::MoveLineEnd:
             state.core.move_line_end();
+            break;
+        case EditorAction::FindForward:
+            state.pending_motion = PendingMotion::FindForward;
+            set_status(state, "f");
+            break;
+        case EditorAction::FindBackward:
+            state.pending_motion = PendingMotion::FindBackward;
+            set_status(state, "F");
+            break;
+        case EditorAction::TillForward:
+            state.pending_motion = PendingMotion::TillForward;
+            set_status(state, "t");
+            break;
+        case EditorAction::TillBackward:
+            state.pending_motion = PendingMotion::TillBackward;
+            set_status(state, "T");
             break;
         case EditorAction::EnterInsertMode:
             enter_insert_mode(state);
@@ -835,6 +893,28 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             }
             break;
             }
+        case EditorAction::SelectInnerWord:
+            if (state.mode == Mode::Visual || state.mode == Mode::VisualLine) {
+                std::optional<Range> range = state.core.inner_word_range();
+                if (range && state.core.extend_selection_to_range(*range)) {
+                    state.mode = Mode::Visual;
+                    set_status(state, "VISUAL");
+                } else {
+                    set_status(state, "No word");
+                }
+            }
+            break;
+        case EditorAction::SelectAroundWord:
+            if (state.mode == Mode::Visual || state.mode == Mode::VisualLine) {
+                std::optional<Range> range = state.core.a_word_range();
+                if (range && state.core.extend_selection_to_range(*range)) {
+                    state.mode = Mode::Visual;
+                    set_status(state, "VISUAL");
+                } else {
+                    set_status(state, "No word");
+                }
+            }
+            break;
     }
 }
 
@@ -892,6 +972,18 @@ void handle_input(EditorState &state) {
 
     if (is_special && key == KEY_MOUSE) {
         handle_mouse_input(state);
+        return;
+    }
+
+    if (motion_is_character_based(state.pending_motion)) {
+        if (!is_special && key == 27) {
+            state.pending_motion = PendingMotion::None;
+            set_status(state, mode_name(state.mode));
+            return;
+        }
+        if (!is_special) {
+            execute_pending_motion(state, static_cast<char32_t>(key));
+        }
         return;
     }
 

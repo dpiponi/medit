@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <algorithm>
 #include <cstdint>
+#include <cwctype>
 #include <fstream>
 #include <locale>
 #include <sstream>
@@ -272,6 +273,16 @@ std::size_t utf16_units_for_codepoint(char32_t codepoint) {
     return codepoint > 0xFFFF ? 2 : 1;
 }
 
+bool is_space_codepoint(char32_t codepoint) {
+    wchar_t wide = static_cast<wchar_t>(codepoint);
+    return std::iswspace(wide) != 0;
+}
+
+bool is_word_codepoint(char32_t codepoint) {
+    wchar_t wide = static_cast<wchar_t>(codepoint);
+    return codepoint == U'_' || std::iswalnum(wide) != 0;
+}
+
 void EditorCommandAccess::insert_codepoint(EditorCore &core, Position position, char32_t codepoint) {
     core.raw_insert_codepoint(position, codepoint);
 }
@@ -434,6 +445,18 @@ Position EditorCore::position_after_character(Position position) const {
     return position;
 }
 
+Position EditorCore::position_before(Position position) const {
+    position = clamped_position(position);
+    if (position.column > 0) {
+        return {position.row, position.column - 1};
+    }
+    if (position.row > 0) {
+        std::size_t previous_row = position.row - 1;
+        return {previous_row, line_length(previous_row)};
+    }
+    return {0, 0};
+}
+
 void EditorCore::ensure_buffer_not_empty() {
     if (lines_.empty()) {
         lines_.push_back(U"");
@@ -556,6 +579,40 @@ void EditorCore::move_to_last_line() {
     }
 }
 
+bool EditorCore::move_to_character_forward(char32_t target, bool inclusive) {
+    const std::u32string &line = lines_[cursor_.row];
+    for (std::size_t column = cursor_.column + 1; column < line.size(); ++column) {
+        if (line[column] != target) {
+            continue;
+        }
+        if (inclusive) {
+            set_cursor({cursor_.row, column});
+            return true;
+        }
+        if (column == 0) {
+            return false;
+        }
+        set_cursor({cursor_.row, column - 1});
+        return true;
+    }
+    return false;
+}
+
+bool EditorCore::move_to_character_backward(char32_t target, bool inclusive) {
+    if (cursor_.column == 0) {
+        return false;
+    }
+    const std::u32string &line = lines_[cursor_.row];
+    for (std::size_t column = cursor_.column; column-- > 0;) {
+        if (line[column] != target) {
+            continue;
+        }
+        set_cursor({cursor_.row, inclusive ? column : column + 1});
+        return true;
+    }
+    return false;
+}
+
 void EditorCore::begin_selection(SelectionMode mode) {
     selection_anchor_ = cursor_;
     selection_mode_ = mode;
@@ -564,6 +621,47 @@ void EditorCore::begin_selection(SelectionMode mode) {
 void EditorCore::clear_selection() {
     selection_anchor_.reset();
     selection_mode_ = SelectionMode::Character;
+}
+
+bool EditorCore::set_selection_range(Range range, SelectionMode mode) {
+    Range normalized = normalized_range(range);
+    if (positions_equal(normalized.start, normalized.end)) {
+        return false;
+    }
+
+    if (mode == SelectionMode::Line) {
+        selection_anchor_ = {normalized.start.row, 0};
+        selection_mode_ = SelectionMode::Line;
+        if (normalized.end.row > normalized.start.row && normalized.end.column == 0) {
+            set_cursor({normalized.end.row - 1, 0});
+        } else {
+            set_cursor({normalized.end.row, 0});
+        }
+        return true;
+    }
+
+    selection_anchor_ = normalized.start;
+    selection_mode_ = SelectionMode::Character;
+    cursor_ = position_before(normalized.end);
+    clamp_cursor();
+    update_preferred_column();
+    return true;
+}
+
+bool EditorCore::extend_selection_to_range(Range range) {
+    Range normalized = normalized_range(range);
+    if (positions_equal(normalized.start, normalized.end)) {
+        return false;
+    }
+    if (!selection_anchor_) {
+        return set_selection_range(normalized, SelectionMode::Character);
+    }
+
+    Range current = *selection_range();
+    Range merged{
+        position_less_than(current.start, normalized.start) ? current.start : normalized.start,
+        position_less_than(current.end, normalized.end) ? normalized.end : current.end};
+    return set_selection_range(merged, SelectionMode::Character);
 }
 
 void EditorCore::reset_history() {
@@ -785,6 +883,93 @@ Position EditorCore::position_for_utf16(Utf16Position position) const {
         utf16_column += width;
     }
     return {position.row, line.size()};
+}
+
+std::optional<Range> EditorCore::inner_word_range() const {
+    if (lines_.empty()) {
+        return std::nullopt;
+    }
+    const std::u32string &line = lines_[cursor_.row];
+    if (line.empty()) {
+        return std::nullopt;
+    }
+
+    std::size_t index = cursor_.column >= line.size() ? line.size() - 1 : cursor_.column;
+    if (is_space_codepoint(line[index])) {
+        std::size_t next = index;
+        while (next < line.size() && is_space_codepoint(line[next])) {
+            ++next;
+        }
+        if (next < line.size()) {
+            index = next;
+        } else {
+            std::size_t previous = index;
+            while (previous > 0 && is_space_codepoint(line[previous])) {
+                --previous;
+            }
+            if (is_space_codepoint(line[previous])) {
+                return std::nullopt;
+            }
+            index = previous;
+        }
+    }
+
+    bool word_class = is_word_codepoint(line[index]);
+    bool punctuation_class = !word_class && !is_space_codepoint(line[index]);
+    std::size_t start = index;
+    while (start > 0) {
+        char32_t codepoint = line[start - 1];
+        if (word_class && is_word_codepoint(codepoint)) {
+            --start;
+            continue;
+        }
+        if (punctuation_class && !is_word_codepoint(codepoint) && !is_space_codepoint(codepoint)) {
+            --start;
+            continue;
+        }
+        break;
+    }
+
+    std::size_t end = index + 1;
+    while (end < line.size()) {
+        char32_t codepoint = line[end];
+        if (word_class && is_word_codepoint(codepoint)) {
+            ++end;
+            continue;
+        }
+        if (punctuation_class && !is_word_codepoint(codepoint) && !is_space_codepoint(codepoint)) {
+            ++end;
+            continue;
+        }
+        break;
+    }
+
+    return Range{{cursor_.row, start}, {cursor_.row, end}};
+}
+
+std::optional<Range> EditorCore::a_word_range() const {
+    std::optional<Range> inner = inner_word_range();
+    if (!inner) {
+        return std::nullopt;
+    }
+
+    Range range = *inner;
+    const std::u32string &line = lines_[range.start.row];
+    std::size_t end = range.end.column;
+    while (end < line.size() && is_space_codepoint(line[end])) {
+        ++end;
+    }
+    if (end > range.end.column) {
+        range.end.column = end;
+        return range;
+    }
+
+    std::size_t start = range.start.column;
+    while (start > 0 && is_space_codepoint(line[start - 1])) {
+        --start;
+    }
+    range.start.column = start;
+    return range;
 }
 
 void EditorCore::apply_command(std::unique_ptr<EditCommand> command) {
