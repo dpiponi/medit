@@ -1,0 +1,14 @@
+/medit
+/test_editor_core
+
+*.o
+*.swp
+*~
+
+/file.txt
+/nav_test.txt
+/paste_test.txt
+/refactor_test.txt
+/undo_test.txt
+/visual_test.txt
+/visual_test_yank.txt

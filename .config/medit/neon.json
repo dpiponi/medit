@@ -1,0 +1,17 @@
+{
+  "default_text": { "foreground": "white", "background": "default", "bold": "false", "underline": "false", "reverse": "false" },
+  "line_number": { "foreground": "magenta", "background": "default", "bold": "false", "underline": "false", "reverse": "false" },
+  "cursor_line": { "foreground": "default", "background": "blue", "bold": "false", "underline": "false", "reverse": "false" },
+  "cursor_line_number": { "foreground": "yellow", "background": "blue", "bold": "true", "underline": "false", "reverse": "false" },
+  "status_bar": { "foreground": "black", "background": "cyan", "bold": "true", "underline": "false", "reverse": "false" },
+  "message_bar": { "foreground": "cyan", "background": "default", "bold": "true", "underline": "false", "reverse": "false" },
+  "command_line": { "foreground": "black", "background": "yellow", "bold": "true", "underline": "false", "reverse": "false" },
+  "selection": { "foreground": "black", "background": "magenta", "bold": "false", "underline": "false", "reverse": "false" },
+  "search_match": { "foreground": "black", "background": "green", "bold": "true", "underline": "false", "reverse": "false" },
+  "search_match_current": { "foreground": "black", "background": "cyan", "bold": "true", "underline": "false", "reverse": "false" },
+  "syntax_keyword": { "foreground": "cyan", "background": "default", "bold": "true", "underline": "false", "reverse": "false" },
+  "syntax_string": { "foreground": "yellow", "background": "default", "bold": "false", "underline": "false", "reverse": "false" },
+  "syntax_comment": { "foreground": "magenta", "background": "default", "bold": "false", "underline": "false", "reverse": "false" },
+  "diagnostic_error": { "foreground": "red", "background": "default", "bold": "true", "underline": "true", "reverse": "false" },
+  "diagnostic_warning": { "foreground": "yellow", "background": "default", "bold": "true", "underline": "true", "reverse": "false" }
+}
