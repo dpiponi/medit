@@ -12,7 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <ncursesw/curses.h>
+#include <curses.h>
 #include <stdexcept>
 #include <string>
 #include <thread>

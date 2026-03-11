@@ -15,7 +15,7 @@
 #include <exception>
 #include <limits>
 #include <memory>
-#include <ncursesw/curses.h>
+#include <curses.h>
 #include <optional>
 #include <regex>
 #include <sstream>

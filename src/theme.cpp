@@ -5,7 +5,7 @@
 
 #include <array>
 #include <map>
-#include <ncursesw/curses.h>
+#include <curses.h>
 #include <stdexcept>
 
 namespace {
