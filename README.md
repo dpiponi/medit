@@ -134,6 +134,7 @@ colors = forest.json
 - `:bnext` / `:bprev` switch buffers
 - `:bd` close the current buffer if clean
 - `:bd!` force close the current buffer
+- `:reload-config` reload `meditrc`, keybindings, and colors
 - `:diagnostics` show a diagnostics summary
 
 ## Keybinding Aliases

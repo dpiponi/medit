@@ -196,8 +196,29 @@ void set_status(EditorState &state, const std::string &message) {
     state.status_message = message;
 }
 
+void invalidate_syntax_cache(EditorState &state) {
+    for (auto &[buffer_id, buffer_ui] : state.buffer_ui) {
+        (void)buffer_id;
+        buffer_ui.syntax_revision = std::numeric_limits<std::size_t>::max();
+        buffer_ui.syntax_mode = SyntaxMode::None;
+        buffer_ui.syntax_file_path.reset();
+        buffer_ui.syntax_highlights.clear();
+        buffer_ui.syntax_config_error_reported = false;
+    }
+}
+
 void initialize_locale() {
     setlocale(LC_ALL, "");
+}
+
+void apply_theme_to_terminal(const Theme &theme) {
+    start_color();
+    use_default_colors();
+    for (int role_index = 0; role_index <= static_cast<int>(StyleRole::DiagnosticWarning); ++role_index) {
+        StyleRole role = static_cast<StyleRole>(role_index);
+        TextStyle style = theme_style(theme, role);
+        init_pair(static_cast<short>(theme_slot(role)), style.foreground, style.background);
+    }
 }
 
 void setup_terminal(const Theme &theme) {
@@ -208,13 +229,7 @@ void setup_terminal(const Theme &theme) {
     timeout(-1);
     mouseinterval(150);
     mousemask(BUTTON1_CLICKED | BUTTON1_DOUBLE_CLICKED | BUTTON1_TRIPLE_CLICKED, nullptr);
-    start_color();
-    use_default_colors();
-    for (int role_index = 0; role_index <= static_cast<int>(StyleRole::DiagnosticWarning); ++role_index) {
-        StyleRole role = static_cast<StyleRole>(role_index);
-        TextStyle style = theme_style(theme, role);
-        init_pair(static_cast<short>(theme_slot(role)), style.foreground, style.background);
-    }
+    apply_theme_to_terminal(theme);
     curs_set(1);
 }
 
@@ -645,6 +660,26 @@ void handle_buffer_delete_command(EditorState &state, bool force) {
     set_status(state, "Closed " + closing_name);
 }
 
+bool reload_editor_configuration(EditorState &state, std::string &error_message) {
+    try {
+        EditorConfig new_config = load_editor_config();
+        KeyBindings new_keybindings = load_keybindings(new_config);
+        Theme new_theme = load_theme(new_config);
+
+        state.config = std::move(new_config);
+        state.keybindings = std::move(new_keybindings);
+        state.theme = std::move(new_theme);
+        invalidate_syntax_cache(state);
+        apply_theme_to_terminal(state.theme);
+        clearok(stdscr, TRUE);
+        refresh();
+        return true;
+    } catch (const std::exception &error) {
+        error_message = error.what();
+        return false;
+    }
+}
+
 void execute_command(EditorState &state) {
     std::string command = u32_to_utf8(state.command_buffer);
     std::istringstream parser(command);
@@ -685,6 +720,13 @@ void execute_command(EditorState &state) {
         handle_buffer_delete_command(state, false);
     } else if (verb == "bd!") {
         handle_buffer_delete_command(state, true);
+    } else if (verb == "reload-config") {
+        std::string error_message;
+        if (reload_editor_configuration(state, error_message)) {
+            set_status(state, "Reloaded config");
+        } else {
+            set_status(state, "Config reload failed: " + error_message);
+        }
     } else if (verb == "diagnostics") {
         show_diagnostics_summary(state);
     } else {
