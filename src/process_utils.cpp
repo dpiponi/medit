@@ -1,4 +1,5 @@
 #include "process_utils.hpp"
+#include "string_utils.hpp"
 
 #include <cctype>
 #include <cstdlib>
@@ -9,18 +10,6 @@
 #if defined(__unix__) || defined(__APPLE__)
 #include <unistd.h>
 #endif
-
-std::string trim(const std::string &value) {
-    std::size_t start = 0;
-    while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start]))) {
-        ++start;
-    }
-    std::size_t end = value.size();
-    while (end > start && std::isspace(static_cast<unsigned char>(value[end - 1]))) {
-        --end;
-    }
-    return value.substr(start, end - start);
-}
 
 std::vector<std::string> split_shell_pipeline(const std::string &pipeline) {
     std::vector<std::string> segments;
@@ -47,14 +36,14 @@ std::vector<std::string> split_shell_pipeline(const std::string &pipeline) {
             continue;
         }
         if (ch == '|' && !in_single_quote && !in_double_quote) {
-            segments.push_back(trim(current));
+            segments.push_back(trim_ascii_whitespace(current));
             current.clear();
             continue;
         }
         current.push_back(ch);
     }
     if (!current.empty()) {
-        segments.push_back(trim(current));
+        segments.push_back(trim_ascii_whitespace(current));
     }
     return segments;
 }
@@ -100,7 +89,7 @@ bool executable_exists(const std::string &executable) {
 }
 
 std::optional<std::string> first_command_word(const std::string &command) {
-    std::string trimmed = trim(command);
+    std::string trimmed = trim_ascii_whitespace(command);
     if (trimmed.empty()) {
         return std::nullopt;
     }

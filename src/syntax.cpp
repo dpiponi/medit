@@ -1,8 +1,8 @@
 #include "syntax.hpp"
 
 #include "logger.hpp"
+#include "string_utils.hpp"
 
-#include <cctype>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -244,13 +244,6 @@ std::vector<std::vector<HighlightSpan>> highlight_cpp_document(const std::vector
     return spans_by_line;
 }
 
-std::string lowercase(std::string value) {
-    for (char &ch : value) {
-        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    }
-    return value;
-}
-
 std::optional<const SyntaxLanguageConfig *> syntax_language_by_name(const EditorConfig &config, const std::string &name) {
     for (const SyntaxLanguageConfig &language : config.syntax_languages) {
         if (language.name == name) {
@@ -266,7 +259,7 @@ std::optional<const SyntaxLanguageConfig *> syntax_language_for_file(
     if (!file_path || file_path->empty()) {
         return std::nullopt;
     }
-    std::string extension = lowercase(std::filesystem::path(*file_path).extension().string());
+    std::string extension = ascii_lowercase(std::filesystem::path(*file_path).extension().string());
     for (const SyntaxLanguageConfig &language : config.syntax_languages) {
         for (const std::string &configured_extension : language.extensions) {
             if (configured_extension == extension) {
@@ -281,7 +274,7 @@ bool is_legacy_cpp_extension(const std::optional<std::string> &file_path) {
     if (!file_path || file_path->empty()) {
         return false;
     }
-    std::string extension = lowercase(std::filesystem::path(*file_path).extension().string());
+    std::string extension = ascii_lowercase(std::filesystem::path(*file_path).extension().string());
     return extension == ".c" || extension == ".cc" || extension == ".cpp" || extension == ".cxx" ||
         extension == ".h" || extension == ".hh" || extension == ".hpp" || extension == ".hxx";
 }

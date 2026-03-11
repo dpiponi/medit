@@ -8,6 +8,7 @@
 #include "process_utils.hpp"
 #include "services.hpp"
 #include "syntax.hpp"
+#include "string_utils.hpp"
 #include "theme.hpp"
 
 #include <algorithm>
@@ -1723,18 +1724,6 @@ std::string build_status_text(const EditorState &state) {
 }
 
 void draw_status_bar(const EditorState &state, int screen_rows, int screen_cols) {
-    auto ellipsize_middle = [](const std::string &text, std::size_t max_width) {
-        if (text.size() <= max_width) {
-            return text;
-        }
-        if (max_width <= 3) {
-            return text.substr(0, max_width);
-        }
-        std::size_t prefix = (max_width - 3) / 2;
-        std::size_t suffix = max_width - 3 - prefix;
-        return text.substr(0, prefix) + "..." + text.substr(text.size() - suffix);
-    };
-
     TextStyle style = theme_style(state.theme, StyleRole::StatusBar);
     attron(curses_attributes(style, StyleRole::StatusBar));
     move(screen_rows - 2, 0);

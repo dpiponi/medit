@@ -1,26 +1,13 @@
 #include "config.hpp"
 #include "json.hpp"
+#include "string_utils.hpp"
 
-#include <algorithm>
-#include <cctype>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <optional>
 
 namespace {
-
-std::string trim(const std::string &value) {
-    std::size_t start = 0;
-    while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start]))) {
-        ++start;
-    }
-    std::size_t end = value.size();
-    while (end > start && std::isspace(static_cast<unsigned char>(value[end - 1]))) {
-        --end;
-    }
-    return value.substr(start, end - start);
-}
 
 bool parse_bool_value(const std::string &value) {
     if (value == "true") {
@@ -30,23 +17,6 @@ bool parse_bool_value(const std::string &value) {
         return false;
     }
     throw std::runtime_error("invalid boolean value: " + value);
-}
-
-std::string lowercase(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
-    return value;
-}
-
-std::string normalize_extension(std::string extension) {
-    if (extension.empty()) {
-        return extension;
-    }
-    if (extension[0] != '.') {
-        extension.insert(extension.begin(), '.');
-    }
-    return lowercase(extension);
 }
 
 std::optional<std::filesystem::path> first_existing_meditrc_path() {
@@ -297,7 +267,7 @@ EditorConfig load_editor_config_from_path(const std::filesystem::path &path) {
 
     std::string line;
     while (std::getline(input, line)) {
-        std::string content = trim(line);
+        std::string content = trim_ascii_whitespace(line);
         if (content.empty() || content[0] == '#') {
             continue;
         }
@@ -306,8 +276,8 @@ EditorConfig load_editor_config_from_path(const std::filesystem::path &path) {
             throw std::runtime_error("invalid config line: " + content);
         }
 
-        std::string key = trim(content.substr(0, separator));
-        std::string value = trim(content.substr(separator + 1));
+        std::string key = trim_ascii_whitespace(content.substr(0, separator));
+        std::string value = trim_ascii_whitespace(content.substr(separator + 1));
         if (key.empty() || value.empty()) {
             throw std::runtime_error("invalid config line: " + content);
         }
@@ -373,7 +343,7 @@ EditorConfig load_editor_config_from_path(const std::filesystem::path &path) {
 
 const LspServerConfig *matching_lsp_server(const EditorConfig &config, const std::optional<std::string> &file_path) {
     if (file_path && !file_path->empty()) {
-        std::string extension = lowercase(std::filesystem::path(*file_path).extension().string());
+        std::string extension = ascii_lowercase(std::filesystem::path(*file_path).extension().string());
         for (const LspServerConfig &server : config.lsp_servers) {
             for (const std::string &configured_extension : server.extensions) {
                 if (configured_extension == extension) {
@@ -399,7 +369,7 @@ std::string infer_language_id(const EditorConfig &config, const std::optional<st
     }
 
     if (file_path && !file_path->empty()) {
-        std::string extension = lowercase(std::filesystem::path(*file_path).extension().string());
+        std::string extension = ascii_lowercase(std::filesystem::path(*file_path).extension().string());
         if (extension == ".c" || extension == ".cc" || extension == ".cpp" || extension == ".cxx" ||
             extension == ".h" || extension == ".hh" || extension == ".hpp" || extension == ".hxx") {
             return "cpp";

@@ -7,6 +7,7 @@
 #include "process_utils.hpp"
 #include "services.hpp"
 #include "syntax.hpp"
+#include "string_utils.hpp"
 #include "theme.hpp"
 
 #include <cstdio>
@@ -1021,6 +1022,13 @@ void test_file_uri_normalization() {
     expect(roundtrip_path.find("tmp dir/file name.cpp") != std::string::npos, "file uri should decode back to path");
 }
 
+void test_string_utilities() {
+    expect(trim_ascii_whitespace("  value \t") == "value", "trim should remove surrounding ASCII whitespace");
+    expect(ascii_lowercase("PyThOn") == "python", "ascii lowercase should normalize case");
+    expect(normalize_extension("JSON") == ".json", "normalize extension should lowercase and add dot");
+    expect(ellipsize_middle("abcdefghij", 7) == "ab...ij", "ellipsize should preserve both ends");
+}
+
 void test_lsp_message_framing() {
     std::string payload = "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}";
     std::string encoded = encode_lsp_message(payload);
@@ -1395,6 +1403,7 @@ int main() {
         test_process_utils_detect_missing_executables();
         test_cpp_syntax_highlighting();
         test_file_uri_normalization();
+        test_string_utilities();
         test_lsp_message_framing();
         test_lsp_service_roundtrip();
         test_lsp_service_reports_startup_failures();

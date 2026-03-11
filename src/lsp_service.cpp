@@ -4,6 +4,7 @@
 #include "json.hpp"
 #include "logger.hpp"
 #include "process_utils.hpp"
+#include "string_utils.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -128,13 +129,6 @@ std::optional<std::pair<std::string, Position>> definition_location_from_result(
     }
 
     return std::nullopt;
-}
-
-std::string lowercase(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
-    return value;
 }
 
 }  // namespace
@@ -329,7 +323,7 @@ bool LspService::matches_document(const std::string &document_uri) const {
     if (file_path.empty()) {
         return false;
     }
-    std::string extension = lowercase(std::filesystem::path(file_path).extension().string());
+    std::string extension = ascii_lowercase(std::filesystem::path(file_path).extension().string());
     return std::find(config_.extensions.begin(), config_.extensions.end(), extension) != config_.extensions.end();
 }
 
