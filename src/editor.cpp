@@ -33,6 +33,7 @@
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
+#include <termios.h>
 #include <unistd.h>
 #endif
 
@@ -248,8 +249,23 @@ void apply_theme_to_terminal(const Theme &theme) {
 }
 
 bool g_terminal_active = false;
+#if defined(__unix__) || defined(__APPLE__)
+bool g_shell_termios_valid = false;
+termios g_shell_termios{};
+#endif
+
+void restore_shell_terminal_state() {
+#if defined(__unix__) || defined(__APPLE__)
+    if (g_shell_termios_valid) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &g_shell_termios);
+    }
+#endif
+}
 
 void setup_terminal(const Theme &theme) {
+#if defined(__unix__) || defined(__APPLE__)
+    g_shell_termios_valid = tcgetattr(STDIN_FILENO, &g_shell_termios) == 0;
+#endif
     initscr();
     def_shell_mode();
     raw();
@@ -266,12 +282,14 @@ void setup_terminal(const Theme &theme) {
 
 void teardown_terminal() {
     if (!g_terminal_active) {
+        restore_shell_terminal_state();
         return;
     }
     mousemask(0, nullptr);
     keypad(stdscr, FALSE);
     timeout(-1);
     curs_set(1);
+    nl();
     noraw();
     nocbreak();
     echo();
@@ -279,6 +297,7 @@ void teardown_terminal() {
     refresh();
     endwin();
     reset_shell_mode();
+    restore_shell_terminal_state();
     g_terminal_active = false;
 }
 
@@ -298,6 +317,7 @@ void suspend_editor(EditorState &state) {
     state.repeat_digits.clear();
     def_prog_mode();
     endwin();
+    restore_shell_terminal_state();
     std::raise(SIGTSTP);
     reset_prog_mode();
     refresh();
@@ -747,6 +767,7 @@ std::optional<std::string> run_picker_command(EditorState &state, const std::str
     state.repeat_digits.clear();
     def_prog_mode();
     endwin();
+    restore_shell_terminal_state();
     int result = std::system(shell_command.c_str());
     reset_prog_mode();
     refresh();
