@@ -128,7 +128,12 @@ colors = forest.json
 - `:q` quit if clean
 - `:q!` force quit
 - `:wq` or `:x` write and quit
-- `:e filename` open another file
+- `:e filename` open another file in a new buffer and switch to it
+- `:buffers` list open buffers
+- `:buffer N` switch to buffer `N`
+- `:bnext` / `:bprev` switch buffers
+- `:bd` close the current buffer if clean
+- `:bd!` force close the current buffer
 - `:diagnostics` show a diagnostics summary
 
 ## Keybinding Aliases

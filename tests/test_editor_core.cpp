@@ -1,6 +1,7 @@
 #include "config.hpp"
 #include "editor_commands.hpp"
 #include "editor_core.hpp"
+#include "editor_session.hpp"
 #include "keybindings.hpp"
 #include "lsp_service.hpp"
 #include "services.hpp"
@@ -998,6 +999,65 @@ void test_editor_runtime_idle_timeout() {
     expect(!runtime.idle_wait_timeout_ms().has_value(), "stopped runtime should clear idle wakeups");
 }
 
+void test_editor_session_buffers_and_clipboard() {
+    EditorSession session;
+    expect(session.buffer_count() == 1, "session should start with one buffer");
+    expect(session.active_buffer().core.display_file_name() == "[No Name]", "initial buffer should be unnamed");
+
+    session.active_buffer().core.insert_text({0, 0}, utf8_to_u32("alpha"));
+    session.active_buffer().core.begin_selection();
+    session.active_buffer().core.move_right();
+    expect(session.active_buffer().core.yank_selection(), "initial buffer yank should succeed");
+    session.capture_active_clipboard();
+
+    std::size_t first_id = session.active_buffer_id();
+    session.new_buffer(true);
+    expect(session.buffer_count() == 2, "new buffer should be added");
+    expect(session.active_buffer_id() != first_id, "new buffer should become active");
+    expect(session.active_buffer().core.paste_after_cursor(), "shared clipboard should paste into another buffer");
+    expect_text(session.active_buffer().core, "al", "paste into second buffer should use shared clipboard");
+
+    session.active_buffer().core.insert_text({0, 2}, utf8_to_u32("beta"));
+    expect_text(session.active_buffer().core, "albeta", "second buffer should keep independent text");
+    expect(session.switch_to_id(first_id), "switch back to first buffer");
+    expect_text(session.active_buffer().core, "alpha", "first buffer text should be preserved");
+}
+
+void test_editor_session_open_and_close_rules() {
+    EditorSession session;
+    std::filesystem::path temp_dir = std::filesystem::temp_directory_path() / "medit_session_test";
+    std::filesystem::create_directories(temp_dir);
+    std::filesystem::path first_path = temp_dir / "first.txt";
+    std::filesystem::path second_path = temp_dir / "second.txt";
+
+    {
+        std::ofstream output(first_path);
+        output << "first\n";
+    }
+    {
+        std::ofstream output(second_path);
+        output << "second\n";
+    }
+
+    EditorBuffer *first = session.open_file(first_path.string(), true);
+    expect(first != nullptr, "open first file should succeed");
+    expect(session.buffer_count() == 2, "opening a file should keep current buffer and add one");
+    expect(first->core.display_file_name() == first_path.string(), "opened file name should match path");
+
+    EditorBuffer *second = session.open_file(second_path.string(), true);
+    expect(second != nullptr, "open second file should succeed");
+    expect(session.buffer_count() == 3, "opening second file should add another buffer");
+
+    session.active_buffer().core.insert_codepoint(U'!');
+    expect(!session.close_active_buffer(false), "closing dirty buffer without force should fail");
+    expect(session.buffer_count() == 3, "failed close should keep buffer count");
+    std::vector<EditorEvent> close_events;
+    expect(session.close_active_buffer(true, &close_events), "force closing dirty buffer should succeed");
+    expect(session.buffer_count() == 2, "force close should remove buffer");
+    expect(!close_events.empty(), "closing a buffer should emit close events");
+    expect_event_type(close_events.back(), EditorEventType::DocumentClosed, "close should emit document closed");
+}
+
 }  // namespace
 
 int main() {
@@ -1035,6 +1095,8 @@ int main() {
         test_lsp_service_reports_startup_failures();
         test_editor_runtime_service_boundary();
         test_editor_runtime_idle_timeout();
+        test_editor_session_buffers_and_clipboard();
+        test_editor_session_open_and_close_rules();
     } catch (const std::exception &error) {
         std::cerr << "test failure: " << error.what() << '\n';
         return 1;

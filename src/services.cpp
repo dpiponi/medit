@@ -59,6 +59,12 @@ void EditorRuntime::process(EditorCore &core) {
     poll_services();
 }
 
+void EditorRuntime::dispatch_editor_event(const EditorEvent &event) {
+    for (const std::unique_ptr<EditorService> &service : services_) {
+        service->handle_editor_event(event);
+    }
+}
+
 void EditorRuntime::dispatch_editor_events(EditorCore &core) {
     std::vector<EditorEvent> events = core.take_events();
     if (events.empty()) {
@@ -66,9 +72,7 @@ void EditorRuntime::dispatch_editor_events(EditorCore &core) {
     }
 
     for (const EditorEvent &event : events) {
-        for (const std::unique_ptr<EditorService> &service : services_) {
-            service->handle_editor_event(event);
-        }
+        dispatch_editor_event(event);
     }
 }
 

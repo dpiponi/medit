@@ -46,6 +46,7 @@ class EditorRuntime {
     void start_services();
     void stop_services();
     void process(EditorCore &core);
+    void dispatch_editor_event(const EditorEvent &event);
     void dispatch_editor_events(EditorCore &core);
     void poll_services();
     std::optional<int> idle_wait_timeout_ms() const;

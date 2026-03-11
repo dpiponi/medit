@@ -1,6 +1,7 @@
 #include "config.hpp"
 #include "editor_commands.hpp"
 #include "editor_core.hpp"
+#include "editor_session.hpp"
 #include "keybindings.hpp"
 #include "lsp_service.hpp"
 #include "services.hpp"
@@ -15,6 +16,7 @@
 #include <exception>
 #include <limits>
 #include <memory>
+#include <map>
 #include <curses.h>
 #include <optional>
 #include <regex>
@@ -47,13 +49,31 @@ struct EditorState {
         bool printable = false;
     };
 
-    EditorCore core;
+    struct BufferUiState {
+        std::size_t row_offset = 0;
+        std::size_t col_offset = 0;
+        std::u32string active_search_pattern;
+        std::vector<Range> search_matches;
+        std::optional<std::size_t> current_search_match_index;
+        Position search_origin;
+        bool search_pattern_valid = true;
+        std::string compiled_search_pattern_utf8;
+        std::unique_ptr<std::regex> compiled_search_regex;
+        std::size_t search_matches_version = 0;
+        std::optional<std::size_t> selected_diagnostic_index;
+        SyntaxMode syntax_mode = SyntaxMode::None;
+        std::vector<std::vector<HighlightSpan>> syntax_highlights;
+        std::size_t syntax_revision = std::numeric_limits<std::size_t>::max();
+        std::optional<std::string> syntax_file_path;
+        bool syntax_config_error_reported = false;
+    };
+
+    EditorSession session;
     EditorRuntime runtime;
     EditorConfig config;
     KeyBindings keybindings;
     Theme theme = load_embedded_theme();
-    std::size_t row_offset = 0;
-    std::size_t col_offset = 0;
+    std::map<std::size_t, BufferUiState> buffer_ui;
     bool should_quit = false;
     Mode mode = Mode::Normal;
     std::u32string command_buffer;
@@ -61,20 +81,6 @@ struct EditorState {
     std::string status_message = "NORMAL";
     std::vector<std::string> pending_tokens;
     PendingMotion pending_motion = PendingMotion::None;
-    std::u32string active_search_pattern;
-    std::vector<Range> search_matches;
-    std::optional<std::size_t> current_search_match_index;
-    Position search_origin;
-    bool search_pattern_valid = true;
-    std::string compiled_search_pattern_utf8;
-    std::unique_ptr<std::regex> compiled_search_regex;
-    std::size_t search_matches_version = 0;
-    std::optional<std::size_t> selected_diagnostic_index;
-    SyntaxMode syntax_mode = SyntaxMode::None;
-    std::vector<std::vector<HighlightSpan>> syntax_highlights;
-    std::size_t syntax_revision = std::numeric_limits<std::size_t>::max();
-    std::optional<std::string> syntax_file_path;
-    bool syntax_config_error_reported = false;
     std::string repeat_digits;
     std::size_t pending_motion_repeat_count = 1;
     std::size_t replay_depth = 0;
@@ -82,6 +88,34 @@ struct EditorState {
     std::size_t group_repeat_count = 1;
     std::vector<RecordedInput> group_inputs;
 };
+
+EditorBuffer &active_buffer(EditorState &state) {
+    return state.session.active_buffer();
+}
+
+const EditorBuffer &active_buffer(const EditorState &state) {
+    return state.session.active_buffer();
+}
+
+EditorCore &active_core(EditorState &state) {
+    return active_buffer(state).core;
+}
+
+const EditorCore &active_core(const EditorState &state) {
+    return active_buffer(state).core;
+}
+
+EditorState::BufferUiState &active_buffer_ui(EditorState &state) {
+    return state.buffer_ui.try_emplace(state.session.active_buffer_id()).first->second;
+}
+
+const EditorState::BufferUiState &active_buffer_ui(const EditorState &state) {
+    auto found = state.buffer_ui.find(state.session.active_buffer_id());
+    if (found != state.buffer_ui.end()) {
+        return found->second;
+    }
+    return const_cast<EditorState &>(state).buffer_ui.try_emplace(state.session.active_buffer_id()).first->second;
+}
 
 struct DiagnosticEntryView {
     std::size_t index = 0;
@@ -215,8 +249,9 @@ void suspend_editor(EditorState &state) {
 }
 
 void enter_normal_mode(EditorState &state) {
+    EditorCore &core = active_core(state);
     if (state.mode == Mode::Visual || state.mode == Mode::VisualLine) {
-        state.core.clear_selection();
+        core.clear_selection();
     }
     state.mode = Mode::Normal;
     state.command_buffer.clear();
@@ -225,16 +260,16 @@ void enter_normal_mode(EditorState &state) {
     state.pending_motion_repeat_count = 1;
     state.repeat_digits.clear();
     state.search_buffer.clear();
-    Position cursor = state.core.cursor();
-    std::size_t length = state.core.line_length(cursor.row);
+    Position cursor = core.cursor();
+    std::size_t length = core.line_length(cursor.row);
     if (cursor.column > 0 && cursor.column == length) {
-        state.core.set_cursor({cursor.row, cursor.column - 1});
+        core.set_cursor({cursor.row, cursor.column - 1});
     }
     set_status(state, mode_name(state.mode));
 }
 
 void enter_insert_mode(EditorState &state) {
-    state.core.clear_selection();
+    active_core(state).clear_selection();
     state.mode = Mode::Insert;
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
@@ -245,7 +280,7 @@ void enter_insert_mode(EditorState &state) {
 }
 
 void enter_command_mode(EditorState &state) {
-    state.core.clear_selection();
+    active_core(state).clear_selection();
     state.mode = Mode::Command;
     state.command_buffer.clear();
     state.pending_tokens.clear();
@@ -257,10 +292,12 @@ void enter_command_mode(EditorState &state) {
 }
 
 void enter_search_mode(EditorState &state) {
-    state.core.clear_selection();
+    EditorCore &core = active_core(state);
+    EditorState::BufferUiState &buffer_ui = active_buffer_ui(state);
+    core.clear_selection();
     state.mode = Mode::Search;
-    state.search_buffer = state.active_search_pattern;
-    state.search_origin = state.core.cursor();
+    state.search_buffer = buffer_ui.active_search_pattern;
+    buffer_ui.search_origin = core.cursor();
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
     state.pending_motion_repeat_count = 1;
@@ -269,7 +306,7 @@ void enter_search_mode(EditorState &state) {
 }
 
 bool can_quit_without_force(const EditorState &state) {
-    return !state.core.is_dirty();
+    return !state.session.has_dirty_buffers();
 }
 
 void quit_editor(EditorState &state) {
@@ -277,15 +314,16 @@ void quit_editor(EditorState &state) {
 }
 
 void handle_write_command(EditorState &state, const std::string &argument) {
+    EditorCore &core = active_core(state);
     if (argument.empty()) {
-        if (state.core.save_current_file()) {
-            set_status(state, "Wrote " + state.core.display_file_name());
+        if (core.save_current_file()) {
+            set_status(state, "Wrote " + core.display_file_name());
         } else {
-            set_status(state, state.core.file_path() ? "Write failed" : "No file name");
+            set_status(state, core.file_path() ? "Write failed" : "No file name");
         }
         return;
     }
-    if (state.core.save_current_file_as(argument)) {
+    if (core.save_current_file_as(argument)) {
         set_status(state, "Wrote " + argument);
     } else {
         set_status(state, "Write failed");
@@ -297,9 +335,9 @@ void handle_edit_command(EditorState &state, const std::string &argument) {
         set_status(state, "No file name");
         return;
     }
-    if (state.core.load_file(argument)) {
-        state.row_offset = 0;
-        state.col_offset = 0;
+    EditorBuffer *buffer = state.session.open_file(argument, true);
+    if (buffer) {
+        state.buffer_ui[buffer->id] = EditorState::BufferUiState{};
         set_status(state, "Opened " + argument);
     } else {
         set_status(state, "Could not open file");
@@ -308,7 +346,7 @@ void handle_edit_command(EditorState &state, const std::string &argument) {
 
 std::vector<DiagnosticEntryView> sorted_diagnostics(const EditorState &state) {
     std::vector<DiagnosticEntryView> diagnostics;
-    const std::vector<Diagnostic> &source = state.core.diagnostics();
+    const std::vector<Diagnostic> &source = active_core(state).diagnostics();
     diagnostics.reserve(source.size());
     for (std::size_t index = 0; index < source.size(); ++index) {
         diagnostics.push_back({index, source[index]});
@@ -325,29 +363,32 @@ std::vector<DiagnosticEntryView> sorted_diagnostics(const EditorState &state) {
 }
 
 void normalize_selected_diagnostic(EditorState &state) {
-    if (state.core.diagnostics().empty()) {
-        state.selected_diagnostic_index.reset();
+    EditorState::BufferUiState &buffer_ui = active_buffer_ui(state);
+    if (active_core(state).diagnostics().empty()) {
+        buffer_ui.selected_diagnostic_index.reset();
         return;
     }
-    if (!state.selected_diagnostic_index || *state.selected_diagnostic_index >= state.core.diagnostics().size()) {
-        state.selected_diagnostic_index = 0;
+    if (!buffer_ui.selected_diagnostic_index || *buffer_ui.selected_diagnostic_index >= active_core(state).diagnostics().size()) {
+        buffer_ui.selected_diagnostic_index = 0;
     }
 }
 
 void focus_diagnostic(EditorState &state, std::size_t diagnostic_index) {
-    const std::vector<Diagnostic> &diagnostics = state.core.diagnostics();
+    EditorState::BufferUiState &buffer_ui = active_buffer_ui(state);
+    EditorCore &core = active_core(state);
+    const std::vector<Diagnostic> &diagnostics = core.diagnostics();
     if (diagnostic_index >= diagnostics.size()) {
         return;
     }
-    state.selected_diagnostic_index = diagnostic_index;
+    buffer_ui.selected_diagnostic_index = diagnostic_index;
     Range range = normalized_range(diagnostics[diagnostic_index].range);
-    state.core.set_cursor(range.start);
+    core.set_cursor(range.start);
 }
 
 void show_diagnostics_summary(EditorState &state) {
     std::size_t errors = 0;
     std::size_t warnings = 0;
-    for (const Diagnostic &diagnostic : state.core.diagnostics()) {
+    for (const Diagnostic &diagnostic : active_core(state).diagnostics()) {
         if (diagnostic.severity == DiagnosticSeverity::Error) {
             ++errors;
         } else {
@@ -371,18 +412,19 @@ void show_diagnostics_summary(EditorState &state) {
 }
 
 void navigate_diagnostic(EditorState &state, bool forward) {
+    EditorState::BufferUiState &buffer_ui = active_buffer_ui(state);
     std::vector<DiagnosticEntryView> diagnostics = sorted_diagnostics(state);
     if (diagnostics.empty()) {
-        state.selected_diagnostic_index.reset();
+        buffer_ui.selected_diagnostic_index.reset();
         set_status(state, "No diagnostics");
         return;
     }
 
     std::size_t current_sorted_index = 0;
     bool found_current = false;
-    if (state.selected_diagnostic_index) {
+    if (buffer_ui.selected_diagnostic_index) {
         for (std::size_t index = 0; index < diagnostics.size(); ++index) {
-            if (diagnostics[index].index == *state.selected_diagnostic_index) {
+            if (diagnostics[index].index == *buffer_ui.selected_diagnostic_index) {
                 current_sorted_index = index;
                 found_current = true;
                 break;
@@ -390,7 +432,7 @@ void navigate_diagnostic(EditorState &state, bool forward) {
         }
     }
     if (!found_current) {
-        Position cursor = state.core.cursor();
+        Position cursor = active_core(state).cursor();
         for (std::size_t index = 0; index < diagnostics.size(); ++index) {
             Range range = normalized_range(diagnostics[index].diagnostic.range);
             if (!position_less_than(range.start, cursor)) {
@@ -420,7 +462,7 @@ void navigate_diagnostic(EditorState &state, bool forward) {
 
 std::vector<AnnotationEntryView> sorted_annotations(const EditorState &state) {
     std::vector<AnnotationEntryView> annotations;
-    std::vector<InlineAnnotation> projected = state.core.projected_annotations();
+    std::vector<InlineAnnotation> projected = active_core(state).projected_annotations();
     annotations.reserve(projected.size());
 
     std::vector<DiagnosticEntryView> diagnostics = sorted_diagnostics(state);
@@ -489,7 +531,7 @@ std::vector<VisualRow> build_visual_rows(const EditorState &state, int buffer_co
     std::vector<AnnotationEntryView> annotations = sorted_annotations(state);
     std::size_t annotation_index = 0;
 
-    for (std::size_t row = 0; row < state.core.line_count(); ++row) {
+    for (std::size_t row = 0; row < active_core(state).line_count(); ++row) {
         rows.push_back({VisualRowKind::SourceLine, row, 0, std::nullopt});
         while (annotation_index < annotations.size()) {
             Range range = normalized_range(annotations[annotation_index].annotation.range);
@@ -525,19 +567,82 @@ void handle_quit_command(EditorState &state, bool force) {
 }
 
 void handle_write_quit_command(EditorState &state, const std::string &argument) {
+    EditorCore &core = active_core(state);
     if (argument.empty()) {
-        if (!state.core.save_current_file()) {
-            set_status(state, state.core.file_path() ? "Write failed" : "No file name");
+        if (!core.save_current_file()) {
+            set_status(state, core.file_path() ? "Write failed" : "No file name");
+            return;
+        }
+        if (!can_quit_without_force(state)) {
+            set_status(state, "Other buffers still have unsaved changes");
             return;
         }
         quit_editor(state);
         return;
     }
-    if (!state.core.save_current_file_as(argument)) {
+    if (!core.save_current_file_as(argument)) {
         set_status(state, "Write failed");
         return;
     }
+    if (!can_quit_without_force(state)) {
+        set_status(state, "Other buffers still have unsaved changes");
+        return;
+    }
     quit_editor(state);
+}
+
+std::string buffers_summary(const EditorState &state) {
+    std::ostringstream message;
+    const std::vector<EditorBuffer> &buffers = state.session.buffers();
+    for (std::size_t index = 0; index < buffers.size(); ++index) {
+        if (index > 0) {
+            message << " | ";
+        }
+        const EditorBuffer &buffer = buffers[index];
+        if (index == state.session.active_buffer_index()) {
+            message << "*";
+        }
+        message << buffer.id << ":" << buffer.core.display_file_name();
+        if (buffer.core.is_dirty()) {
+            message << "[+]";
+        }
+    }
+    return message.str();
+}
+
+void handle_buffer_switch_command(EditorState &state, const std::string &argument) {
+    if (argument.empty()) {
+        set_status(state, "No buffer id");
+        return;
+    }
+    std::size_t buffer_id = 0;
+    try {
+        buffer_id = static_cast<std::size_t>(std::stoul(argument));
+    } catch (const std::exception &) {
+        set_status(state, "Invalid buffer id");
+        return;
+    }
+    if (state.session.switch_to_id(buffer_id)) {
+        set_status(state, "Switched to " + active_core(state).display_file_name());
+    } else {
+        set_status(state, "No such buffer");
+    }
+}
+
+void handle_buffer_delete_command(EditorState &state, bool force) {
+    std::size_t closing_id = state.session.active_buffer_id();
+    std::string closing_name = active_core(state).display_file_name();
+    std::vector<EditorEvent> closed_events;
+    if (!state.session.close_active_buffer(force, &closed_events)) {
+        set_status(state, "Unsaved changes; use :bd! to close");
+        return;
+    }
+    for (const EditorEvent &event : closed_events) {
+        state.runtime.dispatch_editor_event(event);
+    }
+    state.buffer_ui.erase(closing_id);
+    active_buffer_ui(state);
+    set_status(state, "Closed " + closing_name);
 }
 
 void execute_command(EditorState &state) {
@@ -566,6 +671,20 @@ void execute_command(EditorState &state) {
         handle_write_quit_command(state, argument);
     } else if (verb == "e") {
         handle_edit_command(state, argument);
+    } else if (verb == "buffers") {
+        set_status(state, buffers_summary(state));
+    } else if (verb == "buffer") {
+        handle_buffer_switch_command(state, argument);
+    } else if (verb == "bnext") {
+        state.session.next_buffer();
+        set_status(state, "Switched to " + active_core(state).display_file_name());
+    } else if (verb == "bprev") {
+        state.session.previous_buffer();
+        set_status(state, "Switched to " + active_core(state).display_file_name());
+    } else if (verb == "bd") {
+        handle_buffer_delete_command(state, false);
+    } else if (verb == "bd!") {
+        handle_buffer_delete_command(state, true);
     } else if (verb == "diagnostics") {
         show_diagnostics_summary(state);
     } else {
@@ -600,85 +719,94 @@ std::size_t column_for_utf8_offset_in_line(const std::u32string &line, std::size
 }
 
 void rebuild_search_matches(EditorState &state) {
-    state.search_matches.clear();
-    state.current_search_match_index.reset();
-    state.search_pattern_valid = true;
-    state.search_matches_version = state.core.document_version();
+    EditorState::BufferUiState &buffer_ui = active_buffer_ui(state);
+    const EditorCore &core = active_core(state);
+    buffer_ui.search_matches.clear();
+    buffer_ui.current_search_match_index.reset();
+    buffer_ui.search_pattern_valid = true;
+    buffer_ui.search_matches_version = core.document_version();
 
-    if (state.active_search_pattern.empty()) {
-        state.compiled_search_pattern_utf8.clear();
-        state.compiled_search_regex.reset();
+    if (buffer_ui.active_search_pattern.empty()) {
+        buffer_ui.compiled_search_pattern_utf8.clear();
+        buffer_ui.compiled_search_regex.reset();
         return;
     }
 
     try {
-        state.compiled_search_pattern_utf8 = u32_to_utf8(state.active_search_pattern);
-        state.compiled_search_regex =
-            std::make_unique<std::regex>(state.compiled_search_pattern_utf8, std::regex::ECMAScript | std::regex::optimize);
+        buffer_ui.compiled_search_pattern_utf8 = u32_to_utf8(buffer_ui.active_search_pattern);
+        buffer_ui.compiled_search_regex = std::make_unique<std::regex>(
+            buffer_ui.compiled_search_pattern_utf8,
+            std::regex::ECMAScript | std::regex::optimize);
 
-        for (std::size_t row = 0; row < state.core.line_count(); ++row) {
-            const std::u32string &line = state.core.lines()[row];
+        for (std::size_t row = 0; row < core.line_count(); ++row) {
+            const std::u32string &line = core.lines()[row];
             std::string line_utf8 = u32_to_utf8(line);
-            for (std::sregex_iterator it(line_utf8.begin(), line_utf8.end(), *state.compiled_search_regex), end; it != end; ++it) {
+            for (std::sregex_iterator it(line_utf8.begin(), line_utf8.end(), *buffer_ui.compiled_search_regex), end;
+                 it != end;
+                 ++it) {
                 if (it->length() == 0) {
                     continue;
                 }
                 std::size_t start_offset = static_cast<std::size_t>(it->position());
                 std::size_t end_offset = start_offset + static_cast<std::size_t>(it->length());
-                state.search_matches.push_back(
+                buffer_ui.search_matches.push_back(
                     {{row, column_for_utf8_offset_in_line(line, start_offset)},
                      {row, column_for_utf8_offset_in_line(line, end_offset)}});
             }
         }
     } catch (const std::regex_error &) {
-        state.search_pattern_valid = false;
-        state.compiled_search_regex.reset();
+        buffer_ui.search_pattern_valid = false;
+        buffer_ui.compiled_search_regex.reset();
     }
 }
 
 void refresh_search_matches(EditorState &state, bool move_to_best_match) {
-    if (state.search_matches_version != state.core.document_version() ||
-        state.compiled_search_pattern_utf8 != u32_to_utf8(state.active_search_pattern)) {
+    EditorState::BufferUiState &buffer_ui = active_buffer_ui(state);
+    EditorCore &core = active_core(state);
+    if (buffer_ui.search_matches_version != core.document_version() ||
+        buffer_ui.compiled_search_pattern_utf8 != u32_to_utf8(buffer_ui.active_search_pattern)) {
         rebuild_search_matches(state);
     }
 
-    if (!state.search_pattern_valid || state.search_matches.empty()) {
+    if (!buffer_ui.search_pattern_valid || buffer_ui.search_matches.empty()) {
         if (move_to_best_match) {
-            state.current_search_match_index.reset();
+            buffer_ui.current_search_match_index.reset();
         }
         return;
     }
 
-    Position anchor = move_to_best_match ? state.search_origin : state.core.cursor();
+    Position anchor = move_to_best_match ? buffer_ui.search_origin : core.cursor();
     std::size_t best_index = 0;
     bool found_best = false;
-    for (std::size_t index = 0; index < state.search_matches.size(); ++index) {
-        if (!position_less_than(state.search_matches[index].start, anchor)) {
+    for (std::size_t index = 0; index < buffer_ui.search_matches.size(); ++index) {
+        if (!position_less_than(buffer_ui.search_matches[index].start, anchor)) {
             best_index = index;
             found_best = true;
             break;
         }
     }
-    state.current_search_match_index = found_best ? best_index : 0;
+    buffer_ui.current_search_match_index = found_best ? best_index : 0;
     if (move_to_best_match) {
-        state.core.set_cursor(state.search_matches[*state.current_search_match_index].start);
+        core.set_cursor(buffer_ui.search_matches[*buffer_ui.current_search_match_index].start);
     }
 }
 
 void navigate_search_match(EditorState &state, bool forward) {
-    if (state.search_matches.empty()) {
-        set_status(state, state.search_pattern_valid ? "No search matches" : "invalid regex");
+    EditorState::BufferUiState &buffer_ui = active_buffer_ui(state);
+    EditorCore &core = active_core(state);
+    if (buffer_ui.search_matches.empty()) {
+        set_status(state, buffer_ui.search_pattern_valid ? "No search matches" : "invalid regex");
         return;
     }
 
-    std::size_t index = state.current_search_match_index.value_or(0);
+    std::size_t index = buffer_ui.current_search_match_index.value_or(0);
     if (forward) {
-        index = (index + 1) % state.search_matches.size();
+        index = (index + 1) % buffer_ui.search_matches.size();
     } else {
-        index = index == 0 ? state.search_matches.size() - 1 : index - 1;
+        index = index == 0 ? buffer_ui.search_matches.size() - 1 : index - 1;
     }
-    state.current_search_match_index = index;
-    state.core.set_cursor(state.search_matches[index].start);
+    buffer_ui.current_search_match_index = index;
+    core.set_cursor(buffer_ui.search_matches[index].start);
     set_status(state, forward ? "Next match" : "Previous match");
 }
 
@@ -696,31 +824,34 @@ std::size_t display_width(const std::u32string &line) {
 }
 
 void ensure_horizontal_visibility(EditorState &state, int screen_cols) {
-    Position cursor = state.core.cursor();
-    const std::u32string &line = state.core.lines()[cursor.row];
+    EditorState::BufferUiState &buffer_ui = active_buffer_ui(state);
+    const EditorCore &core = active_core(state);
+    Position cursor = core.cursor();
+    const std::u32string &line = core.lines()[cursor.row];
     std::size_t cursor_x = display_width_until(line, cursor.column);
     std::size_t usable_cols = screen_cols > 0 ? static_cast<std::size_t>(screen_cols) : 1;
 
-    while (state.col_offset > cursor_x) {
-        --state.col_offset;
+    while (buffer_ui.col_offset > cursor_x) {
+        --buffer_ui.col_offset;
     }
-    while (cursor_x >= state.col_offset + usable_cols) {
-        ++state.col_offset;
+    while (cursor_x >= buffer_ui.col_offset + usable_cols) {
+        ++buffer_ui.col_offset;
     }
 }
 
 void ensure_vertical_visibility(EditorState &state, int screen_rows, int buffer_cols) {
+    EditorState::BufferUiState &buffer_ui = active_buffer_ui(state);
     std::size_t usable_rows = screen_rows > 0 ? static_cast<std::size_t>(screen_rows) : 1;
     std::vector<VisualRow> visual_rows = build_visual_rows(state, buffer_cols);
-    std::size_t cursor_visual_row = visual_row_for_buffer_row(visual_rows, state.core.cursor().row);
-    if (cursor_visual_row < state.row_offset) {
-        state.row_offset = cursor_visual_row;
+    std::size_t cursor_visual_row = visual_row_for_buffer_row(visual_rows, active_core(state).cursor().row);
+    if (cursor_visual_row < buffer_ui.row_offset) {
+        buffer_ui.row_offset = cursor_visual_row;
     }
-    while (cursor_visual_row >= state.row_offset + usable_rows) {
-        ++state.row_offset;
+    while (cursor_visual_row >= buffer_ui.row_offset + usable_rows) {
+        ++buffer_ui.row_offset;
     }
-    if (state.row_offset > 0 && state.row_offset >= visual_rows.size()) {
-        state.row_offset = visual_rows.empty() ? 0 : visual_rows.size() - 1;
+    if (buffer_ui.row_offset > 0 && buffer_ui.row_offset >= visual_rows.size()) {
+        buffer_ui.row_offset = visual_rows.empty() ? 0 : visual_rows.size() - 1;
     }
 }
 
@@ -798,49 +929,51 @@ StyleRole resolve_style_role(
 }
 
 std::vector<HighlightSpan> collect_line_highlights(const EditorState &state, std::size_t row) {
+    const EditorCore &core = active_core(state);
+    const EditorState::BufferUiState &buffer_ui = active_buffer_ui(state);
     std::vector<HighlightSpan> spans;
-    Range entire_line = state.core.line_range(row);
-    if (row < state.syntax_highlights.size()) {
-        spans.insert(spans.end(), state.syntax_highlights[row].begin(), state.syntax_highlights[row].end());
+    Range entire_line = core.line_range(row);
+    if (row < buffer_ui.syntax_highlights.size()) {
+        spans.insert(spans.end(), buffer_ui.syntax_highlights[row].begin(), buffer_ui.syntax_highlights[row].end());
     }
-    if (state.core.cursor().row == row) {
+    if (core.cursor().row == row) {
         spans.push_back({entire_line, StyleRole::CursorLine, 10});
     }
-    std::optional<Range> selection = state.core.selection_range();
+    std::optional<Range> selection = core.selection_range();
     if (selection && row >= selection->start.row && row <= selection->end.row) {
         Range line_selection{
             {row, row == selection->start.row ? selection->start.column : 0},
-            {row, row == selection->end.row ? selection->end.column : state.core.line_length(row)}};
+            {row, row == selection->end.row ? selection->end.column : core.line_length(row)}};
         if (!positions_equal(line_selection.start, line_selection.end)) {
             spans.push_back({line_selection, StyleRole::Selection, 100});
         }
     }
-    for (std::size_t index = 0; index < state.search_matches.size(); ++index) {
-        const Range &match = state.search_matches[index];
+    for (std::size_t index = 0; index < buffer_ui.search_matches.size(); ++index) {
+        const Range &match = buffer_ui.search_matches[index];
         if (row < match.start.row || row > match.end.row) {
             continue;
         }
         Range line_match{
             {row, row == match.start.row ? match.start.column : 0},
-            {row, row == match.end.row ? match.end.column : state.core.line_length(row)}};
+            {row, row == match.end.row ? match.end.column : core.line_length(row)}};
         if (positions_equal(line_match.start, line_match.end)) {
             continue;
         }
         StyleRole role =
-            state.current_search_match_index && *state.current_search_match_index == index
+            buffer_ui.current_search_match_index && *buffer_ui.current_search_match_index == index
                 ? StyleRole::SearchMatchCurrent
                 : StyleRole::SearchMatch;
         int priority = role == StyleRole::SearchMatchCurrent ? 95 : 90;
         spans.push_back({line_match, role, priority});
     }
-    for (const Diagnostic &diagnostic : state.core.diagnostics()) {
+    for (const Diagnostic &diagnostic : core.diagnostics()) {
         Range range = normalized_range(diagnostic.range);
         if (row < range.start.row || row > range.end.row) {
             continue;
         }
         Range line_diagnostic{
             {row, row == range.start.row ? range.start.column : 0},
-            {row, row == range.end.row ? range.end.column : state.core.line_length(row)}};
+            {row, row == range.end.row ? range.end.column : core.line_length(row)}};
         if (positions_equal(line_diagnostic.start, line_diagnostic.end)) {
             continue;
         }
@@ -921,9 +1054,11 @@ std::u32string annotation_prefix(const InlineAnnotation &annotation) {
 }
 
 void draw_buffer_rows(const EditorState &state, int buffer_rows, int buffer_cols, int line_number_width) {
+    const EditorCore &core = active_core(state);
+    const EditorState::BufferUiState &buffer_ui = active_buffer_ui(state);
     std::vector<VisualRow> visual_rows = build_visual_rows(state, buffer_cols);
     for (int screen_row = 0; screen_row < buffer_rows; ++screen_row) {
-        std::size_t visual_row_index = state.row_offset + static_cast<std::size_t>(screen_row);
+        std::size_t visual_row_index = buffer_ui.row_offset + static_cast<std::size_t>(screen_row);
         move(screen_row, 0);
         clrtoeol();
         if (visual_row_index >= visual_rows.size()) {
@@ -934,25 +1069,25 @@ void draw_buffer_rows(const EditorState &state, int buffer_rows, int buffer_cols
         const VisualRow &visual_row = visual_rows[visual_row_index];
         if (visual_row.kind == VisualRowKind::SourceLine) {
             StyleRole line_number_role =
-                state.core.cursor().row == visual_row.buffer_row ? StyleRole::CursorLineNumber : StyleRole::LineNumber;
+                core.cursor().row == visual_row.buffer_row ? StyleRole::CursorLineNumber : StyleRole::LineNumber;
             draw_line_number(state.theme, screen_row, visual_row.buffer_row + 1, line_number_width, line_number_role);
             std::vector<HighlightSpan> spans = collect_line_highlights(state, visual_row.buffer_row);
             draw_styled_line(
                 state.theme,
                 screen_row,
                 line_number_width + 1,
-                state.core.lines()[visual_row.buffer_row],
+                core.lines()[visual_row.buffer_row],
                 spans,
                 visual_row.buffer_row,
-                state.col_offset,
+                buffer_ui.col_offset,
                 buffer_cols);
             continue;
         }
 
         const AnnotationEntryView &annotation = *visual_row.annotation;
         StyleRole role =
-            annotation.diagnostic_index && state.selected_diagnostic_index &&
-                    *annotation.diagnostic_index == *state.selected_diagnostic_index
+            annotation.diagnostic_index && buffer_ui.selected_diagnostic_index &&
+                    *annotation.diagnostic_index == *buffer_ui.selected_diagnostic_index
                 ? StyleRole::StatusBar
                 : annotation_role(annotation.annotation);
         TextStyle style = theme_style(state.theme, role);
@@ -972,14 +1107,16 @@ void draw_buffer_rows(const EditorState &state, int buffer_rows, int buffer_cols
 }
 
 std::string build_status_text(const EditorState &state) {
-    Position cursor = state.core.cursor();
+    const EditorCore &core = active_core(state);
+    Position cursor = core.cursor();
     std::ostringstream status;
-    status << mode_name(state.mode) << "  " << state.core.display_file_name();
-    if (state.core.is_dirty()) {
+    status << mode_name(state.mode) << "  " << core.display_file_name();
+    status << "  [" << (state.session.active_buffer_index() + 1) << "/" << state.session.buffer_count() << "]";
+    if (core.is_dirty()) {
         status << " [+]";
     }
     status << "  " << (cursor.row + 1) << ":" << (cursor.column + 1);
-    status << "  rev " << state.core.current_revision();
+    status << "  rev " << core.current_revision();
     return status.str();
 }
 
@@ -1019,7 +1156,7 @@ void draw_message_bar(const EditorState &state, int screen_rows, int screen_cols
 }
 
 int line_number_width(const EditorState &state) {
-    std::size_t line_count = state.core.line_count();
+    std::size_t line_count = active_core(state).line_count();
     int width = 1;
     while (line_count >= 10) {
         line_count /= 10;
@@ -1029,18 +1166,20 @@ int line_number_width(const EditorState &state) {
 }
 
 std::pair<int, int> cursor_screen_position(const EditorState &state, int line_number_cols) {
+    const EditorCore &core = active_core(state);
+    const EditorState::BufferUiState &buffer_ui = active_buffer_ui(state);
     int screen_rows = 0;
     int screen_cols = 0;
     getmaxyx(stdscr, screen_rows, screen_cols);
     (void)screen_rows;
     int buffer_cols = screen_cols - line_number_cols - 1;
     std::vector<VisualRow> visual_rows = build_visual_rows(state, buffer_cols);
-    std::size_t visual_row_index = visual_row_for_buffer_row(visual_rows, state.core.cursor().row);
-    Position cursor = state.core.cursor();
-    const std::u32string &line = state.core.lines()[cursor.row];
+    std::size_t visual_row_index = visual_row_for_buffer_row(visual_rows, core.cursor().row);
+    Position cursor = core.cursor();
+    const std::u32string &line = core.lines()[cursor.row];
     std::size_t width = display_width_until(line, cursor.column);
-    int screen_row = static_cast<int>(visual_row_index - state.row_offset);
-    int screen_col = static_cast<int>(width - state.col_offset) + line_number_cols + 1;
+    int screen_row = static_cast<int>(visual_row_index - buffer_ui.row_offset);
+    int screen_col = static_cast<int>(width - buffer_ui.col_offset) + line_number_cols + 1;
     return {screen_row, screen_col};
 }
 
@@ -1057,6 +1196,8 @@ std::size_t column_for_display_width(const std::u32string &line, std::size_t tar
 }
 
 std::optional<Position> buffer_position_from_screen_point(const EditorState &state, int screen_row, int screen_col) {
+    const EditorCore &core = active_core(state);
+    const EditorState::BufferUiState &buffer_ui = active_buffer_ui(state);
     int total_rows = 0;
     int total_cols = 0;
     getmaxyx(stdscr, total_rows, total_cols);
@@ -1068,7 +1209,7 @@ std::optional<Position> buffer_position_from_screen_point(const EditorState &sta
     int line_number_cols = line_number_width(state);
     int buffer_cols = total_cols - line_number_cols - 1;
     std::vector<VisualRow> visual_rows = build_visual_rows(state, buffer_cols);
-    std::size_t visual_row_index = state.row_offset + static_cast<std::size_t>(screen_row);
+    std::size_t visual_row_index = buffer_ui.row_offset + static_cast<std::size_t>(screen_row);
     if (visual_row_index >= visual_rows.size()) {
         return std::nullopt;
     }
@@ -1076,12 +1217,12 @@ std::optional<Position> buffer_position_from_screen_point(const EditorState &sta
     std::size_t row = visual_row.buffer_row;
 
     int gutter_start = line_number_cols + 1;
-    std::size_t visual_column = state.col_offset;
+    std::size_t visual_column = buffer_ui.col_offset;
     if (screen_col > gutter_start) {
         visual_column += static_cast<std::size_t>(screen_col - gutter_start);
     }
 
-    const std::u32string &line = state.core.lines()[row];
+    const std::u32string &line = core.lines()[row];
     return Position{row, column_for_display_width(line, visual_column)};
 }
 
@@ -1105,33 +1246,36 @@ void draw_editor(const EditorState &state) {
 }
 
 void refresh_syntax_highlights(EditorState &state) {
+    EditorState::BufferUiState &buffer_ui = active_buffer_ui(state);
+    EditorCore &core = active_core(state);
     SyntaxMode mode = SyntaxMode::None;
     try {
-        mode = resolve_syntax_mode(state.config, state.core.file_path());
+        mode = resolve_syntax_mode(state.config, core.file_path());
     } catch (const std::exception &error) {
-        if (!state.syntax_config_error_reported) {
+        if (!buffer_ui.syntax_config_error_reported) {
             set_status(state, std::string("Syntax config error: ") + error.what());
-            state.syntax_config_error_reported = true;
+            buffer_ui.syntax_config_error_reported = true;
         }
         mode = SyntaxMode::None;
     }
 
-    if (state.syntax_revision == state.core.current_revision() && state.syntax_mode == mode &&
-        state.syntax_file_path == state.core.file_path()) {
+    if (buffer_ui.syntax_revision == core.current_revision() && buffer_ui.syntax_mode == mode &&
+        buffer_ui.syntax_file_path == core.file_path()) {
         return;
     }
 
-    state.syntax_mode = mode;
-    state.syntax_file_path = state.core.file_path();
-    state.syntax_revision = state.core.current_revision();
-    state.syntax_highlights = highlight_document_syntax(state.core.lines(), state.syntax_mode);
+    buffer_ui.syntax_mode = mode;
+    buffer_ui.syntax_file_path = core.file_path();
+    buffer_ui.syntax_revision = core.current_revision();
+    buffer_ui.syntax_highlights = highlight_document_syntax(core.lines(), buffer_ui.syntax_mode);
 }
 
 void append_after_cursor(EditorState &state) {
-    Position cursor = state.core.cursor();
-    std::size_t length = state.core.line_length(cursor.row);
+    EditorCore &core = active_core(state);
+    Position cursor = core.cursor();
+    std::size_t length = core.line_length(cursor.row);
     if (cursor.column < length) {
-        state.core.set_cursor({cursor.row, cursor.column + 1});
+        core.set_cursor({cursor.row, cursor.column + 1});
     }
     enter_insert_mode(state);
 }
@@ -1151,26 +1295,26 @@ int half_page_step() {
 }
 
 void page_up(EditorState &state) {
-    state.core.move_by_lines(-page_step());
+    active_core(state).move_by_lines(-page_step());
 }
 
 void page_down(EditorState &state) {
-    state.core.move_by_lines(page_step());
+    active_core(state).move_by_lines(page_step());
 }
 
 void half_page_up(EditorState &state) {
-    state.core.move_by_lines(-half_page_step());
+    active_core(state).move_by_lines(-half_page_step());
 }
 
 void half_page_down(EditorState &state) {
-    state.core.move_by_lines(half_page_step());
+    active_core(state).move_by_lines(half_page_step());
 }
 
 void enter_visual_mode(EditorState &state) {
     state.mode = Mode::Visual;
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
-    state.core.begin_selection(SelectionMode::Character);
+    active_core(state).begin_selection(SelectionMode::Character);
     set_status(state, mode_name(state.mode));
 }
 
@@ -1178,7 +1322,7 @@ void enter_visual_line_mode(EditorState &state) {
     state.mode = Mode::VisualLine;
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
-    state.core.begin_selection(SelectionMode::Line);
+    active_core(state).begin_selection(SelectionMode::Line);
     set_status(state, mode_name(state.mode));
 }
 
@@ -1187,21 +1331,22 @@ bool motion_is_character_based(PendingMotion motion) {
 }
 
 bool execute_pending_motion(EditorState &state, char32_t target) {
+    EditorCore &core = active_core(state);
     bool moved = false;
     for (std::size_t attempt = 0; attempt < state.pending_motion_repeat_count; ++attempt) {
         bool step_moved = false;
         switch (state.pending_motion) {
             case PendingMotion::FindForward:
-                step_moved = state.core.move_to_character_forward(target, true);
+                step_moved = core.move_to_character_forward(target, true);
                 break;
             case PendingMotion::FindBackward:
-                step_moved = state.core.move_to_character_backward(target, true);
+                step_moved = core.move_to_character_backward(target, true);
                 break;
             case PendingMotion::TillForward:
-                step_moved = state.core.move_to_character_forward(target, false);
+                step_moved = core.move_to_character_forward(target, false);
                 break;
             case PendingMotion::TillBackward:
-                step_moved = state.core.move_to_character_backward(target, false);
+                step_moved = core.move_to_character_backward(target, false);
                 break;
             case PendingMotion::None:
                 return false;
@@ -1441,24 +1586,26 @@ void replay_group_inputs(EditorState &state, const std::vector<EditorState::Reco
 }
 
 void execute_action(EditorState &state, EditorAction action, wint_t key) {
+    EditorCore &core = active_core(state);
+    EditorState::BufferUiState &buffer_ui = active_buffer_ui(state);
     switch (action) {
         case EditorAction::MoveLeft:
-            state.core.move_left();
+            core.move_left();
             break;
         case EditorAction::MoveRight:
-            state.core.move_right();
+            core.move_right();
             break;
         case EditorAction::MoveUp:
-            state.core.move_up();
+            core.move_up();
             break;
         case EditorAction::MoveDown:
-            state.core.move_down();
+            core.move_down();
             break;
         case EditorAction::MoveLineStart:
-            state.core.move_line_start();
+            core.move_line_start();
             break;
         case EditorAction::MoveLineEnd:
-            state.core.move_line_end();
+            core.move_line_end();
             break;
         case EditorAction::FindForward:
             state.pending_motion_repeat_count = take_repeat_count(state);
@@ -1493,51 +1640,53 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             enter_visual_line_mode(state);
             break;
         case EditorAction::AppendLineEndInsert: {
-            Position cursor = state.core.cursor();
-            state.core.set_cursor({cursor.row, state.core.line_length(cursor.row)});
+            Position cursor = core.cursor();
+            core.set_cursor({cursor.row, core.line_length(cursor.row)});
             enter_insert_mode(state);
             break;
         }
         case EditorAction::InsertLineStartInsert: {
-            Position cursor = state.core.cursor();
-            state.core.set_cursor({cursor.row, 0});
+            Position cursor = core.cursor();
+            core.set_cursor({cursor.row, 0});
             enter_insert_mode(state);
             break;
         }
         case EditorAction::OpenLineBelow:
-            state.core.open_line_below();
+            core.open_line_below();
             state.mode = Mode::Insert;
             set_status(state, mode_name(state.mode));
             break;
         case EditorAction::OpenLineAbove:
-            state.core.open_line_above();
+            core.open_line_above();
             state.mode = Mode::Insert;
             set_status(state, mode_name(state.mode));
             break;
         case EditorAction::DeleteChar:
-            state.core.delete_character_under_cursor();
+            core.delete_character_under_cursor();
             set_status(state, "Deleted character");
             break;
         case EditorAction::Undo:
-            set_status(state, state.core.undo() ? "Undid change" : "Nothing to undo");
+            set_status(state, core.undo() ? "Undid change" : "Nothing to undo");
             break;
         case EditorAction::Redo:
-            set_status(state, state.core.redo() ? "Redid change" : "Nothing to redo");
+            set_status(state, core.redo() ? "Redid change" : "Nothing to redo");
             break;
         case EditorAction::PasteAfter:
-            set_status(state, state.core.paste_after_cursor() ? "Pasted" : "Yank buffer empty");
+            state.session.sync_active_clipboard();
+            set_status(state, core.paste_after_cursor() ? "Pasted" : "Yank buffer empty");
             break;
         case EditorAction::PasteBefore:
-            set_status(state, state.core.paste_before_cursor() ? "Pasted" : "Yank buffer empty");
+            state.session.sync_active_clipboard();
+            set_status(state, core.paste_before_cursor() ? "Pasted" : "Yank buffer empty");
             break;
         case EditorAction::GotoTop:
-            state.core.move_to_first_line();
-            state.core.move_line_start();
+            core.move_to_first_line();
+            core.move_line_start();
             set_status(state, "Top of file");
             break;
         case EditorAction::GotoBottom:
-            state.core.move_to_last_line();
-            state.core.move_line_start();
+            core.move_to_last_line();
+            core.move_line_start();
             set_status(state, "Bottom of file");
             break;
         case EditorAction::EnterCommandMode:
@@ -1549,7 +1698,7 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             set_search_status(state);
             break;
         case EditorAction::DeleteLine:
-            state.core.delete_current_line();
+            core.delete_current_line();
             set_status(state, "Deleted line");
             break;
         case EditorAction::HalfPageDown:
@@ -1571,10 +1720,10 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             enter_normal_mode(state);
             break;
         case EditorAction::InsertNewline:
-            state.core.insert_newline();
+            core.insert_newline();
             break;
         case EditorAction::Backspace:
-            state.core.backspace_character();
+            core.backspace_character();
             break;
         case EditorAction::CommandExecute:
             execute_command(state);
@@ -1585,34 +1734,34 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             }
             break;
         case EditorAction::SelfInsert:
-            state.core.insert_codepoint(static_cast<char32_t>(key));
+            core.insert_codepoint(static_cast<char32_t>(key));
             break;
         case EditorAction::CommandInsert:
             state.command_buffer.push_back(static_cast<char32_t>(key));
             break;
         case EditorAction::SearchExecute:
-            state.active_search_pattern = state.search_buffer;
+            buffer_ui.active_search_pattern = state.search_buffer;
             refresh_search_matches(state, true);
-            if (!state.search_pattern_valid) {
+            if (!buffer_ui.search_pattern_valid) {
                 set_search_status(state, "invalid regex");
                 break;
             }
             state.mode = Mode::Normal;
-            set_status(state, state.search_matches.empty() ? "No search matches" : "Search applied");
+            set_status(state, buffer_ui.search_matches.empty() ? "No search matches" : "Search applied");
             break;
         case EditorAction::SearchBackspace:
             if (!state.search_buffer.empty()) {
                 state.search_buffer.pop_back();
             }
-            state.active_search_pattern = state.search_buffer;
+            buffer_ui.active_search_pattern = state.search_buffer;
             refresh_search_matches(state, true);
-            set_search_status(state, state.search_pattern_valid ? "" : "invalid regex");
+            set_search_status(state, buffer_ui.search_pattern_valid ? "" : "invalid regex");
             break;
         case EditorAction::SearchInsert:
             state.search_buffer.push_back(static_cast<char32_t>(key));
-            state.active_search_pattern = state.search_buffer;
+            buffer_ui.active_search_pattern = state.search_buffer;
             refresh_search_matches(state, true);
-            set_search_status(state, state.search_pattern_valid ? "" : "invalid regex");
+            set_search_status(state, buffer_ui.search_pattern_valid ? "" : "invalid regex");
             break;
         case EditorAction::SearchNext:
             refresh_search_matches(state, false);
@@ -1633,8 +1782,9 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             break;
         case EditorAction::DeleteSelection:
             {
-            SelectionMode selection_mode = state.core.selection_mode();
-            if (state.core.delete_selection()) {
+            SelectionMode selection_mode = core.selection_mode();
+            if (core.delete_selection()) {
+                state.session.capture_active_clipboard();
                 state.mode = Mode::Normal;
                 set_status(
                     state,
@@ -1645,9 +1795,10 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             break;
             }
         case EditorAction::YankSelection:
-            if (state.core.yank_selection()) {
-                SelectionMode selection_mode = state.core.selection_mode();
-                state.core.clear_selection();
+            if (core.yank_selection()) {
+                SelectionMode selection_mode = core.selection_mode();
+                state.session.capture_active_clipboard();
+                core.clear_selection();
                 state.mode = Mode::Normal;
                 set_status(state, selection_mode == SelectionMode::Line ? "Yanked lines" : "Yanked selection");
             } else {
@@ -1656,7 +1807,8 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             break;
         case EditorAction::ChangeSelection:
             {
-            if (state.core.delete_selection()) {
+            if (core.delete_selection()) {
+                state.session.capture_active_clipboard();
                 enter_insert_mode(state);
             } else {
                 set_status(state, "No selection");
@@ -1665,8 +1817,9 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             }
         case EditorAction::ReplaceSelectionWithYank:
             {
-            SelectionMode selection_mode = state.core.selection_mode();
-            if (state.core.replace_selection_with_yank()) {
+            state.session.sync_active_clipboard();
+            SelectionMode selection_mode = core.selection_mode();
+            if (core.replace_selection_with_yank()) {
                 state.mode = Mode::Normal;
                 set_status(
                     state,
@@ -1678,8 +1831,8 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             }
         case EditorAction::SelectInnerWord:
             if (state.mode == Mode::Visual || state.mode == Mode::VisualLine) {
-                std::optional<Range> range = state.core.inner_word_range();
-                if (range && state.core.extend_selection_to_range(*range)) {
+                std::optional<Range> range = core.inner_word_range();
+                if (range && core.extend_selection_to_range(*range)) {
                     state.mode = Mode::Visual;
                     set_status(state, "VISUAL");
                 } else {
@@ -1689,8 +1842,8 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             break;
         case EditorAction::SelectAroundWord:
             if (state.mode == Mode::Visual || state.mode == Mode::VisualLine) {
-                std::optional<Range> range = state.core.a_word_range();
-                if (range && state.core.extend_selection_to_range(*range)) {
+                std::optional<Range> range = core.a_word_range();
+                if (range && core.extend_selection_to_range(*range)) {
                     state.mode = Mode::Visual;
                     set_status(state, "VISUAL");
                 } else {
@@ -1738,7 +1891,7 @@ void handle_group_close(EditorState &state) {
     state.group_depth = 0;
     state.group_repeat_count = 1;
     replay_group_inputs(state, inputs, repeat);
-    state.core.end_compound_edit();
+    active_core(state).end_compound_edit();
     set_status(state, mode_name(state.mode));
 }
 
@@ -1746,7 +1899,7 @@ void handle_group_open(EditorState &state) {
     if (state.group_depth == 0) {
         state.group_repeat_count = take_repeat_count(state);
         state.group_inputs.clear();
-        state.core.begin_compound_edit();
+        active_core(state).begin_compound_edit();
     } else {
         record_group_input(state, "(", '(', false);
     }
@@ -1815,13 +1968,13 @@ void handle_mouse_input(EditorState &state) {
     state.pending_motion = PendingMotion::None;
     state.pending_motion_repeat_count = 1;
     state.repeat_digits.clear();
-    state.core.set_cursor(*clicked);
+    active_core(state).set_cursor(*clicked);
     if (state.mode == Mode::Command) {
         set_status(state, ":");
         return;
     }
     if (state.mode == Mode::Search) {
-        set_search_status(state, state.search_pattern_valid ? "" : "invalid regex");
+        set_search_status(state, active_buffer_ui(state).search_pattern_valid ? "" : "invalid regex");
         return;
     }
     set_status(state, mode_name(state.mode));
@@ -1871,7 +2024,22 @@ void handle_service_events(EditorState &state) {
         if (!event.command) {
             continue;
         }
-        EditorCommandResult result = apply_editor_command(state.core, *event.command);
+        EditorCommand command = *event.command;
+        if (!command.document_uri && event.document_uri) {
+            command.document_uri = event.document_uri;
+        }
+        EditorCore *target = &active_core(state);
+        if (command.document_uri) {
+            EditorBuffer *buffer = state.session.find_buffer_by_uri(*command.document_uri);
+            if (!buffer) {
+                continue;
+            }
+            if (command.type == EditorCommandType::MoveCursor) {
+                state.session.switch_to_id(buffer->id);
+            }
+            target = &buffer->core;
+        }
+        EditorCommandResult result = apply_editor_command(*target, command);
         if (result.status_message) {
             set_status(state, *result.status_message);
         }
@@ -1881,7 +2049,10 @@ void handle_service_events(EditorState &state) {
 
 void run_editor(EditorState &state) {
     while (!state.should_quit) {
-        state.runtime.process(state.core);
+        for (EditorBuffer &buffer : state.session.buffers()) {
+            state.runtime.dispatch_editor_events(buffer.core);
+        }
+        state.runtime.poll_services();
         normalize_selected_diagnostic(state);
         handle_service_events(state);
         refresh_syntax_highlights(state);
@@ -1916,8 +2087,9 @@ int main(int argc, char **argv) {
     if (!suspend_supported()) {
         remove_action_bindings(state.keybindings, EditorAction::Suspend);
     }
+    active_buffer_ui(state);
     if (argc > 1) {
-        if (state.core.load_file(argv[1])) {
+        if (active_core(state).load_file(argv[1])) {
             set_status(state, "Opened " + std::string(argv[1]));
         } else {
             set_status(state, "Could not open file");

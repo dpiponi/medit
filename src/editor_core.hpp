@@ -172,6 +172,7 @@ class EditorCore {
     std::optional<Range> selection_range() const;
     std::u32string yank_buffer() const;
     SelectionMode yank_mode() const;
+    void set_yank_buffer(std::u32string text, SelectionMode mode);
     const std::vector<Diagnostic> &diagnostics() const;
     const std::vector<Diagnostic> &document_diagnostics(const std::string &document_uri) const;
     const std::vector<InlineAnnotation> &annotations() const;
@@ -200,6 +201,7 @@ class EditorCore {
     bool load_file(const std::string &path);
     bool save_current_file();
     bool save_current_file_as(const std::string &path);
+    void close_document();
     std::u32string read_text(Range range) const;
     bool delete_range(Range range);
     bool replace_range(Range range, const std::u32string &text);

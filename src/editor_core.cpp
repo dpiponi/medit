@@ -561,6 +561,11 @@ SelectionMode EditorCore::yank_mode() const {
     return yank_mode_;
 }
 
+void EditorCore::set_yank_buffer(std::u32string text, SelectionMode mode) {
+    yank_buffer_ = std::move(text);
+    yank_mode_ = mode;
+}
+
 const std::vector<EditorEvent> &EditorCore::pending_events() const {
     return pending_events_;
 }
@@ -1056,6 +1061,10 @@ bool EditorCore::save_current_file_as(const std::string &path) {
     }
     emit_document_saved();
     return true;
+}
+
+void EditorCore::close_document() {
+    emit_document_closed(document_uri_, document_version_);
 }
 
 std::u32string EditorCore::read_text(Range range) const {
