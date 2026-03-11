@@ -650,6 +650,13 @@ void test_keybinding_dispatch() {
         paste_after.action.has_value() && *paste_after.action == EditorAction::PasteAfter,
         "p should map to paste after");
 
+    KeyDispatch delete_to_end = dispatch_key_sequence(keybindings, "normal", pending, "D", false);
+    expect(delete_to_end.matched, "D should match");
+    expect(delete_to_end.expansion.size() == 3, "D should expand to three tokens");
+    expect(
+        delete_to_end.expansion[0] == "v" && delete_to_end.expansion[1] == "$" && delete_to_end.expansion[2] == "d",
+        "D should expand to visual line-end delete sequence");
+
     KeyDispatch inner_first = dispatch_key_sequence(keybindings, "visual", pending, "i", false);
     expect(inner_first.matched && inner_first.waiting_for_more, "visual i should wait for iw");
     KeyDispatch inner_second = dispatch_key_sequence(keybindings, "visual", pending, "w", false);
@@ -690,7 +697,7 @@ void test_config_file_selects_keybindings_and_colors() {
     {
         std::ofstream keys(medit_dir + "/custom-keys.json");
         keys << "{\n"
-                "  \"normal\": { \"z\": \"undo\" },\n"
+                "  \"normal\": { \"z\": \"undo\", \"D\": [\"v\", \"$\", \"d\"] },\n"
                 "  \"visual\": { \"esc\": \"enter_normal_mode\" },\n"
                 "  \"insert\": { \"printable\": \"self_insert\" },\n"
                 "  \"command\": { \"printable\": \"command_insert\" }\n"
@@ -734,6 +741,8 @@ void test_config_file_selects_keybindings_and_colors() {
     std::vector<std::string> pending;
     KeyDispatch dispatch = dispatch_key_sequence(keybindings, "normal", pending, "z", false);
     expect(dispatch.action.has_value() && *dispatch.action == EditorAction::Undo, "custom keybinding should load");
+    KeyDispatch alias = dispatch_key_sequence(keybindings, "normal", pending, "D", false);
+    expect(alias.expansion.size() == 3, "custom keybinding alias should load");
 
     Theme theme = load_theme(config);
     TextStyle line_number = theme_style(theme, StyleRole::LineNumber);

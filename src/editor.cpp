@@ -1261,6 +1261,50 @@ bool is_printable_input(wint_t key, bool is_special) {
     return key >= 32 || key == '\t';
 }
 
+std::optional<wint_t> key_from_token(const std::string &token) {
+    if (token == "enter") {
+        return '\n';
+    }
+    if (token == "backspace") {
+        return KEY_BACKSPACE;
+    }
+    if (token == "esc") {
+        return 27;
+    }
+    if (token.rfind("ctrl-", 0) == 0 && token.size() == 6) {
+        char ch = token[5];
+        if (ch >= 'a' && ch <= 'z') {
+            return static_cast<wint_t>(ch - 'a' + 1);
+        }
+    }
+    if (token.size() == 1) {
+        return static_cast<wint_t>(static_cast<unsigned char>(token[0]));
+    }
+    return std::nullopt;
+}
+
+void execute_dispatch(EditorState &state, const KeyDispatch &dispatch, wint_t key);
+
+void execute_expansion(EditorState &state, const std::vector<std::string> &expansion) {
+    static constexpr std::size_t kMaxExpansionDepth = 16;
+    if (state.pending_tokens.size() > kMaxExpansionDepth) {
+        set_status(state, "Keybinding expansion too deep");
+        state.pending_tokens.clear();
+        return;
+    }
+
+    for (const std::string &token : expansion) {
+        std::optional<wint_t> key = key_from_token(token);
+        KeyDispatch nested = dispatch_key_sequence(state.keybindings, mode_key(state), state.pending_tokens, token, false);
+        if (nested.waiting_for_more) {
+            continue;
+        }
+        if (nested.action || !nested.expansion.empty()) {
+            execute_dispatch(state, nested, key.value_or(0));
+        }
+    }
+}
+
 void execute_action(EditorState &state, EditorAction action, wint_t key) {
     switch (action) {
         case EditorAction::MoveLeft:
@@ -1518,6 +1562,16 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
     }
 }
 
+void execute_dispatch(EditorState &state, const KeyDispatch &dispatch, wint_t key) {
+    if (!dispatch.expansion.empty()) {
+        execute_expansion(state, dispatch.expansion);
+        return;
+    }
+    if (dispatch.action) {
+        execute_action(state, *dispatch.action, key);
+    }
+}
+
 void handle_keymap_input(EditorState &state, wint_t key, bool is_special) {
     std::optional<std::string> token = key_token(key, is_special);
     if (!token) {
@@ -1533,9 +1587,7 @@ void handle_keymap_input(EditorState &state, wint_t key, bool is_special) {
         set_status(state, u32_to_utf8(utf8_to_u32(*token)));
         return;
     }
-    if (dispatch.action) {
-        execute_action(state, *dispatch.action, key);
-    }
+    execute_dispatch(state, dispatch, key);
 }
 
 void handle_mouse_input(EditorState &state) {

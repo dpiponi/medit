@@ -67,7 +67,8 @@ enum class EditorAction {
 struct KeyBinding {
     std::string mode;
     std::vector<std::string> sequence;
-    EditorAction action;
+    std::optional<EditorAction> action;
+    std::vector<std::string> expansion;
 };
 
 struct KeyBindings {
@@ -79,6 +80,7 @@ struct KeyDispatch {
     bool matched = false;
     bool waiting_for_more = false;
     std::optional<EditorAction> action;
+    std::vector<std::string> expansion;
 };
 
 KeyBindings load_keybindings();

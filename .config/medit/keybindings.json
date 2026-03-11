@@ -23,6 +23,7 @@
     "o": "open_line_below",
     "O": "open_line_above",
     "x": "delete_char",
+    "D": ["v", "$", "d"],
     "u": "undo",
     "r": "redo",
     "p": "paste_after",

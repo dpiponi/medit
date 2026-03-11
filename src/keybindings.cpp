@@ -39,6 +39,7 @@ constexpr const char *kEmbeddedDefaultKeybindings = R"json(
     "o": "open_line_below",
     "O": "open_line_above",
     "x": "delete_char",
+    "D": ["v", "$", "d"],
     "u": "undo",
     "r": "redo",
     "p": "paste_after",
@@ -212,14 +213,29 @@ KeyBindings parse_keybindings_source(const std::string &source, const std::strin
             throw std::runtime_error("mode bindings must be objects");
         }
         for (const auto &binding_entry : mode_entry.second.object_value) {
-            if (binding_entry.second.type != JsonValue::Type::String) {
-                throw std::runtime_error("binding actions must be strings");
+            if (binding_entry.second.type == JsonValue::Type::String) {
+                std::optional<EditorAction> action = action_from_name(binding_entry.second.string_value);
+                if (!action) {
+                    throw std::runtime_error("unknown action in keybindings: " + binding_entry.second.string_value);
+                }
+                keybindings.bindings.push_back({mode_entry.first, split_key_sequence(binding_entry.first), *action, {}});
+                continue;
             }
-            std::optional<EditorAction> action = action_from_name(binding_entry.second.string_value);
-            if (!action) {
-                throw std::runtime_error("unknown action in keybindings: " + binding_entry.second.string_value);
+            if (binding_entry.second.type == JsonValue::Type::Array) {
+                std::vector<std::string> expansion;
+                for (const JsonValue &value : binding_entry.second.array_value) {
+                    if (value.type != JsonValue::Type::String) {
+                        throw std::runtime_error("binding sequence entries must be strings");
+                    }
+                    expansion.push_back(value.string_value);
+                }
+                if (expansion.empty()) {
+                    throw std::runtime_error("binding sequence aliases must not be empty");
+                }
+                keybindings.bindings.push_back({mode_entry.first, split_key_sequence(binding_entry.first), std::nullopt, expansion});
+                continue;
             }
-            keybindings.bindings.push_back({mode_entry.first, split_key_sequence(binding_entry.first), *action});
+            throw std::runtime_error("binding values must be strings or arrays");
         }
     }
 
@@ -258,7 +274,7 @@ KeyDispatch dispatch_single_attempt(
             continue;
         }
         if (binding.sequence == tokens) {
-            return {true, false, binding.action};
+            return {true, false, binding.action, binding.expansion};
         }
         if (sequence_matches_prefix(binding.sequence, tokens)) {
             has_prefix = true;
@@ -266,17 +282,17 @@ KeyDispatch dispatch_single_attempt(
     }
 
     if (has_prefix) {
-        return {true, true, std::nullopt};
+        return {true, true, std::nullopt, {}};
     }
 
     if (tokens.size() == 1 && printable) {
         std::optional<EditorAction> wildcard = wildcard_action_for_mode(keybindings, mode);
         if (wildcard) {
-            return {true, false, wildcard};
+            return {true, false, wildcard, {}};
         }
     }
 
-    return {false, false, std::nullopt};
+    return {false, false, std::nullopt, {}};
 }
 
 }  // namespace

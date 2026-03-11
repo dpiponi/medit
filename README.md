@@ -108,6 +108,7 @@ colors = forest.json
 - `G` jump to the bottom of the file
 - `0`, `$` move to line start/end
 - `x` delete character under cursor
+- `D` delete from the cursor to the end of the line through the configurable key-sequence alias system
 - `p` paste after the cursor
 - `P` paste before the cursor
 - `dd` delete current line
@@ -127,3 +128,13 @@ colors = forest.json
 - `:wq` or `:x` write and quit
 - `:e filename` open another file
 - `:diagnostics` show a diagnostics summary
+
+## Keybinding Aliases
+
+Keybindings may map a key either to an action name or to a token sequence alias. For example:
+
+```json
+"D": ["v", "$", "d"]
+```
+
+That replays the same internal key sequence as typing `v`, then `$`, then `d`.
