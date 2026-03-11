@@ -985,8 +985,9 @@ void test_cpp_syntax_highlighting() {
 
     EditorConfig config;
     SyntaxSelection selection{SyntaxEngine::LegacyCpp, "cpp"};
-    std::optional<std::string> error_message;
-    std::vector<std::vector<HighlightSpan>> highlights = highlight_document_syntax(lines, config, selection, error_message);
+    auto highlights_result = highlight_document_syntax(lines, config, selection);
+    expect(highlights_result.has_value(), "legacy syntax highlighting should succeed");
+    std::vector<std::vector<HighlightSpan>> highlights = *highlights_result;
     expect(highlights.size() == lines.size(), "syntax highlighter should return one span list per line");
     expect(line_has_span(highlights[0], 0, 3, StyleRole::SyntaxKeyword), "cpp keyword should highlight");
     expect(line_has_span(highlights[1], 22, 26, StyleRole::SyntaxString), "string literal should highlight");
@@ -995,8 +996,6 @@ void test_cpp_syntax_highlighting() {
     expect(line_has_span(highlights[3], 0, 15, StyleRole::SyntaxComment), "block comment continuation should highlight");
     expect(line_has_span(highlights[3], 16, 22, StyleRole::SyntaxKeyword), "keyword after block comment should highlight");
     expect(line_has_span(highlights[4], 0, 8, StyleRole::SyntaxKeyword), "preprocessor directive should highlight");
-
-    expect(!error_message.has_value(), "legacy syntax should not report an error");
 
     SyntaxSelection detected_cpp = resolve_syntax_selection(config, std::optional<std::string>("sample.cpp"));
     expect(detected_cpp.engine == SyntaxEngine::LegacyCpp, "cpp extension should auto-detect legacy cpp syntax");
@@ -1009,6 +1008,12 @@ void test_cpp_syntax_highlighting() {
     explicit_python.syntax_name = "python";
     SyntaxSelection configured = resolve_syntax_selection(explicit_python, std::optional<std::string>("notes.txt"));
     expect(configured.engine == SyntaxEngine::TreeSitter && configured.language_name == "python", "named tree-sitter syntax should resolve");
+
+    auto missing_language = highlight_document_syntax(lines, config, {SyntaxEngine::TreeSitter, "missing"});
+    expect(!missing_language.has_value(), "missing configured syntax should fail");
+    expect(
+        missing_language.error() == "configured syntax language not found: missing",
+        "missing configured syntax should return explicit error");
 }
 
 void test_file_uri_normalization() {

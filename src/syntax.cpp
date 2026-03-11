@@ -3,6 +3,7 @@
 #include "logger.hpp"
 #include "string_utils.hpp"
 
+#include <expected>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -361,14 +362,11 @@ std::string read_text_file_or_throw(const std::filesystem::path &path) {
     return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
 }
 
-LoadedTreeSitterLanguage *load_tree_sitter_language(
-    const SyntaxLanguageConfig &language,
-    std::optional<std::string> &error_message) {
+std::expected<LoadedTreeSitterLanguage *, std::string> load_tree_sitter_language(const SyntaxLanguageConfig &language) {
     TreeSitterApi &api = tree_sitter_api();
     if (!api.loaded()) {
-        error_message = api.error;
-        log_debug("syntax language load failed name=" + language.name + " error=" + *error_message);
-        return nullptr;
+        log_debug("syntax language load failed name=" + language.name + " error=" + api.error);
+        return std::unexpected(api.error);
     }
 
     std::string key = cache_key_for_language(language);
@@ -380,35 +378,35 @@ LoadedTreeSitterLanguage *load_tree_sitter_language(
 #if defined(__unix__) || defined(__APPLE__)
     void *grammar_handle = dlopen(language.grammar_path.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!grammar_handle) {
-        error_message = "could not load grammar library: " + language.grammar_path.string();
-        log_debug("syntax language load failed name=" + language.name + " error=" + *error_message);
-        return nullptr;
+        std::string error = "could not load grammar library: " + language.grammar_path.string();
+        log_debug("syntax language load failed name=" + language.name + " error=" + error);
+        return std::unexpected(error);
     }
 
     using LanguageFactory = const TSLanguage *(*)();
     LanguageFactory factory = reinterpret_cast<LanguageFactory>(dlsym(grammar_handle, language.symbol_name.c_str()));
     if (!factory) {
         dlclose(grammar_handle);
-        error_message = "could not load grammar symbol: " + language.symbol_name;
-        log_debug("syntax language load failed name=" + language.name + " error=" + *error_message);
-        return nullptr;
+        std::string error = "could not load grammar symbol: " + language.symbol_name;
+        log_debug("syntax language load failed name=" + language.name + " error=" + error);
+        return std::unexpected(error);
     }
 
     TSParser *parser = api.parser_new();
     if (!parser) {
         dlclose(grammar_handle);
-        error_message = "could not create tree-sitter parser";
-        log_debug("syntax language load failed name=" + language.name + " error=" + *error_message);
-        return nullptr;
+        std::string error = "could not create tree-sitter parser";
+        log_debug("syntax language load failed name=" + language.name + " error=" + error);
+        return std::unexpected(error);
     }
 
     const TSLanguage *ts_language = factory();
     if (!ts_language || !api.parser_set_language(parser, ts_language)) {
         api.parser_delete(parser);
         dlclose(grammar_handle);
-        error_message = "could not attach grammar language";
-        log_debug("syntax language load failed name=" + language.name + " error=" + *error_message);
-        return nullptr;
+        std::string error = "could not attach grammar language";
+        log_debug("syntax language load failed name=" + language.name + " error=" + error);
+        return std::unexpected(error);
     }
 
     std::string highlights_source;
@@ -417,9 +415,9 @@ LoadedTreeSitterLanguage *load_tree_sitter_language(
     } catch (const std::exception &error) {
         api.parser_delete(parser);
         dlclose(grammar_handle);
-        error_message = error.what();
-        log_debug("syntax language load failed name=" + language.name + " error=" + *error_message);
-        return nullptr;
+        std::string message = error.what();
+        log_debug("syntax language load failed name=" + language.name + " error=" + message);
+        return std::unexpected(message);
     }
 
     uint32_t error_offset = 0;
@@ -433,9 +431,9 @@ LoadedTreeSitterLanguage *load_tree_sitter_language(
     if (!query) {
         api.parser_delete(parser);
         dlclose(grammar_handle);
-        error_message = "could not compile highlights query: " + language.highlights_path.string();
-        log_debug("syntax language load failed name=" + language.name + " error=" + *error_message);
-        return nullptr;
+        std::string error = "could not compile highlights query: " + language.highlights_path.string();
+        log_debug("syntax language load failed name=" + language.name + " error=" + error);
+        return std::unexpected(error);
     }
 
     LoadedTreeSitterLanguage loaded;
@@ -456,9 +454,9 @@ LoadedTreeSitterLanguage *load_tree_sitter_language(
     return &inserted.first->second;
 #else
     (void)language;
-    error_message = "tree-sitter runtime loading unsupported on this platform";
-    log_debug("syntax language load failed error=" + *error_message);
-    return nullptr;
+    std::string error = "tree-sitter runtime loading unsupported on this platform";
+    log_debug("syntax language load failed error=" + error);
+    return std::unexpected(error);
 #endif
 }
 
@@ -532,14 +530,13 @@ StyleRole capture_name_to_style_role(std::string_view capture_name) {
     return StyleRole::DefaultText;
 }
 
-std::vector<std::vector<HighlightSpan>> highlight_tree_sitter_document(
+std::expected<std::vector<std::vector<HighlightSpan>>, std::string> highlight_tree_sitter_document(
     const std::vector<std::u32string> &lines,
-    const SyntaxLanguageConfig &language,
-    std::optional<std::string> &error_message) {
-    LoadedTreeSitterLanguage *loaded = load_tree_sitter_language(language, error_message);
+    const SyntaxLanguageConfig &language) {
     std::vector<std::vector<HighlightSpan>> spans_by_line(lines.size());
+    std::expected<LoadedTreeSitterLanguage *, std::string> loaded = load_tree_sitter_language(language);
     if (!loaded) {
-        return spans_by_line;
+        return std::unexpected(loaded.error());
     }
 
     TreeSitterApi &api = tree_sitter_api();
@@ -552,25 +549,25 @@ std::vector<std::vector<HighlightSpan>> highlight_tree_sitter_document(
     }
 
     TSTree *tree = api.parser_parse_string(
-        loaded->parser,
+        (*loaded)->parser,
         nullptr,
         source.c_str(),
         static_cast<uint32_t>(source.size()));
     if (!tree) {
-        error_message = "tree-sitter parse failed for " + language.name;
-        log_debug("syntax highlight failed name=" + language.name + " error=" + *error_message);
-        return spans_by_line;
+        std::string error = "tree-sitter parse failed for " + language.name;
+        log_debug("syntax highlight failed name=" + language.name + " error=" + error);
+        return std::unexpected(error);
     }
 
     TSQueryCursor *cursor = api.query_cursor_new();
     if (!cursor) {
         api.tree_delete(tree);
-        error_message = "could not create tree-sitter query cursor";
-        log_debug("syntax highlight failed name=" + language.name + " error=" + *error_message);
-        return spans_by_line;
+        std::string error = "could not create tree-sitter query cursor";
+        log_debug("syntax highlight failed name=" + language.name + " error=" + error);
+        return std::unexpected(error);
     }
 
-    api.query_cursor_exec(cursor, loaded->query, api.tree_root_node(tree));
+    api.query_cursor_exec(cursor, (*loaded)->query, api.tree_root_node(tree));
     TSQueryMatch match{};
     uint32_t capture_index = 0;
     while (api.query_cursor_next_capture(cursor, &match, &capture_index)) {
@@ -578,11 +575,11 @@ std::vector<std::vector<HighlightSpan>> highlight_tree_sitter_document(
             continue;
         }
         const TSQueryCapture &capture = match.captures[capture_index];
-        if (capture.index >= loaded->capture_names.size()) {
+        if (capture.index >= (*loaded)->capture_names.size()) {
             continue;
         }
 
-        StyleRole role = capture_name_to_style_role(loaded->capture_names[capture.index]);
+        StyleRole role = capture_name_to_style_role((*loaded)->capture_names[capture.index]);
         if (role == StyleRole::DefaultText) {
             continue;
         }
@@ -648,12 +645,10 @@ SyntaxSelection resolve_syntax_selection(const EditorConfig &config, const std::
     return {};
 }
 
-std::vector<std::vector<HighlightSpan>> highlight_document_syntax(
+std::expected<std::vector<std::vector<HighlightSpan>>, std::string> highlight_document_syntax(
     const std::vector<std::u32string> &lines,
     const EditorConfig &config,
-    const SyntaxSelection &selection,
-    std::optional<std::string> &error_message) {
-    error_message.reset();
+    const SyntaxSelection &selection) {
     switch (selection.engine) {
         case SyntaxEngine::None:
             return std::vector<std::vector<HighlightSpan>>(lines.size());
@@ -662,11 +657,10 @@ std::vector<std::vector<HighlightSpan>> highlight_document_syntax(
         case SyntaxEngine::TreeSitter:
             for (const SyntaxLanguageConfig &language : config.syntax_languages) {
                 if (language.name == selection.language_name) {
-                    return highlight_tree_sitter_document(lines, language, error_message);
+                    return highlight_tree_sitter_document(lines, language);
                 }
             }
-            error_message = "configured syntax language not found: " + selection.language_name;
-            return std::vector<std::vector<HighlightSpan>>(lines.size());
+            return std::unexpected("configured syntax language not found: " + selection.language_name);
     }
     return std::vector<std::vector<HighlightSpan>>(lines.size());
 }

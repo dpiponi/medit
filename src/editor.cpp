@@ -1904,14 +1904,15 @@ void refresh_syntax_highlights(EditorState &state) {
     buffer_ui.syntax_selection = selection;
     buffer_ui.syntax_file_path = core.file_path();
     buffer_ui.syntax_revision = core.current_revision();
-    std::optional<std::string> error_message;
-    buffer_ui.syntax_highlights = highlight_document_syntax(core.lines(), state.config, buffer_ui.syntax_selection, error_message);
-    if (error_message) {
+    auto syntax_result = highlight_document_syntax(core.lines(), state.config, buffer_ui.syntax_selection);
+    if (!syntax_result) {
+        buffer_ui.syntax_highlights.assign(core.lines().size(), {});
         if (!buffer_ui.syntax_config_error_reported) {
-            set_status(state, "Syntax error: " + *error_message);
+            set_status(state, "Syntax error: " + syntax_result.error());
             buffer_ui.syntax_config_error_reported = true;
         }
     } else {
+        buffer_ui.syntax_highlights = std::move(*syntax_result);
         buffer_ui.syntax_config_error_reported = false;
     }
 }
