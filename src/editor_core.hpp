@@ -141,6 +141,9 @@ struct EditorCommandAccess {
 
 std::u32string utf8_to_u32(const std::string &text);
 std::string u32_to_utf8(const std::u32string &text);
+std::string file_uri_for_path(const std::string &path);
+std::string file_path_from_uri(const std::string &uri);
+std::string normalize_document_uri(const std::string &uri);
 bool position_less_than(Position left, Position right);
 bool positions_equal(Position left, Position right);
 Range normalized_range(Range range);

@@ -50,13 +50,6 @@ std::string json_string(const std::string &text) {
     return "\"" + json_escape(text) + "\"";
 }
 
-std::string file_path_from_uri(const std::string &uri) {
-    if (uri.rfind("file://", 0) == 0) {
-        return uri.substr(7);
-    }
-    return "";
-}
-
 Position position_from_lsp(const JsonValue &position_value, const EditorCore &core) {
     Utf16Position utf16;
     auto line = position_value.object_value.find("line");
@@ -510,9 +503,10 @@ void LspService::handle_message(const std::string &payload) {
         return;
     }
 
+    std::string normalized_uri = normalize_document_uri(uri->second.string_value);
     std::vector<Diagnostic> parsed_diagnostics;
     EditorCore conversion_core;
-    std::string file_path = file_path_from_uri(uri->second.string_value);
+    std::string file_path = file_path_from_uri(normalized_uri);
     if (!file_path.empty()) {
         conversion_core.load_file(file_path);
     }
@@ -548,7 +542,7 @@ void LspService::handle_message(const std::string &payload) {
 
     EditorCommand command;
     command.type = EditorCommandType::SetDiagnostics;
-    command.document_uri = uri->second.string_value;
+    command.document_uri = normalized_uri;
     command.diagnostics = std::move(parsed_diagnostics);
-    queue_event({ServiceEventType::Notification, name(), "publishDiagnostics", command, uri->second.string_value, 0, std::nullopt, U""});
+    queue_event({ServiceEventType::Notification, name(), "publishDiagnostics", command, normalized_uri, 0, std::nullopt, U""});
 }

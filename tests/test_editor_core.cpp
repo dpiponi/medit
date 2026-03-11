@@ -766,6 +766,17 @@ void test_cpp_syntax_highlighting() {
     expect(syntax_mode_from_name("cpp") == SyntaxMode::Cpp, "named cpp syntax should resolve");
 }
 
+void test_file_uri_normalization() {
+    std::string uri = file_uri_for_path("tmp dir/file name.cpp");
+    expect(uri.find("%20") != std::string::npos, "file uri should percent-encode spaces");
+
+    std::string normalized = normalize_document_uri("file:///tmp%20dir/file%20name.cpp");
+    expect(normalized == "file:///tmp%20dir/file%20name.cpp", "normalized file uri should preserve encoded absolute path");
+
+    std::string roundtrip_path = file_path_from_uri(uri);
+    expect(roundtrip_path.find("tmp dir/file name.cpp") != std::string::npos, "file uri should decode back to path");
+}
+
 void test_lsp_message_framing() {
     std::string payload = "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}";
     std::string encoded = encode_lsp_message(payload);
@@ -993,6 +1004,7 @@ int main() {
         test_keybinding_dispatch();
         test_config_file_selects_keybindings_and_colors();
         test_cpp_syntax_highlighting();
+        test_file_uri_normalization();
         test_lsp_message_framing();
         test_lsp_service_roundtrip();
         test_lsp_service_reports_startup_failures();
