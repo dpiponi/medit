@@ -23,6 +23,13 @@ constexpr const char *kEmbeddedDefaultTheme = R"json(
   "search_match": { "foreground": "black", "background": "yellow", "bold": "true", "underline": "false", "reverse": "false" },
   "search_match_current": { "foreground": "black", "background": "green", "bold": "true", "underline": "false", "reverse": "false" },
   "syntax_keyword": { "foreground": "cyan", "background": "default", "bold": "true", "underline": "false", "reverse": "false" },
+  "syntax_type": { "foreground": "yellow", "background": "default", "bold": "true", "underline": "false", "reverse": "false" },
+  "syntax_function": { "foreground": "white", "background": "default", "bold": "false", "underline": "false", "reverse": "false" },
+  "syntax_builtin": { "foreground": "magenta", "background": "default", "bold": "false", "underline": "false", "reverse": "false" },
+  "syntax_property": { "foreground": "cyan", "background": "default", "bold": "false", "underline": "false", "reverse": "false" },
+  "syntax_constant": { "foreground": "yellow", "background": "default", "bold": "false", "underline": "false", "reverse": "false" },
+  "syntax_number": { "foreground": "red", "background": "default", "bold": "false", "underline": "false", "reverse": "false" },
+  "syntax_operator": { "foreground": "white", "background": "default", "bold": "true", "underline": "false", "reverse": "false" },
   "syntax_string": { "foreground": "green", "background": "default", "bold": "false", "underline": "false", "reverse": "false" },
   "syntax_comment": { "foreground": "blue", "background": "default", "bold": "false", "underline": "false", "reverse": "false" },
   "diagnostic_error": { "foreground": "red", "background": "default", "bold": "false", "underline": "true", "reverse": "false" },
@@ -47,6 +54,13 @@ std::map<std::string, StyleRole> role_names() {
         {"search_match", StyleRole::SearchMatch},
         {"search_match_current", StyleRole::SearchMatchCurrent},
         {"syntax_keyword", StyleRole::SyntaxKeyword},
+        {"syntax_type", StyleRole::SyntaxType},
+        {"syntax_function", StyleRole::SyntaxFunction},
+        {"syntax_builtin", StyleRole::SyntaxBuiltin},
+        {"syntax_property", StyleRole::SyntaxProperty},
+        {"syntax_constant", StyleRole::SyntaxConstant},
+        {"syntax_number", StyleRole::SyntaxNumber},
+        {"syntax_operator", StyleRole::SyntaxOperator},
         {"syntax_string", StyleRole::SyntaxString},
         {"syntax_comment", StyleRole::SyntaxComment},
         {"diagnostic_error", StyleRole::DiagnosticError},
@@ -116,20 +130,24 @@ TextStyle parse_text_style(const JsonValue &value) {
     };
 }
 
-Theme parse_theme_source(const std::string &source, const std::string &origin) {
+Theme parse_theme_source_with_defaults(const std::string &source, const std::string &origin, const Theme *defaults) {
     JsonValue root = parse_json(source);
     if (root.type != JsonValue::Type::Object) {
         throw std::runtime_error("theme root must be an object");
     }
 
     Theme theme;
+    if (defaults != nullptr) {
+        theme = *defaults;
+    }
     theme.source_path = origin;
-    for (const auto &[name, role] : role_names()) {
-        auto found = root.object_value.find(name);
-        if (found == root.object_value.end()) {
-            throw std::runtime_error("missing theme role: " + name);
+    const std::map<std::string, StyleRole> names = role_names();
+    for (const auto &[name, value] : root.object_value) {
+        auto found = names.find(name);
+        if (found == names.end()) {
+            throw std::runtime_error("unknown theme role: " + name);
         }
-        theme.styles[style_role_index(role)] = parse_text_style(found->second);
+        theme.styles[style_role_index(found->second)] = parse_text_style(value);
     }
     return theme;
 }
@@ -151,11 +169,12 @@ Theme load_theme(const EditorConfig &config) {
 }
 
 Theme load_theme_from_path(const std::filesystem::path &path) {
-    return parse_theme_source(read_text_file(path), path.string());
+    Theme defaults = load_embedded_theme();
+    return parse_theme_source_with_defaults(read_text_file(path), path.string(), &defaults);
 }
 
 Theme load_embedded_theme() {
-    return parse_theme_source(kEmbeddedDefaultTheme, "<embedded>");
+    return parse_theme_source_with_defaults(kEmbeddedDefaultTheme, "<embedded>", nullptr);
 }
 
 TextStyle theme_style(const Theme &theme, StyleRole role) {

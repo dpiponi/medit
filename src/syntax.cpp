@@ -490,20 +490,50 @@ StyleRole capture_name_to_style_role(const std::string &capture_name) {
     }
     if (capture_name.find("string") != std::string::npos ||
         capture_name.find("character") != std::string::npos ||
-        capture_name.find("escape") != std::string::npos) {
+        capture_name.find("escape") != std::string::npos ||
+        capture_name.find("embedded") != std::string::npos) {
         return StyleRole::SyntaxString;
     }
+    if (capture_name.find("function.builtin") != std::string::npos ||
+        capture_name.find("constructor") != std::string::npos ||
+        capture_name.find("variable.builtin") != std::string::npos ||
+        capture_name.find("constant.builtin") != std::string::npos) {
+        return StyleRole::SyntaxBuiltin;
+    }
+    if (capture_name.find("function") != std::string::npos ||
+        capture_name.find("method") != std::string::npos) {
+        return StyleRole::SyntaxFunction;
+    }
+    if (capture_name.find("property") != std::string::npos ||
+        capture_name.find("field") != std::string::npos ||
+        capture_name.find("attribute") != std::string::npos) {
+        return StyleRole::SyntaxProperty;
+    }
+    if (capture_name.find("number") != std::string::npos ||
+        capture_name.find("float") != std::string::npos ||
+        capture_name.find("integer") != std::string::npos) {
+        return StyleRole::SyntaxNumber;
+    }
+    if (capture_name.find("operator") != std::string::npos ||
+        capture_name.find("punctuation") != std::string::npos) {
+        return StyleRole::SyntaxOperator;
+    }
+    if (capture_name.find("type") != std::string::npos ||
+        capture_name.find("module") != std::string::npos ||
+        capture_name.find("namespace") != std::string::npos) {
+        return StyleRole::SyntaxType;
+    }
+    if (capture_name.find("constant") != std::string::npos ||
+        capture_name.find("boolean") != std::string::npos) {
+        return StyleRole::SyntaxConstant;
+    }
     if (capture_name.find("keyword") != std::string::npos ||
-        capture_name.find("operator") != std::string::npos ||
         capture_name.find("conditional") != std::string::npos ||
         capture_name.find("repeat") != std::string::npos ||
         capture_name.find("exception") != std::string::npos ||
         capture_name.find("include") != std::string::npos ||
         capture_name.find("define") != std::string::npos ||
-        capture_name.find("preproc") != std::string::npos ||
-        capture_name.find("boolean") != std::string::npos ||
-        capture_name.find("constant") != std::string::npos ||
-        capture_name.find("type") != std::string::npos) {
+        capture_name.find("preproc") != std::string::npos) {
         return StyleRole::SyntaxKeyword;
     }
     return StyleRole::DefaultText;

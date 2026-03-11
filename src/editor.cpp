@@ -166,10 +166,17 @@ enum class ThemeSlot : short {
     SearchMatch = 9,
     SearchMatchCurrent = 10,
     SyntaxKeyword = 11,
-    SyntaxString = 12,
-    SyntaxComment = 13,
-    DiagnosticError = 14,
-    DiagnosticWarning = 15,
+    SyntaxType = 12,
+    SyntaxFunction = 13,
+    SyntaxBuiltin = 14,
+    SyntaxProperty = 15,
+    SyntaxConstant = 16,
+    SyntaxNumber = 17,
+    SyntaxOperator = 18,
+    SyntaxString = 19,
+    SyntaxComment = 20,
+    DiagnosticError = 21,
+    DiagnosticWarning = 22,
 };
 
 ThemeSlot theme_slot(StyleRole role);
@@ -1138,6 +1145,20 @@ ThemeSlot theme_slot(StyleRole role) {
             return ThemeSlot::SearchMatchCurrent;
         case StyleRole::SyntaxKeyword:
             return ThemeSlot::SyntaxKeyword;
+        case StyleRole::SyntaxType:
+            return ThemeSlot::SyntaxType;
+        case StyleRole::SyntaxFunction:
+            return ThemeSlot::SyntaxFunction;
+        case StyleRole::SyntaxBuiltin:
+            return ThemeSlot::SyntaxBuiltin;
+        case StyleRole::SyntaxProperty:
+            return ThemeSlot::SyntaxProperty;
+        case StyleRole::SyntaxConstant:
+            return ThemeSlot::SyntaxConstant;
+        case StyleRole::SyntaxNumber:
+            return ThemeSlot::SyntaxNumber;
+        case StyleRole::SyntaxOperator:
+            return ThemeSlot::SyntaxOperator;
         case StyleRole::SyntaxString:
             return ThemeSlot::SyntaxString;
         case StyleRole::SyntaxComment:
