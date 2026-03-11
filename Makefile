@@ -1,7 +1,9 @@
 CXX := c++
 CXXFLAGS := -std=c++17 -Wall -Wextra -pedantic
-CPPFLAGS := -Isrc
-LDFLAGS := -lncursesw
+NCURSESW_CFLAGS := $(shell pkg-config --cflags ncursesw 2>/dev/null)
+NCURSESW_LIBS := $(shell pkg-config --libs ncursesw 2>/dev/null)
+CPPFLAGS := -Isrc $(NCURSESW_CFLAGS)
+LDFLAGS := $(if $(strip $(NCURSESW_LIBS)),$(NCURSESW_LIBS),-lncursesw)
 SRC_DIR := src
 TEST_DIR := tests
 
