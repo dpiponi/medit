@@ -1,4 +1,5 @@
 #include "config.hpp"
+#include "editor_commands.hpp"
 #include "editor_core.hpp"
 #include "keybindings.hpp"
 #include "services.hpp"
@@ -540,6 +541,43 @@ void test_diagnostics_follow_document_switches() {
     std::remove(path2);
 }
 
+void test_editor_command_entry_points() {
+    EditorCore core;
+
+    EditorCommand set_diagnostics;
+    set_diagnostics.type = EditorCommandType::SetDiagnostics;
+    set_diagnostics.diagnostics = {
+        {{{0, 0}, {0, 1}}, DiagnosticSeverity::Error, "cmd", utf8_to_u32("bad")}
+    };
+    EditorCommandResult result = apply_editor_command(core, set_diagnostics);
+    expect(result.applied, "set diagnostics command should apply");
+    expect(core.diagnostics().size() == 1, "set diagnostics command should update core diagnostics");
+
+    EditorCommand move_cursor;
+    move_cursor.type = EditorCommandType::MoveCursor;
+    move_cursor.position = Position{0, 0};
+    result = apply_editor_command(core, move_cursor);
+    expect(result.applied, "move cursor command should apply");
+    expect_cursor(core, {0, 0}, "move cursor command should update cursor");
+
+    EditorCommand set_annotations;
+    set_annotations.type = EditorCommandType::SetAnnotations;
+    set_annotations.annotations = {
+        {{{0, 0}, {0, 1}}, AnnotationSeverity::Info, AnnotationKind::Note, "cmd", utf8_to_u32("note")}
+    };
+    result = apply_editor_command(core, set_annotations);
+    expect(result.applied, "set annotations command should apply");
+    expect(core.annotations().size() == 1, "set annotations command should update core annotations");
+
+    EditorCommand status;
+    status.type = EditorCommandType::SetStatusMessage;
+    status.message = "service says hi";
+    result = apply_editor_command(core, status);
+    expect(result.applied, "status command should apply");
+    expect(result.status_message.has_value(), "status command should return status message");
+    expect(*result.status_message == "service says hi", "status command should preserve message");
+}
+
 void test_keybinding_dispatch() {
     KeyBindings keybindings = load_embedded_keybindings();
     std::vector<std::string> pending;
@@ -701,6 +739,7 @@ class RecordingService : public EditorService {
             {ServiceEventType::Notification,
              name(),
              event.type == EditorEventType::DocumentChanged ? "document_changed" : "editor_event",
+             EditorCommand{EditorCommandType::SetStatusMessage, std::nullopt, {}, {}, std::nullopt, "recorded"},
              event.document_uri,
              event.document_version,
              event.range,
@@ -753,6 +792,8 @@ void test_editor_runtime_service_boundary() {
     std::vector<ServiceEvent> service_events = runtime.take_service_events();
     expect(service_events.size() == 2, "polling runtime should collect service notifications");
     expect(service_events[0].service_name == "recording", "service event should carry service name");
+    expect(service_events[0].command.has_value(), "service event should carry editor command");
+    expect(service_events[0].command->type == EditorCommandType::SetStatusMessage, "service command should preserve type");
     expect(service_events[0].document_uri.has_value(), "service event should carry document identity");
     expect(service_events[0].document_version == core.document_version(), "service event should carry document version");
 
@@ -807,6 +848,7 @@ int main() {
         test_diagnostics_storage_and_events();
         test_annotations_storage_and_events();
         test_diagnostics_follow_document_switches();
+        test_editor_command_entry_points();
         test_keybinding_dispatch();
         test_config_file_selects_keybindings_and_colors();
         test_editor_runtime_service_boundary();

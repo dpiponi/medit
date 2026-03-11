@@ -16,6 +16,7 @@ Items are ordered roughly by dependency and architectural leverage. Update this 
 - Done: structured core events for document lifecycle and cursor movement
 - Done: external service/runtime boundary for background integrations
 - Done: diagnostics data model in the core with renderer highlights
+- Done: command entry points for service-driven editor actions
 - In progress: building a reusable editor core API around protocol-facing tests and runtime polling
 - Not started: everything else below
 
@@ -118,6 +119,7 @@ Items are ordered roughly by dependency and architectural leverage. Update this 
     Add tests around versioning, edit application ordering, and position conversion so LSP-specific regressions are caught early.
 
 20. Command entry points for LSP-driven actions
+    Status: done in [editor_commands.hpp](/home/dan/de/src/editor_commands.hpp), [editor_commands.cpp](/home/dan/de/src/editor_commands.cpp), [editor.cpp](/home/dan/de/src/editor.cpp), [services.hpp](/home/dan/de/src/services.hpp), and [test_editor_core.cpp](/home/dan/de/tests/test_editor_core.cpp)
     Expose core/editor commands for "apply diagnostics", "jump to definition result", "show completions", and similar actions so protocol features do not bypass the command model.
 
 ## Maintenance Rules

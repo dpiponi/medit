@@ -1,4 +1,5 @@
 #include "config.hpp"
+#include "editor_commands.hpp"
 #include "editor_core.hpp"
 #include "keybindings.hpp"
 #include "services.hpp"
@@ -1555,11 +1556,24 @@ void update_input_timeout(const EditorState &state) {
     timeout(timeout_ms.has_value() ? *timeout_ms : -1);
 }
 
+void handle_service_events(EditorState &state) {
+    for (const ServiceEvent &event : state.runtime.take_service_events()) {
+        if (!event.command) {
+            continue;
+        }
+        EditorCommandResult result = apply_editor_command(state.core, *event.command);
+        if (result.status_message) {
+            set_status(state, *result.status_message);
+        }
+        (void)result;
+    }
+}
+
 void run_editor(EditorState &state) {
     while (!state.should_quit) {
         state.runtime.process(state.core);
         normalize_selected_diagnostic(state);
-        state.runtime.take_service_events();
+        handle_service_events(state);
         int screen_rows = 0;
         int screen_cols = 0;
         getmaxyx(stdscr, screen_rows, screen_cols);

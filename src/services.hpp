@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor_commands.hpp"
 #include "editor_core.hpp"
 
 #include <memory>
@@ -17,6 +18,7 @@ struct ServiceEvent {
     ServiceEventType type = ServiceEventType::Notification;
     std::string service_name;
     std::string topic;
+    std::optional<EditorCommand> command;
     std::optional<std::string> document_uri;
     std::size_t document_version = 0;
     std::optional<Range> range;

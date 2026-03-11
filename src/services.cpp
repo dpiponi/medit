@@ -15,7 +15,7 @@ void EditorRuntime::add_service(std::unique_ptr<EditorService> service) {
     if (started_) {
         service->start();
         pending_service_events_.push_back(
-            {ServiceEventType::ServiceStarted, service->name(), "service_started", std::nullopt, 0, std::nullopt, U""});
+            {ServiceEventType::ServiceStarted, service->name(), "service_started", std::nullopt, std::nullopt, 0, std::nullopt, U""});
     }
     services_.push_back(std::move(service));
 }
@@ -37,7 +37,7 @@ void EditorRuntime::start_services() {
     for (const std::unique_ptr<EditorService> &service : services_) {
         service->start();
         pending_service_events_.push_back(
-            {ServiceEventType::ServiceStarted, service->name(), "service_started", std::nullopt, 0, std::nullopt, U""});
+            {ServiceEventType::ServiceStarted, service->name(), "service_started", std::nullopt, std::nullopt, 0, std::nullopt, U""});
     }
 }
 
@@ -49,7 +49,7 @@ void EditorRuntime::stop_services() {
     for (const std::unique_ptr<EditorService> &service : services_) {
         service->stop();
         pending_service_events_.push_back(
-            {ServiceEventType::ServiceStopped, service->name(), "service_stopped", std::nullopt, 0, std::nullopt, U""});
+            {ServiceEventType::ServiceStopped, service->name(), "service_stopped", std::nullopt, std::nullopt, 0, std::nullopt, U""});
     }
     started_ = false;
 }
