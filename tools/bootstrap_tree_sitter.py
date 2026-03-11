@@ -207,6 +207,9 @@ def main():
     for language in manifest["languages"]:
         if requested and language["name"] not in requested:
             continue
+        if not requested and language.get("optional", False):
+            print(f"! skipping optional language {language['name']}")
+            continue
         repo_dir = build_root / "sources" / f"tree-sitter-{language['name']}"
         ensure_repo(language["repo"], language["ref"], repo_dir)
         try:

@@ -95,6 +95,7 @@
       "name": "swift",
       "repo": "https://github.com/alex-pinkus/tree-sitter-swift.git",
       "ref": "7c2f26b5dce12e82ef2bd932a883ef514ae566b8",
+      "optional": true,
       "extensions": [".swift"],
       "symbol_name": "tree_sitter_swift",
       "query_path": "queries/highlights.scm",

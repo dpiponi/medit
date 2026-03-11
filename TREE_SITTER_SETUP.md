@@ -41,6 +41,12 @@ To build only one bundled language:
 make bootstrap-tree-sitter-python
 ```
 
+Some languages may be marked optional when they need extra tooling beyond a normal C/C++ compiler toolchain. Optional languages are skipped by `make bootstrap-tree-sitter` and can be requested explicitly, for example:
+
+```sh
+make bootstrap-tree-sitter-swift
+```
+
 ## Adding a New Bundled Language
 
 Edit [tools/tree_sitter_languages.json](/home/dan/de/tools/tree_sitter_languages.json) and add a new language entry with:

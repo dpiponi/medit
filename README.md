@@ -36,6 +36,12 @@ That builds local assets under `.config/medit/` and regenerates `.config/medit/s
 make bootstrap-tree-sitter-python
 ```
 
+Some bundled grammars with extra prerequisites are optional in the default bootstrap. For example, Swift is skipped unless you request it explicitly:
+
+```sh
+make bootstrap-tree-sitter-swift
+```
+
 ## Test
 
 ```sh
