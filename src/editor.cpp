@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <fstream>
 #include <filesystem>
+#include <format>
 #include <limits>
 #include <memory>
 #include <map>
@@ -376,14 +377,14 @@ void handle_write_command(EditorState &state, const std::string &argument) {
     EditorCore &core = active_core(state);
     if (argument.empty()) {
         if (core.save_current_file()) {
-            set_status(state, "Wrote " + core.display_file_name());
+            set_status(state, std::format("Wrote {}", core.display_file_name()));
         } else {
             set_status(state, core.file_path() ? "Write failed" : "No file name");
         }
         return;
     }
     if (core.save_current_file_as(argument)) {
-        set_status(state, "Wrote " + argument);
+        set_status(state, std::format("Wrote {}", argument));
     } else {
         set_status(state, "Write failed");
     }
@@ -399,7 +400,7 @@ void handle_edit_command(EditorState &state, const std::string &argument) {
     if (buffer) {
         state.buffer_ui[buffer->id] = EditorState::BufferUiState{};
         log_debug("edit command opened path=" + argument);
-        set_status(state, "Opened " + argument);
+        set_status(state, std::format("Opened {}", argument));
     } else {
         log_debug("edit command open failed path=" + argument);
         set_status(state, "Could not open file");
@@ -461,16 +462,14 @@ void show_diagnostics_summary(EditorState &state) {
         set_status(state, "No diagnostics");
         return;
     }
-    std::ostringstream message;
-    message << errors << " error";
-    if (errors != 1) {
-        message << "s";
-    }
-    message << ", " << warnings << " warning";
-    if (warnings != 1) {
-        message << "s";
-    }
-    set_status(state, message.str());
+    set_status(
+        state,
+        std::format(
+            "{} error{}, {} warning{}",
+            errors,
+            errors == 1 ? "" : "s",
+            warnings,
+            warnings == 1 ? "" : "s"));
 }
 
 void navigate_diagnostic(EditorState &state, bool forward) {
@@ -685,7 +684,7 @@ void handle_buffer_switch_command(EditorState &state, const std::string &argumen
         return;
     }
     if (state.session.switch_to_id(buffer_id)) {
-        set_status(state, "Switched to " + active_core(state).display_file_name());
+        set_status(state, std::format("Switched to {}", active_core(state).display_file_name()));
     } else {
         set_status(state, "No such buffer");
     }
@@ -704,7 +703,7 @@ void handle_buffer_delete_command(EditorState &state, bool force) {
     }
     state.buffer_ui.erase(closing_id);
     active_buffer_ui(state);
-    set_status(state, "Closed " + closing_name);
+    set_status(state, std::format("Closed {}", closing_name));
 }
 
 std::string shell_single_quote(const std::string &text) {
@@ -1710,21 +1709,20 @@ std::string build_status_text(const EditorState &state) {
         }
     }
 
-    std::ostringstream left;
-    left << mode_name(state.mode) << "  " << core.display_file_name();
-    left << "  [" << (state.session.active_buffer_index() + 1) << "/" << state.session.buffer_count() << "]";
-    left << "  " << language;
-    left << "  ws:" << workspace;
-
-    std::ostringstream right;
-    if (core.is_dirty()) {
-        right << " [+]";
-    }
-    right << "  " << (cursor.row + 1) << ":" << (cursor.column + 1);
-    right << "  rev " << core.current_revision();
-
-    std::string left_text = left.str();
-    std::string right_text = right.str();
+    std::string left_text = std::format(
+        "{}  {}  [{}/{}]  {}  ws:{}",
+        mode_name(state.mode),
+        core.display_file_name(),
+        state.session.active_buffer_index() + 1,
+        state.session.buffer_count(),
+        language,
+        workspace);
+    std::string right_text = std::format(
+        "{}  {}:{}  rev {}",
+        core.is_dirty() ? " [+]" : "",
+        cursor.row + 1,
+        cursor.column + 1,
+        core.current_revision());
     return left_text + right_text;
 }
 
@@ -1743,20 +1741,20 @@ void draw_status_bar(const EditorState &state, int screen_rows, int screen_cols)
             workspace = workspace_root.string();
         }
     }
-    std::ostringstream left;
-    left << mode_name(state.mode) << "  " << core.display_file_name();
-    left << "  [" << (state.session.active_buffer_index() + 1) << "/" << state.session.buffer_count() << "]";
-    left << "  " << language;
-    left << "  ws:" << workspace;
-    std::ostringstream right;
-    if (core.is_dirty()) {
-        right << " [+]";
-    }
-    right << "  " << (cursor.row + 1) << ":" << (cursor.column + 1);
-    right << "  rev " << core.current_revision();
-
-    std::string left_text = left.str();
-    std::string right_text = right.str();
+    std::string left_text = std::format(
+        "{}  {}  [{}/{}]  {}  ws:{}",
+        mode_name(state.mode),
+        core.display_file_name(),
+        state.session.active_buffer_index() + 1,
+        state.session.buffer_count(),
+        language,
+        workspace);
+    std::string right_text = std::format(
+        "{}  {}:{}  rev {}",
+        core.is_dirty() ? " [+]" : "",
+        cursor.row + 1,
+        cursor.column + 1,
+        core.current_revision());
     std::size_t total_width = screen_cols > 0 ? static_cast<std::size_t>(screen_cols) : 0;
     std::string status;
     if (right_text.size() >= total_width) {
