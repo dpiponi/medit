@@ -6,7 +6,6 @@
 #include <cstring>
 #include <filesystem>
 #include <sstream>
-#include <stdexcept>
 #include <utility>
 
 #if defined(__unix__) || defined(__APPLE__)
