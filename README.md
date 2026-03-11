@@ -225,6 +225,7 @@ colors = forest.json
 - `:q` quit if clean
 - `:q!` force quit
 - `:wq` or `:x` write and quit
+- `:42` jump to line 42
 - `:e filename` open another file in a new buffer and switch to it
 - `:buffers` list open buffers
 - `:buffer N` switch to buffer `N`

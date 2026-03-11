@@ -726,6 +726,31 @@ void handle_buffer_delete_command(EditorState &state, bool force) {
     set_status(state, std::format("Closed {}", closing_name));
 }
 
+void handle_goto_line_command(EditorState &state, const std::string &argument) {
+    if (argument.empty()) {
+        set_status(state, "No line number");
+        return;
+    }
+
+    std::size_t line_number = 0;
+    try {
+        line_number = static_cast<std::size_t>(std::stoul(argument));
+    } catch (const std::exception &) {
+        set_status(state, "Invalid line number");
+        return;
+    }
+
+    if (line_number == 0) {
+        set_status(state, "Line numbers start at 1");
+        return;
+    }
+
+    EditorCore &core = active_core(state);
+    std::size_t target_row = std::min(line_number - 1, core.line_count() - 1);
+    core.set_cursor({target_row, 0});
+    set_status(state, std::format("Line {}", target_row + 1));
+}
+
 std::string shell_single_quote(const std::string &text) {
     std::string quoted = "'";
     for (char ch : text) {
@@ -1248,7 +1273,9 @@ void execute_command(EditorState &state) {
         enter_normal_mode(state);
         return;
     }
-    if (verb == "w") {
+    if (std::ranges::all_of(verb, [](unsigned char ch) { return std::isdigit(ch) != 0; })) {
+        handle_goto_line_command(state, verb);
+    } else if (verb == "w") {
         handle_write_command(state, argument);
     } else if (verb == "q") {
         handle_quit_command(state, false);
@@ -1264,10 +1291,10 @@ void execute_command(EditorState &state) {
         handle_buffer_switch_command(state, argument);
     } else if (verb == "bnext") {
         state.session.next_buffer();
-        set_status(state, "Switched to " + active_core(state).display_file_name());
+        set_status(state, std::format("Switched to {}", active_core(state).display_file_name()));
     } else if (verb == "bprev") {
         state.session.previous_buffer();
-        set_status(state, "Switched to " + active_core(state).display_file_name());
+        set_status(state, std::format("Switched to {}", active_core(state).display_file_name()));
     } else if (verb == "bd") {
         handle_buffer_delete_command(state, false);
     } else if (verb == "bd!") {
