@@ -695,7 +695,7 @@ std::optional<std::string> run_picker_command(EditorState &state, const std::str
 
     const std::string current_directory = std::filesystem::current_path().string();
     std::string shell_command =
-        "sh -lc " + shell_single_quote("cd " + shell_single_quote(current_directory) + " && " + pipeline_command) +
+        "sh -c " + shell_single_quote("cd " + shell_single_quote(current_directory) + " && " + pipeline_command) +
         " > " + shell_single_quote(temp_path);
     log_debug("picker start cwd=" + current_directory + " pipeline=" + pipeline_command + " output=" + temp_path);
     state.pending_tokens.clear();
