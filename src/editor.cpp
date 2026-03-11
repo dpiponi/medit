@@ -4,6 +4,7 @@
 #include "keybindings.hpp"
 #include "lsp_service.hpp"
 #include "services.hpp"
+#include "syntax.hpp"
 #include "theme.hpp"
 
 #include <algorithm>
@@ -12,9 +13,10 @@
 #include <cstdint>
 #include <cwchar>
 #include <exception>
+#include <limits>
+#include <memory>
 #include <ncursesw/curses.h>
 #include <optional>
-#include <memory>
 #include <regex>
 #include <sstream>
 #include <string>
@@ -62,6 +64,11 @@ struct EditorState {
     std::unique_ptr<std::regex> compiled_search_regex;
     std::size_t search_matches_version = 0;
     std::optional<std::size_t> selected_diagnostic_index;
+    SyntaxMode syntax_mode = SyntaxMode::None;
+    std::vector<std::vector<HighlightSpan>> syntax_highlights;
+    std::size_t syntax_revision = std::numeric_limits<std::size_t>::max();
+    std::optional<std::string> syntax_file_path;
+    bool syntax_config_error_reported = false;
 };
 
 struct DiagnosticEntryView {
@@ -771,6 +778,9 @@ StyleRole resolve_style_role(
 std::vector<HighlightSpan> collect_line_highlights(const EditorState &state, std::size_t row) {
     std::vector<HighlightSpan> spans;
     Range entire_line = state.core.line_range(row);
+    if (row < state.syntax_highlights.size()) {
+        spans.insert(spans.end(), state.syntax_highlights[row].begin(), state.syntax_highlights[row].end());
+    }
     if (state.core.cursor().row == row) {
         spans.push_back({entire_line, StyleRole::CursorLine, 10});
     }
@@ -1070,6 +1080,29 @@ void draw_editor(const EditorState &state) {
     auto [cursor_row, cursor_col] = cursor_screen_position(state, number_cols);
     move(cursor_row, cursor_col);
     refresh();
+}
+
+void refresh_syntax_highlights(EditorState &state) {
+    SyntaxMode mode = SyntaxMode::None;
+    try {
+        mode = resolve_syntax_mode(state.config, state.core.file_path());
+    } catch (const std::exception &error) {
+        if (!state.syntax_config_error_reported) {
+            set_status(state, std::string("Syntax config error: ") + error.what());
+            state.syntax_config_error_reported = true;
+        }
+        mode = SyntaxMode::None;
+    }
+
+    if (state.syntax_revision == state.core.current_revision() && state.syntax_mode == mode &&
+        state.syntax_file_path == state.core.file_path()) {
+        return;
+    }
+
+    state.syntax_mode = mode;
+    state.syntax_file_path = state.core.file_path();
+    state.syntax_revision = state.core.current_revision();
+    state.syntax_highlights = highlight_document_syntax(state.core.lines(), state.syntax_mode);
 }
 
 void append_after_cursor(EditorState &state) {
@@ -1585,6 +1618,7 @@ void run_editor(EditorState &state) {
         state.runtime.process(state.core);
         normalize_selected_diagnostic(state);
         handle_service_events(state);
+        refresh_syntax_highlights(state);
         int screen_rows = 0;
         int screen_cols = 0;
         getmaxyx(stdscr, screen_rows, screen_cols);

@@ -125,6 +125,8 @@ EditorConfig load_editor_config_from_path(const std::filesystem::path &path) {
             config.lsp_command = value;
         } else if (key == "lsp_language_id") {
             config.lsp_language_id = value;
+        } else if (key == "syntax") {
+            config.syntax_name = value;
         } else if (key == "right_justify_diagnostics") {
             config.right_justify_diagnostics = parse_bool_value(value);
         } else {

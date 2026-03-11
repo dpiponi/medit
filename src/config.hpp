@@ -10,6 +10,7 @@ struct EditorConfig {
     std::optional<std::filesystem::path> colors_path;
     std::optional<std::string> lsp_command;
     std::optional<std::string> lsp_language_id;
+    std::optional<std::string> syntax_name;
     bool right_justify_diagnostics = false;
 };
 

@@ -4,6 +4,7 @@
 #include "keybindings.hpp"
 #include "lsp_service.hpp"
 #include "services.hpp"
+#include "syntax.hpp"
 #include "theme.hpp"
 
 #include <cstdio>
@@ -51,6 +52,19 @@ void expect_cursor(const EditorCore &core, Position expected, const std::string 
 
 void expect_event_type(const EditorEvent &event, EditorEventType expected, const std::string &message) {
     expect(event.type == expected, message);
+}
+
+bool line_has_span(
+    const std::vector<HighlightSpan> &spans,
+    std::size_t start,
+    std::size_t end,
+    StyleRole role) {
+    for (const HighlightSpan &span : spans) {
+        if (span.role == role && span.range.start.column == start && span.range.end.column == end) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void test_insert_unicode_and_undo() {
@@ -670,6 +684,7 @@ void test_config_file_selects_keybindings_and_colors() {
         rc << "colors = amber.json\n";
         rc << "lsp_command = clangd --background-index\n";
         rc << "lsp_language_id = cpp\n";
+        rc << "syntax = cpp\n";
         rc << "right_justify_diagnostics = true\n";
     }
     {
@@ -712,6 +727,7 @@ void test_config_file_selects_keybindings_and_colors() {
     expect(config.lsp_command.has_value(), "config should parse lsp command");
     expect(*config.lsp_command == "clangd --background-index", "config should preserve full lsp command");
     expect(config.lsp_language_id.has_value() && *config.lsp_language_id == "cpp", "config should parse lsp language id");
+    expect(config.syntax_name.has_value() && *config.syntax_name == "cpp", "config should parse syntax name");
     expect(config.right_justify_diagnostics, "config should parse right-justify diagnostics");
 
     KeyBindings keybindings = load_keybindings(config);
@@ -724,6 +740,30 @@ void test_config_file_selects_keybindings_and_colors() {
     expect(line_number.foreground == COLOR_YELLOW, "custom color theme should load selected file");
 
     std::filesystem::remove_all(root);
+}
+
+void test_cpp_syntax_highlighting() {
+    std::vector<std::u32string> lines = {
+        utf8_to_u32("int main() {"),
+        utf8_to_u32("  std::string value = \"hi\"; // note"),
+        utf8_to_u32("  /* block"),
+        utf8_to_u32("     comment */ return 0;"),
+        utf8_to_u32("#include <vector>"),
+    };
+
+    std::vector<std::vector<HighlightSpan>> highlights = highlight_document_syntax(lines, SyntaxMode::Cpp);
+    expect(highlights.size() == lines.size(), "syntax highlighter should return one span list per line");
+    expect(line_has_span(highlights[0], 0, 3, StyleRole::SyntaxKeyword), "cpp keyword should highlight");
+    expect(line_has_span(highlights[1], 22, 26, StyleRole::SyntaxString), "string literal should highlight");
+    expect(line_has_span(highlights[1], 28, 35, StyleRole::SyntaxComment), "line comment should highlight");
+    expect(line_has_span(highlights[2], 2, 10, StyleRole::SyntaxComment), "block comment start should highlight");
+    expect(line_has_span(highlights[3], 0, 15, StyleRole::SyntaxComment), "block comment continuation should highlight");
+    expect(line_has_span(highlights[3], 16, 22, StyleRole::SyntaxKeyword), "keyword after block comment should highlight");
+    expect(line_has_span(highlights[4], 0, 8, StyleRole::SyntaxKeyword), "preprocessor directive should highlight");
+
+    expect(detect_syntax_mode(std::optional<std::string>("sample.cpp")) == SyntaxMode::Cpp, "cpp extension should auto-detect");
+    expect(detect_syntax_mode(std::optional<std::string>("notes.txt")) == SyntaxMode::None, "non-code file should not auto-detect");
+    expect(syntax_mode_from_name("cpp") == SyntaxMode::Cpp, "named cpp syntax should resolve");
 }
 
 void test_lsp_message_framing() {
@@ -918,6 +958,7 @@ int main() {
         test_editor_command_entry_points();
         test_keybinding_dispatch();
         test_config_file_selects_keybindings_and_colors();
+        test_cpp_syntax_highlighting();
         test_lsp_message_framing();
         test_lsp_service_roundtrip();
         test_editor_runtime_service_boundary();

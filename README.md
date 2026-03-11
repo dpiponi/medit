@@ -50,8 +50,11 @@ It can also configure one LSP server command and language id, for example:
 ```ini
 lsp_command = clangd --background-index
 lsp_language_id = cpp
+syntax = cpp
 right_justify_diagnostics = true
 ```
+
+`syntax = cpp` forces the lightweight C++ syntax highlighter. If `syntax` is omitted, `medit` auto-detects C/C++ files by extension and otherwise leaves syntax coloring off.
 
 `right_justify_diagnostics = true` makes inline diagnostic annotations render against the right edge of the text area instead of starting from the left.
 
