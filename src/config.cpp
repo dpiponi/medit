@@ -7,9 +7,6 @@
 #include <filesystem>
 #include <fstream>
 #include <optional>
-#include <sstream>
-#include <stdexcept>
-#include <string>
 
 namespace {
 
@@ -246,4 +243,46 @@ EditorConfig load_editor_config_from_path(const std::filesystem::path &path) {
     }
 
     return config;
+}
+
+std::string infer_language_id(const EditorConfig &config, const std::optional<std::string> &file_path) {
+    auto matches_extension = [&](const std::string &extension) -> std::optional<std::string> {
+        for (const LspServerConfig &server : config.lsp_servers) {
+            for (const std::string &configured_extension : server.extensions) {
+                if (configured_extension == "*" || configured_extension == extension) {
+                    return server.language_id;
+                }
+            }
+        }
+        return std::nullopt;
+    };
+
+    if (file_path && !file_path->empty()) {
+        std::string extension = lowercase(std::filesystem::path(*file_path).extension().string());
+        if (std::optional<std::string> matched = matches_extension(extension)) {
+            return *matched;
+        }
+
+        if (extension == ".c" || extension == ".cc" || extension == ".cpp" || extension == ".cxx" ||
+            extension == ".h" || extension == ".hh" || extension == ".hpp" || extension == ".hxx") {
+            return "cpp";
+        }
+        if (extension == ".py" || extension == ".pyi" || extension == ".pyw") {
+            return "python";
+        }
+        if (extension == ".json" || extension == ".jsonc") {
+            return "json";
+        }
+    }
+
+    if (config.lsp_language_id && !config.lsp_language_id->empty()) {
+        return *config.lsp_language_id;
+    }
+    if (config.syntax_name && !config.syntax_name->empty()) {
+        return *config.syntax_name;
+    }
+    if (std::optional<std::string> wildcard = matches_extension("*")) {
+        return *wildcard;
+    }
+    return "text";
 }

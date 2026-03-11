@@ -27,3 +27,4 @@ struct EditorConfig {
 
 EditorConfig load_editor_config();
 EditorConfig load_editor_config_from_path(const std::filesystem::path &path);
+std::string infer_language_id(const EditorConfig &config, const std::optional<std::string> &file_path);

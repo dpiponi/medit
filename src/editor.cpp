@@ -11,9 +11,6 @@
 #include <algorithm>
 #include <clocale>
 #include <csignal>
-#include <cstdint>
-#include <cwchar>
-#include <exception>
 #include <limits>
 #include <memory>
 #include <map>
@@ -1163,6 +1160,7 @@ std::string build_status_text(const EditorState &state) {
     std::ostringstream status;
     status << mode_name(state.mode) << "  " << core.display_file_name();
     status << "  [" << (state.session.active_buffer_index() + 1) << "/" << state.session.buffer_count() << "]";
+    status << "  " << infer_language_id(state.config, core.file_path());
     if (core.is_dirty()) {
         status << " [+]";
     }

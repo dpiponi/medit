@@ -826,6 +826,21 @@ void test_lsp_config_rejects_duplicate_extensions() {
     std::filesystem::remove_all(root);
 }
 
+void test_infer_language_id() {
+    EditorConfig config;
+    config.lsp_servers.push_back({"python", "pyright-langserver --stdio", "python", {".py", ".pyi", ".pyw"}});
+    config.lsp_servers.push_back({"json", "vscode-json-languageserver --stdio", "json", {".json", ".jsonc"}});
+
+    expect(infer_language_id(config, std::optional<std::string>("test.py")) == "python", "python extension should infer python");
+    expect(infer_language_id(config, std::optional<std::string>("settings.json")) == "json", "json extension should infer json");
+    expect(infer_language_id(config, std::optional<std::string>("main.cpp")) == "cpp", "cpp extension should infer cpp");
+    expect(infer_language_id(config, std::optional<std::string>("notes.txt")) == "text", "unknown extension should infer text");
+
+    EditorConfig fallback;
+    fallback.syntax_name = "cpp";
+    expect(infer_language_id(fallback, std::nullopt) == "cpp", "syntax fallback should be used when no file path exists");
+}
+
 void test_cpp_syntax_highlighting() {
     std::vector<std::u32string> lines = {
         utf8_to_u32("int main() {"),
@@ -1185,6 +1200,7 @@ int main() {
         test_keybinding_dispatch();
         test_config_file_selects_keybindings_and_colors();
         test_lsp_config_rejects_duplicate_extensions();
+        test_infer_language_id();
         test_cpp_syntax_highlighting();
         test_file_uri_normalization();
         test_lsp_message_framing();
