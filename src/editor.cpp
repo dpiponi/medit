@@ -673,6 +673,15 @@ bool reload_editor_configuration(EditorState &state, std::string &error_message)
         apply_theme_to_terminal(state.theme);
         clearok(stdscr, TRUE);
         refresh();
+        state.runtime.clear_services();
+        if (!state.config.lsp_servers.empty()) {
+            for (const LspServerConfig &server : state.config.lsp_servers) {
+                state.runtime.add_service(std::make_unique<LspService>(server));
+            }
+        }
+        if (!state.config.lsp_servers.empty()) {
+            state.runtime.start_services();
+        }
         return true;
     } catch (const std::exception &error) {
         error_message = error.what();
@@ -2157,8 +2166,10 @@ int main(int argc, char **argv) {
     }
 
     setup_terminal(state.theme);
-    if (state.config.lsp_command && !state.config.lsp_command->empty()) {
-        state.runtime.add_service(std::make_unique<LspService>(state.config));
+    if (!state.config.lsp_servers.empty()) {
+        for (const LspServerConfig &server : state.config.lsp_servers) {
+            state.runtime.add_service(std::make_unique<LspService>(server));
+        }
     }
     state.runtime.start_services();
     run_editor(state);

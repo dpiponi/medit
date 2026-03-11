@@ -3,6 +3,7 @@
 #include "editor_commands.hpp"
 #include "json.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <filesystem>
 #include <sstream>
@@ -69,6 +70,13 @@ DiagnosticSeverity diagnostic_severity_from_lsp(const JsonValue &value) {
     return static_cast<int>(value.number_value) == 1 ? DiagnosticSeverity::Error : DiagnosticSeverity::Warning;
 }
 
+std::string lowercase(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
 }  // namespace
 
 std::string encode_lsp_message(const std::string &payload) {
@@ -106,18 +114,18 @@ std::vector<std::string> extract_lsp_messages(std::string &buffer) {
     return messages;
 }
 
-LspService::LspService(EditorConfig config) : config_(std::move(config)) {}
+LspService::LspService(LspServerConfig config) : config_(std::move(config)) {}
 
 LspService::~LspService() {
     stop();
 }
 
 std::string LspService::name() const {
-    return "lsp";
+    return "lsp:" + config_.name;
 }
 
 void LspService::start() {
-    if (running_ || !config_.lsp_command || config_.lsp_command->empty()) {
+    if (running_ || config_.command.empty()) {
         return;
     }
 #if defined(__unix__) || defined(__APPLE__)
@@ -145,10 +153,14 @@ void LspService::stop() {
     shutdown_process();
     running_ = false;
     initialized_ = false;
+    open_documents_.clear();
 }
 
 void LspService::handle_editor_event(const EditorEvent &event) {
     if (!running_) {
+        return;
+    }
+    if (!matches_document(event.document_uri) && open_documents_.find(event.document_uri) == open_documents_.end()) {
         return;
     }
     switch (event.type) {
@@ -224,6 +236,21 @@ void LspService::queue_stderr_line(const std::string &line) {
     queue_status("LSP stderr: " + line);
 }
 
+bool LspService::matches_document(const std::string &document_uri) const {
+    if (config_.extensions.empty()) {
+        return false;
+    }
+    if (std::find(config_.extensions.begin(), config_.extensions.end(), "*") != config_.extensions.end()) {
+        return true;
+    }
+    std::string file_path = file_path_from_uri(document_uri);
+    if (file_path.empty()) {
+        return false;
+    }
+    std::string extension = lowercase(std::filesystem::path(file_path).extension().string());
+    return std::find(config_.extensions.begin(), config_.extensions.end(), extension) != config_.extensions.end();
+}
+
 #if defined(__unix__) || defined(__APPLE__)
 bool LspService::spawn_process() {
     int stdin_pipe[2];
@@ -244,7 +271,7 @@ bool LspService::spawn_process() {
         close(stdin_pipe[1]);
         close(stdout_pipe[0]);
         close(stderr_pipe[0]);
-        execl("/bin/sh", "sh", "-lc", config_.lsp_command->c_str(), nullptr);
+        execl("/bin/sh", "sh", "-lc", config_.command.c_str(), nullptr);
         _exit(127);
     }
 
@@ -389,14 +416,14 @@ void LspService::send_did_open(const EditorEvent &event) {
     if (!initialized_) {
         return;
     }
-    std::string language_id = config_.lsp_language_id.value_or("cpp");
+    open_documents_.insert(event.document_uri);
     std::ostringstream payload;
     payload << "{"
             << "\"jsonrpc\":\"2.0\","
             << "\"method\":\"textDocument/didOpen\","
             << "\"params\":{\"textDocument\":{"
             << "\"uri\":" << json_string(event.document_uri) << ","
-            << "\"languageId\":" << json_string(language_id) << ","
+            << "\"languageId\":" << json_string(config_.language_id) << ","
             << "\"version\":" << event.document_version << ","
             << "\"text\":" << json_string(u32_to_utf8(event.text))
             << "}}}";
@@ -404,7 +431,7 @@ void LspService::send_did_open(const EditorEvent &event) {
 }
 
 void LspService::send_did_change(const EditorEvent &event) {
-    if (!initialized_) {
+    if (!initialized_ || open_documents_.find(event.document_uri) == open_documents_.end()) {
         return;
     }
     std::ostringstream payload;
@@ -419,7 +446,7 @@ void LspService::send_did_change(const EditorEvent &event) {
 }
 
 void LspService::send_did_save(const EditorEvent &event) {
-    if (!initialized_) {
+    if (!initialized_ || open_documents_.find(event.document_uri) == open_documents_.end()) {
         return;
     }
     std::ostringstream payload;
@@ -432,7 +459,7 @@ void LspService::send_did_save(const EditorEvent &event) {
 }
 
 void LspService::send_did_close(const EditorEvent &event) {
-    if (!initialized_) {
+    if (!initialized_ || open_documents_.find(event.document_uri) == open_documents_.end()) {
         return;
     }
     std::ostringstream payload;
@@ -442,6 +469,7 @@ void LspService::send_did_close(const EditorEvent &event) {
             << "\"params\":{\"textDocument\":{\"uri\":" << json_string(event.document_uri) << "}}"
             << "}";
     write_payload(payload.str());
+    open_documents_.erase(event.document_uri);
 }
 
 void LspService::handle_message(const std::string &payload) {

@@ -43,16 +43,38 @@ make test
 1. `./.config/meditrc`
 2. `~/.config/meditrc`
 
-If `meditrc` exists, it selects the keybindings JSON and colors JSON to load from `.config/medit/` unless you give absolute paths.
+If `meditrc` exists, it selects the keybindings JSON, colors JSON, and optional LSP rules JSON to load from `.config/medit/` unless you give absolute paths.
 
-It can also configure one LSP server command and language id, for example:
+LSP can be configured per file extension through an LSP rules file:
 
 ```ini
-lsp_command = clangd --background-index
-lsp_language_id = cpp
+lsp = lsp.json
 syntax = cpp
 right_justify_diagnostics = true
 ```
+
+Example [lsp.json](/home/dan/de/.config/medit/lsp.json):
+
+```json
+{
+  "servers": [
+    {
+      "name": "cpp",
+      "command": "clangd --background-index",
+      "language_id": "cpp",
+      "extensions": [".cpp", ".hpp"]
+    },
+    {
+      "name": "json",
+      "command": "vscode-json-languageserver --stdio",
+      "language_id": "json",
+      "extensions": [".json", ".jsonc"]
+    }
+  ]
+}
+```
+
+Each open buffer picks the first matching server by file extension and sends that server the configured language id. The old `lsp_command` and `lsp_language_id` keys still work as a single catch-all fallback.
 
 `syntax = cpp` forces the lightweight C++ syntax highlighter. If `syntax` is omitted, `medit` auto-detects C/C++ files by extension and otherwise leaves syntax coloring off.
 
@@ -63,6 +85,7 @@ The checked-in local config is:
 - [`.config/meditrc`](/home/dan/de/.config/meditrc)
 - [`.config/medit/keybindings.json`](/home/dan/de/.config/medit/keybindings.json)
 - [`.config/medit/colors.json`](/home/dan/de/.config/medit/colors.json)
+- [`.config/medit/lsp.json`](/home/dan/de/.config/medit/lsp.json)
 - [`.config/medit/neon.json`](/home/dan/de/.config/medit/neon.json)
 - [`.config/medit/forest.json`](/home/dan/de/.config/medit/forest.json)
 

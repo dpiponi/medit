@@ -45,6 +45,7 @@ class EditorRuntime {
 
     void start_services();
     void stop_services();
+    void clear_services();
     void process(EditorCore &core);
     void dispatch_editor_event(const EditorEvent &event);
     void dispatch_editor_events(EditorCore &core);

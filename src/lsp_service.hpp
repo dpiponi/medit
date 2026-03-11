@@ -4,6 +4,7 @@
 #include "services.hpp"
 
 #include <atomic>
+#include <set>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -15,7 +16,7 @@ std::vector<std::string> extract_lsp_messages(std::string &buffer);
 
 class LspService : public EditorService {
   public:
-    explicit LspService(EditorConfig config);
+    explicit LspService(LspServerConfig config);
     ~LspService() override;
 
     std::string name() const override;
@@ -26,7 +27,7 @@ class LspService : public EditorService {
     std::optional<int> poll_interval_ms() const override;
 
   private:
-    EditorConfig config_;
+    LspServerConfig config_;
     std::atomic<bool> running_{false};
     std::atomic<bool> initialized_{false};
     std::atomic<bool> stopping_{false};
@@ -41,12 +42,14 @@ class LspService : public EditorService {
     std::mutex mutex_;
     std::vector<ServiceEvent> pending_events_;
     std::vector<EditorEvent> pending_editor_events_;
+    std::set<std::string> open_documents_;
     std::string read_buffer_;
     std::string stderr_buffer_;
 
     void queue_event(ServiceEvent event);
     void queue_status(const std::string &message);
     void queue_stderr_line(const std::string &line);
+    bool matches_document(const std::string &document_uri) const;
     void send_editor_event(const EditorEvent &event);
     void flush_pending_editor_events();
     bool spawn_process();

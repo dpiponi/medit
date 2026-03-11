@@ -14,6 +14,7 @@
 #include <fstream>
 #include <iostream>
 #include <curses.h>
+#include <fcntl.h>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -713,10 +714,22 @@ void test_config_file_selects_keybindings_and_colors() {
         std::ofstream rc(config_dir + "/meditrc");
         rc << "keybindings = custom-keys.json\n";
         rc << "colors = amber.json\n";
-        rc << "lsp_command = clangd --background-index\n";
-        rc << "lsp_language_id = cpp\n";
+        rc << "lsp = lsp.json\n";
         rc << "syntax = cpp\n";
         rc << "right_justify_diagnostics = true\n";
+    }
+    {
+        std::ofstream lsp(medit_dir + "/lsp.json");
+        lsp << "{\n"
+               "  \"servers\": [\n"
+               "    {\n"
+               "      \"name\": \"cpp\",\n"
+               "      \"command\": \"clangd --background-index\",\n"
+               "      \"language_id\": \"cpp\",\n"
+               "      \"extensions\": [\".cpp\", \".hpp\"]\n"
+               "    }\n"
+               "  ]\n"
+               "}\n";
     }
     {
         std::ofstream keys(medit_dir + "/custom-keys.json");
@@ -751,13 +764,17 @@ void test_config_file_selects_keybindings_and_colors() {
     EditorConfig config = load_editor_config_from_path(config_dir + "/meditrc");
     expect(config.keybindings_path.has_value(), "config should resolve keybindings path");
     expect(config.colors_path.has_value(), "config should resolve colors path");
+    expect(config.lsp_path.has_value(), "config should resolve lsp path");
     expect(
         config.keybindings_path->filename() == "custom-keys.json",
         "config should use configured keybindings file");
     expect(config.colors_path->filename() == "amber.json", "config should use configured colors file");
-    expect(config.lsp_command.has_value(), "config should parse lsp command");
-    expect(*config.lsp_command == "clangd --background-index", "config should preserve full lsp command");
-    expect(config.lsp_language_id.has_value() && *config.lsp_language_id == "cpp", "config should parse lsp language id");
+    expect(config.lsp_path->filename() == "lsp.json", "config should use configured lsp file");
+    expect(config.lsp_servers.size() == 1, "config should parse lsp server rules");
+    expect(config.lsp_servers[0].name == "cpp", "config should parse lsp server name");
+    expect(config.lsp_servers[0].command == "clangd --background-index", "config should parse lsp command");
+    expect(config.lsp_servers[0].language_id == "cpp", "config should parse lsp language id");
+    expect(config.lsp_servers[0].extensions.size() == 2, "config should parse lsp extensions");
     expect(config.syntax_name.has_value() && *config.syntax_name == "cpp", "config should parse syntax name");
     expect(config.right_justify_diagnostics, "config should parse right-justify diagnostics");
 
@@ -772,6 +789,40 @@ void test_config_file_selects_keybindings_and_colors() {
     TextStyle line_number = theme_style(theme, StyleRole::LineNumber);
     expect(line_number.foreground == COLOR_YELLOW, "custom color theme should load selected file");
 
+    std::filesystem::remove_all(root);
+}
+
+void test_lsp_config_rejects_duplicate_extensions() {
+    char template_path[] = "/tmp/medit-lsp-config-XXXXXX";
+    char *dir = mkdtemp(template_path);
+    expect(dir != nullptr, "mkdtemp for duplicate lsp config test should succeed");
+
+    std::string root = dir;
+    std::string config_dir = root + "/.config";
+    std::string medit_dir = config_dir + "/medit";
+    std::filesystem::create_directories(medit_dir);
+
+    {
+        std::ofstream rc(config_dir + "/meditrc");
+        rc << "lsp = lsp.json\n";
+    }
+    {
+        std::ofstream lsp(medit_dir + "/lsp.json");
+        lsp << "{\n"
+               "  \"servers\": [\n"
+               "    {\"name\": \"cpp\", \"command\": \"clangd\", \"language_id\": \"cpp\", \"extensions\": [\".cpp\"]},\n"
+               "    {\"name\": \"other\", \"command\": \"otherls\", \"language_id\": \"other\", \"extensions\": [\".cpp\"]}\n"
+               "  ]\n"
+               "}\n";
+    }
+
+    bool threw = false;
+    try {
+        (void)load_editor_config_from_path(config_dir + "/meditrc");
+    } catch (const std::exception &) {
+        threw = true;
+    }
+    expect(threw, "duplicate lsp extension mappings should be rejected");
     std::filesystem::remove_all(root);
 }
 
@@ -822,8 +873,11 @@ void test_lsp_message_framing() {
 
 void test_lsp_service_roundtrip() {
 #if defined(__unix__) || defined(__APPLE__)
-    char path[] = "/tmp/medit-lsp-XXXXXX";
-    int fd = mkstemp(path);
+    char dir_template[] = "/tmp/medit-lsp-XXXXXX";
+    char *dir = mkdtemp(dir_template);
+    expect(dir != nullptr, "mkdtemp for lsp test should succeed");
+    std::string path = std::string(dir) + "/sample.txt";
+    int fd = open(path.c_str(), O_CREAT | O_RDWR, 0600);
     expect(fd >= 0, "mkstemp for lsp test should succeed");
     close(fd);
     {
@@ -831,9 +885,11 @@ void test_lsp_service_roundtrip() {
         file << "abc";
     }
 
-    EditorConfig config;
-    config.lsp_command = std::string("python3 ") + std::filesystem::current_path().string() + "/tests/fake_lsp_server.py";
-    config.lsp_language_id = "cpp";
+    LspServerConfig config;
+    config.name = "text";
+    config.command = std::string("python3 ") + std::filesystem::current_path().string() + "/tests/fake_lsp_server.py";
+    config.language_id = "text";
+    config.extensions = {".txt"};
 
     EditorRuntime runtime;
     runtime.add_service(std::make_unique<LspService>(config));
@@ -864,14 +920,17 @@ void test_lsp_service_roundtrip() {
     expect(u32_to_utf8(core.diagnostics()[0].message) == "changed diagnostic", "lsp changed diagnostic message");
 
     runtime.stop_services();
-    std::remove(path);
+    std::filesystem::remove_all(dir);
 #endif
 }
 
 void test_lsp_service_reports_startup_failures() {
 #if defined(__unix__) || defined(__APPLE__)
-    EditorConfig config;
-    config.lsp_command = "echo mac-startup-failure >&2; exit 1";
+    LspServerConfig config;
+    config.name = "broken";
+    config.command = "echo mac-startup-failure >&2; exit 1";
+    config.language_id = "text";
+    config.extensions = {"*"};
 
     LspService service(config);
     service.start();
@@ -1096,6 +1155,7 @@ int main() {
         test_compound_edit_undo();
         test_keybinding_dispatch();
         test_config_file_selects_keybindings_and_colors();
+        test_lsp_config_rejects_duplicate_extensions();
         test_cpp_syntax_highlighting();
         test_file_uri_normalization();
         test_lsp_message_framing();

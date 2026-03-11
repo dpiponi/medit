@@ -54,6 +54,13 @@ void EditorRuntime::stop_services() {
     started_ = false;
 }
 
+void EditorRuntime::clear_services() {
+    if (started_) {
+        stop_services();
+    }
+    services_.clear();
+}
+
 void EditorRuntime::process(EditorCore &core) {
     dispatch_editor_events(core);
     poll_services();

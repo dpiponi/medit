@@ -1,5 +1,7 @@
 #include "config.hpp"
+#include "json.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdlib>
 #include <filesystem>
@@ -31,6 +33,23 @@ bool parse_bool_value(const std::string &value) {
         return false;
     }
     throw std::runtime_error("invalid boolean value: " + value);
+}
+
+std::string lowercase(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+std::string normalize_extension(std::string extension) {
+    if (extension.empty()) {
+        return extension;
+    }
+    if (extension[0] != '.') {
+        extension.insert(extension.begin(), '.');
+    }
+    return lowercase(extension);
 }
 
 std::optional<std::filesystem::path> first_existing_meditrc_path() {
@@ -77,6 +96,72 @@ std::filesystem::path resolve_config_reference(
     return meditrc_path.parent_path() / "medit" / path;
 }
 
+const JsonValue &required_object_member(const JsonValue &object, const char *key) {
+    auto found = object.object_value.find(key);
+    if (found == object.object_value.end()) {
+        throw std::runtime_error(std::string("missing lsp config field: ") + key);
+    }
+    return found->second;
+}
+
+std::vector<LspServerConfig> load_lsp_servers_from_path(const std::filesystem::path &path) {
+    std::string source = read_text_file(path);
+    if (source.empty()) {
+        throw std::runtime_error("could not open lsp config file: " + path.string());
+    }
+
+    JsonValue root = parse_json(source);
+    if (root.type != JsonValue::Type::Object) {
+        throw std::runtime_error("lsp config root must be an object");
+    }
+
+    auto servers = root.object_value.find("servers");
+    if (servers == root.object_value.end() || servers->second.type != JsonValue::Type::Array) {
+        throw std::runtime_error("lsp config must contain a servers array");
+    }
+
+    std::vector<LspServerConfig> parsed_servers;
+    std::map<std::string, std::string> extension_owners;
+    for (const JsonValue &server_value : servers->second.array_value) {
+        if (server_value.type != JsonValue::Type::Object) {
+            throw std::runtime_error("lsp server entries must be objects");
+        }
+
+        const JsonValue &name = required_object_member(server_value, "name");
+        const JsonValue &command = required_object_member(server_value, "command");
+        const JsonValue &language_id = required_object_member(server_value, "language_id");
+        const JsonValue &extensions = required_object_member(server_value, "extensions");
+        if (name.type != JsonValue::Type::String || command.type != JsonValue::Type::String ||
+            language_id.type != JsonValue::Type::String || extensions.type != JsonValue::Type::Array) {
+            throw std::runtime_error("invalid lsp server field types");
+        }
+
+        LspServerConfig server;
+        server.name = name.string_value;
+        server.command = command.string_value;
+        server.language_id = language_id.string_value;
+        for (const JsonValue &extension_value : extensions.array_value) {
+            if (extension_value.type != JsonValue::Type::String) {
+                throw std::runtime_error("lsp server extensions must be strings");
+            }
+            std::string extension = normalize_extension(extension_value.string_value);
+            auto existing_owner = extension_owners.find(extension);
+            if (existing_owner != extension_owners.end()) {
+                throw std::runtime_error(
+                    "duplicate lsp extension mapping for " + extension + ": " + existing_owner->second + " and " + name.string_value);
+            }
+            extension_owners.emplace(extension, name.string_value);
+            server.extensions.push_back(std::move(extension));
+        }
+        if (server.name.empty() || server.command.empty() || server.language_id.empty() || server.extensions.empty()) {
+            throw std::runtime_error("lsp server entries must not be empty");
+        }
+        parsed_servers.push_back(std::move(server));
+    }
+
+    return parsed_servers;
+}
+
 }  // namespace
 
 EditorConfig load_editor_config() {
@@ -88,6 +173,10 @@ EditorConfig load_editor_config() {
     EditorConfig config;
     config.keybindings_path = first_existing_default_config_path("keybindings.json");
     config.colors_path = first_existing_default_config_path("colors.json");
+    config.lsp_path = first_existing_default_config_path("lsp.json");
+    if (config.lsp_path && std::filesystem::exists(*config.lsp_path)) {
+        config.lsp_servers = load_lsp_servers_from_path(*config.lsp_path);
+    }
     return config;
 }
 
@@ -121,6 +210,8 @@ EditorConfig load_editor_config_from_path(const std::filesystem::path &path) {
             config.keybindings_path = resolve_config_reference(path, value);
         } else if (key == "colors") {
             config.colors_path = resolve_config_reference(path, value);
+        } else if (key == "lsp") {
+            config.lsp_path = resolve_config_reference(path, value);
         } else if (key == "lsp_command") {
             config.lsp_command = value;
         } else if (key == "lsp_language_id") {
@@ -139,6 +230,19 @@ EditorConfig load_editor_config_from_path(const std::filesystem::path &path) {
     }
     if (!config.colors_path) {
         config.colors_path = resolve_config_reference(path, "colors.json");
+    }
+    if (!config.lsp_path) {
+        config.lsp_path = resolve_config_reference(path, "lsp.json");
+    }
+    if (config.lsp_path && std::filesystem::exists(*config.lsp_path)) {
+        config.lsp_servers = load_lsp_servers_from_path(*config.lsp_path);
+    } else if (config.lsp_command && config.lsp_language_id) {
+        LspServerConfig fallback;
+        fallback.name = *config.lsp_language_id;
+        fallback.command = *config.lsp_command;
+        fallback.language_id = *config.lsp_language_id;
+        fallback.extensions.push_back("*");
+        config.lsp_servers.push_back(std::move(fallback));
     }
 
     return config;
