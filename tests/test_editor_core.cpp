@@ -470,6 +470,9 @@ void test_keybinding_dispatch() {
     KeyDispatch special = dispatch_key_sequence(keybindings, "normal", pending, "pagedown", false);
     expect(special.action.has_value() && *special.action == EditorAction::PageDown, "pagedown binding");
 
+    KeyDispatch suspend = dispatch_key_sequence(keybindings, "normal", pending, "ctrl-z", false);
+    expect(suspend.action.has_value() && *suspend.action == EditorAction::Suspend, "ctrl-z binding");
+
     KeyDispatch linewise = dispatch_key_sequence(keybindings, "normal", pending, "V", false);
     expect(
         linewise.action.has_value() && *linewise.action == EditorAction::EnterVisualLineMode,

@@ -36,6 +36,7 @@
     "d d": "delete_line",
     "ctrl-d": "half_page_down",
     "ctrl-u": "half_page_up",
+    "ctrl-z": "suspend",
     "pageup": "page_up",
     "pagedown": "page_down"
   },
@@ -70,6 +71,7 @@
     "esc": "enter_normal_mode",
     "ctrl-d": "half_page_down",
     "ctrl-u": "half_page_up",
+    "ctrl-z": "suspend",
     "pageup": "page_up",
     "pagedown": "page_down"
   },

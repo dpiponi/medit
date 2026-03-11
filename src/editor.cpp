@@ -5,6 +5,7 @@
 #include "theme.hpp"
 
 #include <clocale>
+#include <csignal>
 #include <cstdint>
 #include <cwchar>
 #include <exception>
@@ -139,6 +140,30 @@ void setup_terminal(const Theme &theme) {
 
 void teardown_terminal() {
     endwin();
+}
+
+bool suspend_supported() {
+#if defined(SIGTSTP)
+    return true;
+#else
+    return false;
+#endif
+}
+
+void suspend_editor(EditorState &state) {
+#if defined(SIGTSTP)
+    state.pending_tokens.clear();
+    state.pending_motion = PendingMotion::None;
+    def_prog_mode();
+    endwin();
+    std::raise(SIGTSTP);
+    reset_prog_mode();
+    refresh();
+    clearok(stdscr, TRUE);
+    set_status(state, mode_name(state.mode));
+#else
+    set_status(state, "Suspend not supported");
+#endif
 }
 
 void enter_normal_mode(EditorState &state) {
@@ -999,6 +1024,9 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
         case EditorAction::PageDown:
             page_down(state);
             break;
+        case EditorAction::Suspend:
+            suspend_editor(state);
+            break;
         case EditorAction::EnterNormalMode:
             enter_normal_mode(state);
             break;
@@ -1238,6 +1266,9 @@ int main(int argc, char **argv) {
     } catch (const std::exception &error) {
         state.theme = load_embedded_theme();
         set_status(state, std::string("Theme config error: ") + error.what());
+    }
+    if (!suspend_supported()) {
+        remove_action_bindings(state.keybindings, EditorAction::Suspend);
     }
     if (argc > 1) {
         if (state.core.load_file(argv[1])) {

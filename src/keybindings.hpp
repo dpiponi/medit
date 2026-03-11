@@ -40,6 +40,7 @@ enum class EditorAction {
     HalfPageUp,
     PageUp,
     PageDown,
+    Suspend,
     EnterNormalMode,
     InsertNewline,
     Backspace,
@@ -81,6 +82,7 @@ KeyBindings load_keybindings();
 KeyBindings load_keybindings(const EditorConfig &config);
 KeyBindings load_keybindings_from_path(const std::filesystem::path &path);
 KeyBindings load_embedded_keybindings();
+void remove_action_bindings(KeyBindings &keybindings, EditorAction action);
 KeyDispatch dispatch_key_sequence(
     const KeyBindings &keybindings,
     const std::string &mode,

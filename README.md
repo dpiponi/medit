@@ -85,6 +85,7 @@ colors = forest.json
 - `b` jump to the previous search match
 - `PageUp`, `PageDown` move by a screen
 - `Ctrl-U`, `Ctrl-D` move by a half screen
+- `Ctrl-Z` suspend to the shell and resume with `fg` on platforms with job control support
 - Left mouse click moves the cursor to the clicked buffer position
 - `gg` jump to the top of the file
 - `G` jump to the bottom of the file

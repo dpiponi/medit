@@ -2,6 +2,7 @@
 
 #include "json.hpp"
 
+#include <algorithm>
 #include <map>
 #include <optional>
 #include <sstream>
@@ -51,6 +52,7 @@ constexpr const char *kEmbeddedDefaultKeybindings = R"json(
     "d d": "delete_line",
     "ctrl-d": "half_page_down",
     "ctrl-u": "half_page_up",
+    "ctrl-z": "suspend",
     "pageup": "page_up",
     "pagedown": "page_down"
   },
@@ -85,6 +87,7 @@ constexpr const char *kEmbeddedDefaultKeybindings = R"json(
     "esc": "enter_normal_mode",
     "ctrl-d": "half_page_down",
     "ctrl-u": "half_page_up",
+    "ctrl-z": "suspend",
     "pageup": "page_up",
     "pagedown": "page_down"
   },
@@ -160,6 +163,7 @@ std::optional<EditorAction> action_from_name(const std::string &name) {
         {"half_page_up", EditorAction::HalfPageUp},
         {"page_up", EditorAction::PageUp},
         {"page_down", EditorAction::PageDown},
+        {"suspend", EditorAction::Suspend},
         {"enter_normal_mode", EditorAction::EnterNormalMode},
         {"insert_newline", EditorAction::InsertNewline},
         {"backspace", EditorAction::Backspace},
@@ -289,6 +293,15 @@ KeyBindings load_keybindings_from_path(const std::filesystem::path &path) {
 
 KeyBindings load_embedded_keybindings() {
     return parse_keybindings_source(kEmbeddedDefaultKeybindings, "<embedded>");
+}
+
+void remove_action_bindings(KeyBindings &keybindings, EditorAction action) {
+    keybindings.bindings.erase(
+        std::remove_if(
+            keybindings.bindings.begin(),
+            keybindings.bindings.end(),
+            [action](const KeyBinding &binding) { return binding.action == action; }),
+        keybindings.bindings.end());
 }
 
 KeyDispatch dispatch_key_sequence(
