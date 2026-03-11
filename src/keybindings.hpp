@@ -56,6 +56,8 @@ enum class EditorAction {
     SearchNext,
     SearchPrevious,
     GoToDefinition,
+    JumpBack,
+    JumpForward,
     NextDiagnostic,
     PreviousDiagnostic,
     ToggleDiagnosticsPanel,

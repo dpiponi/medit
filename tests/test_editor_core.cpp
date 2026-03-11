@@ -663,6 +663,20 @@ void test_keybinding_dispatch() {
         definition_second.action.has_value() && *definition_second.action == EditorAction::GoToDefinition,
         "gd should map to go to definition");
 
+    KeyDispatch jump_back_first = dispatch_key_sequence(keybindings, "normal", pending, "g", false);
+    expect(jump_back_first.matched && jump_back_first.waiting_for_more, "g should wait for go");
+    KeyDispatch jump_back_second = dispatch_key_sequence(keybindings, "normal", pending, "o", false);
+    expect(
+        jump_back_second.action.has_value() && *jump_back_second.action == EditorAction::JumpBack,
+        "go should map to jump back");
+
+    KeyDispatch jump_forward_first = dispatch_key_sequence(keybindings, "normal", pending, "g", false);
+    expect(jump_forward_first.matched && jump_forward_first.waiting_for_more, "g should wait for gi");
+    KeyDispatch jump_forward_second = dispatch_key_sequence(keybindings, "normal", pending, "i", false);
+    expect(
+        jump_forward_second.action.has_value() && *jump_forward_second.action == EditorAction::JumpForward,
+        "gi should map to jump forward");
+
     KeyDispatch diag_next_first = dispatch_key_sequence(keybindings, "normal", pending, "]", false);
     expect(diag_next_first.matched && diag_next_first.waiting_for_more, "] should wait for ]d");
     KeyDispatch diag_next_second = dispatch_key_sequence(keybindings, "normal", pending, "d", false);

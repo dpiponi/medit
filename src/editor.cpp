@@ -50,6 +50,12 @@ enum class PendingMotion {
 };
 
 struct EditorState {
+    struct JumpLocation {
+        std::string document_uri;
+        std::optional<std::string> file_path;
+        Position position;
+    };
+
     struct RecordedInput {
         std::string token;
         wint_t key = 0;
@@ -94,6 +100,8 @@ struct EditorState {
     std::size_t group_depth = 0;
     std::size_t group_repeat_count = 1;
     std::vector<RecordedInput> group_inputs;
+    std::vector<JumpLocation> jump_back_stack;
+    std::vector<JumpLocation> jump_forward_stack;
 };
 
 EditorBuffer &active_buffer(EditorState &state) {
@@ -881,6 +889,64 @@ void request_definition(EditorState &state) {
     request.utf16_position = core.utf16_position_for_position(core.cursor());
     state.runtime.dispatch_service_request(request);
     set_status(state, "Definition requested");
+}
+
+EditorState::JumpLocation current_jump_location(const EditorState &state) {
+    const EditorCore &core = active_core(state);
+    return {core.document_uri(), core.file_path(), core.cursor()};
+}
+
+bool same_jump_location(const EditorState::JumpLocation &left, const EditorState::JumpLocation &right) {
+    return left.document_uri == right.document_uri && positions_equal(left.position, right.position);
+}
+
+bool open_jump_location(EditorState &state, const EditorState::JumpLocation &location) {
+    EditorBuffer *buffer = state.session.find_buffer_by_uri(location.document_uri);
+    if (!buffer) {
+        std::string path;
+        if (location.file_path && !location.file_path->empty()) {
+            path = *location.file_path;
+        } else {
+            path = file_path_from_uri(location.document_uri);
+        }
+        if (path.empty()) {
+            return false;
+        }
+        buffer = state.session.open_file(path, true);
+        if (!buffer) {
+            return false;
+        }
+        state.buffer_ui.try_emplace(buffer->id);
+    } else {
+        state.session.switch_to_id(buffer->id);
+    }
+    buffer->core.set_cursor(location.position);
+    return true;
+}
+
+void navigate_jump_history(
+    EditorState &state,
+    std::vector<EditorState::JumpLocation> &from_stack,
+    std::vector<EditorState::JumpLocation> &to_stack,
+    const std::string &empty_message,
+    const std::string &success_message) {
+    if (from_stack.empty()) {
+        set_status(state, empty_message);
+        return;
+    }
+
+    EditorState::JumpLocation target = from_stack.back();
+    from_stack.pop_back();
+    EditorState::JumpLocation current = current_jump_location(state);
+    if (!open_jump_location(state, target)) {
+        from_stack.push_back(std::move(target));
+        set_status(state, "Jump target unavailable");
+        return;
+    }
+    if (to_stack.empty() || !same_jump_location(to_stack.back(), current)) {
+        to_stack.push_back(std::move(current));
+    }
+    set_status(state, success_message);
 }
 
 bool reload_editor_configuration(EditorState &state, std::string &error_message) {
@@ -2151,6 +2217,12 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
         case EditorAction::GoToDefinition:
             request_definition(state);
             break;
+        case EditorAction::JumpBack:
+            navigate_jump_history(state, state.jump_back_stack, state.jump_forward_stack, "No older jump", "Jumped back");
+            break;
+        case EditorAction::JumpForward:
+            navigate_jump_history(state, state.jump_forward_stack, state.jump_back_stack, "No newer jump", "Jumped forward");
+            break;
         case EditorAction::NextDiagnostic:
             navigate_diagnostic(state, true);
             break;
@@ -2413,6 +2485,13 @@ void handle_service_events(EditorState &state) {
                 continue;
             }
 
+            EditorState::JumpLocation origin = current_jump_location(state);
+            EditorState::JumpLocation target = {*command.document_uri, file_path_from_uri(*command.document_uri), *command.position};
+            if (same_jump_location(origin, target)) {
+                set_status(state, "Already at definition");
+                continue;
+            }
+
             EditorBuffer *buffer = state.session.find_buffer_by_uri(*command.document_uri);
             if (!buffer) {
                 std::string path = file_path_from_uri(*command.document_uri);
@@ -2431,6 +2510,10 @@ void handle_service_events(EditorState &state) {
             }
 
             buffer->core.set_cursor(*command.position);
+            if (state.jump_back_stack.empty() || !same_jump_location(state.jump_back_stack.back(), origin)) {
+                state.jump_back_stack.push_back(std::move(origin));
+            }
+            state.jump_forward_stack.clear();
             set_status(state, "Opened definition");
             continue;
         }
