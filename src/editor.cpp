@@ -830,6 +830,34 @@ void handle_find_file_command(EditorState &state) {
     handle_edit_command(state, resolved.string());
 }
 
+void open_startup_file_picker(EditorState &state) {
+    std::string error_message;
+    std::optional<std::string> selection = run_picker_command(state, "rg --files | fzf", error_message);
+    if (!selection) {
+        log_debug("startup picker canceled/error: " + error_message);
+        if (!error_message.empty()) {
+            set_status(state, error_message);
+        }
+        return;
+    }
+
+    std::filesystem::path resolved = *selection;
+    if (resolved.is_relative()) {
+        resolved = std::filesystem::current_path() / resolved;
+    }
+    resolved = resolved.lexically_normal();
+    log_debug("startup picker resolved path=" + resolved.string());
+
+    EditorBuffer *buffer = state.session.open_file(resolved.string(), true);
+    if (!buffer) {
+        log_debug("startup picker open failed path=" + resolved.string());
+        set_status(state, "Could not open file");
+        return;
+    }
+    state.buffer_ui.try_emplace(buffer->id);
+    set_status(state, "Opened " + resolved.string());
+}
+
 void handle_grep_command(EditorState &state, const std::string &argument) {
     if (argument.empty()) {
         set_status(state, "No grep pattern");
@@ -2625,6 +2653,9 @@ int main(int argc, char **argv) {
 
     try {
         setup_terminal(state.theme);
+        if (argc <= 1) {
+            open_startup_file_picker(state);
+        }
         if (!state.config.lsp_servers.empty()) {
             for (const LspServerConfig &server : state.config.lsp_servers) {
                 state.runtime.add_service(std::make_unique<LspService>(server));

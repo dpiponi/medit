@@ -49,6 +49,7 @@ make test
 ```
 
 Passing multiple files opens each one in its own buffer and leaves the first file active.
+Starting `./medit` with no file arguments opens an `rg --files | fzf` picker first; if the picker is canceled or unsupported, `medit` falls back to an empty buffer.
 
 ## Config
 
