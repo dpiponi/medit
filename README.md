@@ -51,6 +51,7 @@ LSP can be configured per file extension through an LSP rules file:
 
 ```ini
 lsp = lsp.json
+log = debug.log
 syntax = cpp
 right_justify_diagnostics = true
 ```
@@ -100,6 +101,8 @@ The workspace root for each server is found by walking upward from the opened fi
 `syntax = cpp` forces the lightweight C++ syntax highlighter. If `syntax` is omitted, `medit` auto-detects C/C++ files by extension and otherwise leaves syntax coloring off.
 
 `right_justify_diagnostics = true` makes inline diagnostic annotations render against the right edge of the text area instead of starting from the left.
+
+`log = debug.log` enables append-only debug logging to `.config/medit/debug.log` relative to the loaded `meditrc` unless you use an absolute path. This is useful for debugging picker, file-open, and config reload issues without copying transient status messages.
 
 The checked-in local config is:
 
@@ -180,7 +183,7 @@ colors = forest.json
 - `:bd!` force close the current buffer
 - `:find-file` open a project file via `rg --files | fzf`
 - `:grep pattern` search with `rg` and jump via `fzf`
-- `:reload-config` reload `meditrc`, keybindings, and colors
+- `:reload-config` reload `meditrc`, keybindings, colors, and logging
 - `:diagnostics` show a diagnostics summary
 
 ## Keybinding Aliases

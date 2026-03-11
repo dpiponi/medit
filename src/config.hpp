@@ -24,6 +24,7 @@ struct EditorConfig {
     std::optional<std::filesystem::path> keybindings_path;
     std::optional<std::filesystem::path> colors_path;
     std::optional<std::filesystem::path> lsp_path;
+    std::optional<std::filesystem::path> log_path;
     std::optional<std::string> lsp_command;
     std::optional<std::string> lsp_language_id;
     std::vector<LspServerConfig> lsp_servers;

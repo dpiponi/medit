@@ -246,6 +246,8 @@ EditorConfig load_editor_config_from_path(const std::filesystem::path &path) {
             config.colors_path = resolve_config_reference(path, value);
         } else if (key == "lsp") {
             config.lsp_path = resolve_config_reference(path, value);
+        } else if (key == "log" || key == "log_file") {
+            config.log_path = resolve_config_reference(path, value);
         } else if (key == "lsp_command") {
             config.lsp_command = value;
         } else if (key == "lsp_language_id") {

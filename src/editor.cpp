@@ -3,6 +3,7 @@
 #include "editor_core.hpp"
 #include "editor_session.hpp"
 #include "keybindings.hpp"
+#include "logger.hpp"
 #include "lsp_service.hpp"
 #include "services.hpp"
 #include "syntax.hpp"
@@ -355,11 +356,14 @@ void handle_edit_command(EditorState &state, const std::string &argument) {
         set_status(state, "No file name");
         return;
     }
+    log_debug("edit command open path=" + argument);
     EditorBuffer *buffer = state.session.open_file(argument, true);
     if (buffer) {
         state.buffer_ui[buffer->id] = EditorState::BufferUiState{};
+        log_debug("edit command opened path=" + argument);
         set_status(state, "Opened " + argument);
     } else {
+        log_debug("edit command open failed path=" + argument);
         set_status(state, "Could not open file");
     }
 }
@@ -684,13 +688,16 @@ std::optional<std::string> run_picker_command(EditorState &state, const std::str
     int fd = mkstemp(temp_path);
     if (fd < 0) {
         error_message = "could not create temporary file";
+        log_debug("picker temp file creation failed");
         return std::nullopt;
     }
     close(fd);
 
+    const std::string current_directory = std::filesystem::current_path().string();
     std::string shell_command =
-        "sh -lc " + shell_single_quote("cd " + shell_single_quote(std::filesystem::current_path().string()) + " && " + pipeline_command) +
+        "sh -lc " + shell_single_quote("cd " + shell_single_quote(current_directory) + " && " + pipeline_command) +
         " > " + shell_single_quote(temp_path);
+    log_debug("picker start cwd=" + current_directory + " pipeline=" + pipeline_command + " output=" + temp_path);
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
     state.pending_motion_repeat_count = 1;
@@ -701,13 +708,16 @@ std::optional<std::string> run_picker_command(EditorState &state, const std::str
     reset_prog_mode();
     refresh();
     clearok(stdscr, TRUE);
+    log_debug("picker exit code=" + std::to_string(result));
 
     std::ifstream input(temp_path);
     std::string selection;
     std::getline(input, selection);
+    const std::string raw_selection = selection;
     if (!selection.empty() && selection.back() == '\r') {
         selection.pop_back();
     }
+    log_debug("picker raw selection=[" + raw_selection + "] normalized=[" + selection + "]");
     std::filesystem::remove(temp_path);
 
     if (result != 0) {
@@ -722,6 +732,7 @@ std::optional<std::string> run_picker_command(EditorState &state, const std::str
 #else
     (void)state;
     (void)pipeline_command;
+    log_debug("picker unsupported on this platform");
     error_message = "external pickers unsupported on this platform";
     return std::nullopt;
 #endif
@@ -771,6 +782,7 @@ void handle_find_file_command(EditorState &state) {
     std::string error_message;
     std::optional<std::string> selection = run_picker_command(state, "rg --files | fzf", error_message);
     if (!selection) {
+        log_debug("find-file canceled/error: " + error_message);
         set_status(state, error_message);
         return;
     }
@@ -778,7 +790,9 @@ void handle_find_file_command(EditorState &state) {
     if (resolved.is_relative()) {
         resolved = std::filesystem::current_path() / resolved;
     }
-    handle_edit_command(state, resolved.lexically_normal().string());
+    resolved = resolved.lexically_normal();
+    log_debug("find-file resolved path=" + resolved.string());
+    handle_edit_command(state, resolved.string());
 }
 
 void handle_grep_command(EditorState &state, const std::string &argument) {
@@ -793,6 +807,7 @@ void handle_grep_command(EditorState &state, const std::string &argument) {
         shell_single_quote(argument) + " | fzf";
     std::optional<std::string> selection = run_picker_command(state, command, error_message);
     if (!selection) {
+        log_debug("grep picker canceled/error: " + error_message);
         set_status(state, error_message);
         return;
     }
@@ -801,6 +816,7 @@ void handle_grep_command(EditorState &state, const std::string &argument) {
     std::size_t row = 0;
     std::size_t column = 0;
     if (!parse_grep_selection(*selection, path, row, column)) {
+        log_debug("grep parse failed selection=[" + *selection + "]");
         set_status(state, "Could not parse grep result");
         return;
     }
@@ -809,6 +825,7 @@ void handle_grep_command(EditorState &state, const std::string &argument) {
         resolved = std::filesystem::current_path() / resolved;
     }
     path = resolved.lexically_normal().string();
+    log_debug("grep resolved path=" + path + " row=" + std::to_string(row) + " column=" + std::to_string(column));
 
     EditorBuffer *existing = find_buffer_by_path(state, path);
     if (existing) {
@@ -820,6 +837,7 @@ void handle_grep_command(EditorState &state, const std::string &argument) {
 
     EditorBuffer *buffer = state.session.open_file(path, true);
     if (!buffer) {
+        log_debug("grep open failed path=" + path);
         set_status(state, "Could not open file");
         return;
     }
@@ -835,6 +853,8 @@ bool reload_editor_configuration(EditorState &state, std::string &error_message)
         Theme new_theme = load_theme(new_config);
 
         state.config = std::move(new_config);
+        configure_logger(state.config.log_path);
+        log_debug("reload-config applied");
         state.keybindings = std::move(new_keybindings);
         state.theme = std::move(new_theme);
         invalidate_syntax_cache(state);
@@ -2405,6 +2425,8 @@ int main(int argc, char **argv) {
     EditorState state;
     try {
         state.config = load_editor_config();
+        configure_logger(state.config.log_path);
+        log_debug("editor startup");
         state.keybindings = load_keybindings(state.config);
     } catch (const std::exception &error) {
         state.keybindings = load_embedded_keybindings();

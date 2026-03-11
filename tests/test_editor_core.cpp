@@ -715,6 +715,7 @@ void test_config_file_selects_keybindings_and_colors() {
         rc << "keybindings = custom-keys.json\n";
         rc << "colors = amber.json\n";
         rc << "lsp = lsp.json\n";
+        rc << "log = debug.log\n";
         rc << "syntax = cpp\n";
         rc << "right_justify_diagnostics = true\n";
     }
@@ -769,11 +770,13 @@ void test_config_file_selects_keybindings_and_colors() {
     expect(config.keybindings_path.has_value(), "config should resolve keybindings path");
     expect(config.colors_path.has_value(), "config should resolve colors path");
     expect(config.lsp_path.has_value(), "config should resolve lsp path");
+    expect(config.log_path.has_value(), "config should resolve log path");
     expect(
         config.keybindings_path->filename() == "custom-keys.json",
         "config should use configured keybindings file");
     expect(config.colors_path->filename() == "amber.json", "config should use configured colors file");
     expect(config.lsp_path->filename() == "lsp.json", "config should use configured lsp file");
+    expect(config.log_path->filename() == "debug.log", "config should use configured log file");
     expect(config.lsp_servers.size() == 1, "config should parse lsp server rules");
     expect(config.lsp_servers[0].name == "cpp", "config should parse lsp server name");
     expect(config.lsp_servers[0].command == "clangd --background-index", "config should parse lsp command");
