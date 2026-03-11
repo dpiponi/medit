@@ -71,6 +71,12 @@ Example [lsp.json](/home/dan/de/.config/medit/lsp.json):
       "command": "vscode-json-languageserver --stdio",
       "language_id": "json",
       "extensions": [".json", ".jsonc"]
+    },
+    {
+      "name": "python",
+      "command": "pyright-langserver --stdio",
+      "language_id": "python",
+      "extensions": [".py", ".pyi", ".pyw"]
     }
   ]
 }
