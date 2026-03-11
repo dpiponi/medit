@@ -1,14 +1,48 @@
 CXX := c++
-CXXFLAGS := -std=c++17 -Wall -Wextra -pedantic
 UNAME_S := $(shell uname -s)
-NCURSES_PKG := $(shell if pkg-config --exists ncursesw 2>/dev/null; then echo ncursesw; elif pkg-config --exists ncurses 2>/dev/null; then echo ncurses; fi)
-NCURSES_CFLAGS := $(if $(NCURSES_PKG),$(shell pkg-config --cflags $(NCURSES_PKG) 2>/dev/null))
-NCURSES_LIBS := $(if $(NCURSES_PKG),$(shell pkg-config --libs $(NCURSES_PKG) 2>/dev/null))
+HAVE_PKGCONFIG := $(shell command -v pkg-config >/dev/null 2>&1 && echo yes)
+
+BASE_CPPFLAGS := -Isrc -D_XOPEN_SOURCE_EXTENDED=1
+BASE_CXXFLAGS := -std=c++17 -Wall -Wextra -pedantic
+BASE_LDFLAGS :=
+BASE_LDLIBS :=
+
+ifeq ($(UNAME_S),Darwin)
+BASE_CPPFLAGS += -D_DARWIN_C_SOURCE
+endif
+
+CURSES_CFLAGS :=
+CURSES_LIBS :=
+
+ifeq ($(HAVE_PKGCONFIG),yes)
+CURSES_CFLAGS := $(shell pkg-config --cflags ncursesw 2>/dev/null)
+CURSES_LIBS := $(shell pkg-config --libs ncursesw 2>/dev/null)
+
+ifeq ($(strip $(CURSES_LIBS)),)
+CURSES_CFLAGS := $(shell pkg-config --cflags ncurses 2>/dev/null)
+CURSES_LIBS := $(shell pkg-config --libs ncurses 2>/dev/null)
+endif
+endif
+
 BREW_NCURSES_PREFIX := $(shell if command -v brew >/dev/null 2>&1; then brew --prefix ncurses 2>/dev/null; fi)
-BREW_NCURSES_CFLAGS := $(if $(BREW_NCURSES_PREFIX),-I$(BREW_NCURSES_PREFIX)/include)
-BREW_NCURSES_LIBS := $(if $(BREW_NCURSES_PREFIX),-L$(BREW_NCURSES_PREFIX)/lib -lncursesw)
-CPPFLAGS := -Isrc $(if $(strip $(NCURSES_CFLAGS)),$(NCURSES_CFLAGS),$(if $(filter Darwin,$(UNAME_S)),$(BREW_NCURSES_CFLAGS)))
-LDFLAGS := $(if $(strip $(NCURSES_LIBS)),$(NCURSES_LIBS),$(if $(filter Darwin,$(UNAME_S)),$(if $(BREW_NCURSES_PREFIX),$(BREW_NCURSES_LIBS),-lncursesw),-lncursesw))
+
+ifeq ($(strip $(CURSES_LIBS)),)
+ifeq ($(UNAME_S),Darwin)
+ifneq ($(strip $(BREW_NCURSES_PREFIX)),)
+CURSES_CFLAGS := -I$(BREW_NCURSES_PREFIX)/include
+CURSES_LIBS := -L$(BREW_NCURSES_PREFIX)/lib -lncursesw
+else
+CURSES_LIBS := -lncursesw
+endif
+else
+CURSES_LIBS := -lncursesw
+endif
+endif
+
+CPPFLAGS := $(BASE_CPPFLAGS) $(CURSES_CFLAGS)
+CXXFLAGS := $(BASE_CXXFLAGS)
+LDFLAGS := $(BASE_LDFLAGS)
+LDLIBS := $(BASE_LDLIBS) $(CURSES_LIBS)
 SRC_DIR := src
 TEST_DIR := tests
 
@@ -18,10 +52,10 @@ TEST_SOURCES := $(TEST_DIR)/test_editor_core.cpp $(SRC_DIR)/editor_core.cpp $(SR
 all: medit
 
 medit: $(APP_SOURCES)
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -o $@ $(APP_SOURCES) $(LDFLAGS)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -o $@ $(APP_SOURCES) $(LDFLAGS) $(LDLIBS)
 
 test_editor_core: $(TEST_SOURCES)
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -o $@ $(TEST_SOURCES)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -o $@ $(TEST_SOURCES) $(LDFLAGS) $(LDLIBS)
 
 test: test_editor_core
 	./test_editor_core
