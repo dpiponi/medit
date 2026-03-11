@@ -19,15 +19,25 @@ struct LspServerConfig {
     WorkspaceConfig workspace;
 };
 
+struct SyntaxLanguageConfig {
+    std::string name;
+    std::vector<std::string> extensions;
+    std::filesystem::path grammar_path;
+    std::string symbol_name;
+    std::filesystem::path highlights_path;
+};
+
 struct EditorConfig {
     std::string source_path;
     std::optional<std::filesystem::path> keybindings_path;
     std::optional<std::filesystem::path> colors_path;
     std::optional<std::filesystem::path> lsp_path;
+    std::optional<std::filesystem::path> syntax_config_path;
     std::optional<std::filesystem::path> log_path;
     std::optional<std::string> lsp_command;
     std::optional<std::string> lsp_language_id;
     std::vector<LspServerConfig> lsp_servers;
+    std::vector<SyntaxLanguageConfig> syntax_languages;
     std::optional<std::string> syntax_name;
     bool right_justify_diagnostics = false;
 };

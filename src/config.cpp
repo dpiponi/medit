@@ -196,6 +196,74 @@ std::vector<LspServerConfig> load_lsp_servers_from_path(const std::filesystem::p
     return parsed_servers;
 }
 
+std::vector<SyntaxLanguageConfig> load_syntax_languages_from_path(const std::filesystem::path &path) {
+    std::string source = read_text_file(path);
+    if (source.empty()) {
+        throw std::runtime_error("could not open syntax config file: " + path.string());
+    }
+
+    JsonValue root = parse_json(source);
+    if (root.type != JsonValue::Type::Object) {
+        throw std::runtime_error("syntax config root must be an object");
+    }
+
+    auto languages = root.object_value.find("languages");
+    if (languages == root.object_value.end() || languages->second.type != JsonValue::Type::Array) {
+        throw std::runtime_error("syntax config must contain a languages array");
+    }
+
+    std::vector<SyntaxLanguageConfig> parsed_languages;
+    std::map<std::string, std::string> extension_owners;
+    for (const JsonValue &language_value : languages->second.array_value) {
+        if (language_value.type != JsonValue::Type::Object) {
+            throw std::runtime_error("syntax language entries must be objects");
+        }
+
+        const JsonValue &name = required_object_member(language_value, "name");
+        const JsonValue &extensions = required_object_member(language_value, "extensions");
+        const JsonValue &grammar_path = required_object_member(language_value, "grammar_path");
+        const JsonValue &symbol_name = required_object_member(language_value, "symbol_name");
+        const JsonValue &highlights_path = required_object_member(language_value, "highlights_path");
+        if (name.type != JsonValue::Type::String || extensions.type != JsonValue::Type::Array ||
+            grammar_path.type != JsonValue::Type::String || symbol_name.type != JsonValue::Type::String ||
+            highlights_path.type != JsonValue::Type::String) {
+            throw std::runtime_error("invalid syntax language field types");
+        }
+
+        SyntaxLanguageConfig language;
+        language.name = name.string_value;
+        language.grammar_path = grammar_path.string_value;
+        if (!language.grammar_path.is_absolute()) {
+            language.grammar_path = path.parent_path() / language.grammar_path;
+        }
+        language.symbol_name = symbol_name.string_value;
+        language.highlights_path = highlights_path.string_value;
+        if (!language.highlights_path.is_absolute()) {
+            language.highlights_path = path.parent_path() / language.highlights_path;
+        }
+        for (const JsonValue &extension_value : extensions.array_value) {
+            if (extension_value.type != JsonValue::Type::String) {
+                throw std::runtime_error("syntax language extensions must be strings");
+            }
+            std::string extension = normalize_extension(extension_value.string_value);
+            auto existing_owner = extension_owners.find(extension);
+            if (existing_owner != extension_owners.end()) {
+                throw std::runtime_error(
+                    "duplicate syntax extension mapping for " + extension + ": " + existing_owner->second + " and " + language.name);
+            }
+            extension_owners.emplace(extension, language.name);
+            language.extensions.push_back(std::move(extension));
+        }
+
+        if (language.name.empty() || language.symbol_name.empty() || language.extensions.empty()) {
+            throw std::runtime_error("syntax language entries must not be empty");
+        }
+        parsed_languages.push_back(std::move(language));
+    }
+
+    return parsed_languages;
+}
+
 }  // namespace
 
 EditorConfig load_editor_config() {
@@ -208,8 +276,12 @@ EditorConfig load_editor_config() {
     config.keybindings_path = first_existing_default_config_path("keybindings.json");
     config.colors_path = first_existing_default_config_path("colors.json");
     config.lsp_path = first_existing_default_config_path("lsp.json");
+    config.syntax_config_path = first_existing_default_config_path("syntax.json");
     if (config.lsp_path && std::filesystem::exists(*config.lsp_path)) {
         config.lsp_servers = load_lsp_servers_from_path(*config.lsp_path);
+    }
+    if (config.syntax_config_path && std::filesystem::exists(*config.syntax_config_path)) {
+        config.syntax_languages = load_syntax_languages_from_path(*config.syntax_config_path);
     }
     return config;
 }
@@ -246,6 +318,8 @@ EditorConfig load_editor_config_from_path(const std::filesystem::path &path) {
             config.colors_path = resolve_config_reference(path, value);
         } else if (key == "lsp") {
             config.lsp_path = resolve_config_reference(path, value);
+        } else if (key == "syntax_config") {
+            config.syntax_config_path = resolve_config_reference(path, value);
         } else if (key == "log" || key == "log_file") {
             config.log_path = resolve_config_reference(path, value);
         } else if (key == "lsp_command") {
@@ -270,6 +344,12 @@ EditorConfig load_editor_config_from_path(const std::filesystem::path &path) {
     if (!config.lsp_path) {
         config.lsp_path = resolve_config_reference(path, "lsp.json");
     }
+    if (!config.syntax_config_path) {
+        std::filesystem::path default_syntax_path = resolve_config_reference(path, "syntax.json");
+        if (std::filesystem::exists(default_syntax_path)) {
+            config.syntax_config_path = default_syntax_path;
+        }
+    }
     if (config.lsp_path && std::filesystem::exists(*config.lsp_path)) {
         config.lsp_servers = load_lsp_servers_from_path(*config.lsp_path);
     } else if (config.lsp_command && config.lsp_language_id) {
@@ -280,6 +360,12 @@ EditorConfig load_editor_config_from_path(const std::filesystem::path &path) {
         fallback.extensions.push_back("*");
         fallback.workspace.fallback = "current_working_directory";
         config.lsp_servers.push_back(std::move(fallback));
+    }
+    if (config.syntax_config_path) {
+        if (!std::filesystem::exists(*config.syntax_config_path)) {
+            throw std::runtime_error("configured syntax config file not found: " + config.syntax_config_path->string());
+        }
+        config.syntax_languages = load_syntax_languages_from_path(*config.syntax_config_path);
     }
 
     return config;

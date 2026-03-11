@@ -67,7 +67,7 @@ struct EditorState {
         std::unique_ptr<std::regex> compiled_search_regex;
         std::size_t search_matches_version = 0;
         std::optional<std::size_t> selected_diagnostic_index;
-        SyntaxMode syntax_mode = SyntaxMode::None;
+        SyntaxSelection syntax_selection;
         std::vector<std::vector<HighlightSpan>> syntax_highlights;
         std::size_t syntax_revision = std::numeric_limits<std::size_t>::max();
         std::optional<std::string> syntax_file_path;
@@ -206,7 +206,7 @@ void invalidate_syntax_cache(EditorState &state) {
     for (auto &[buffer_id, buffer_ui] : state.buffer_ui) {
         (void)buffer_id;
         buffer_ui.syntax_revision = std::numeric_limits<std::size_t>::max();
-        buffer_ui.syntax_mode = SyntaxMode::None;
+        buffer_ui.syntax_selection = {};
         buffer_ui.syntax_file_path.reset();
         buffer_ui.syntax_highlights.clear();
         buffer_ui.syntax_config_error_reported = false;
@@ -867,6 +867,7 @@ bool reload_editor_configuration(EditorState &state, std::string &error_message)
         log_debug("reload-config applied");
         state.keybindings = std::move(new_keybindings);
         state.theme = std::move(new_theme);
+        invalidate_syntax_runtime_cache();
         invalidate_syntax_cache(state);
         apply_theme_to_terminal(state.theme);
         clearok(stdscr, TRUE);
@@ -1560,26 +1561,35 @@ void draw_editor(const EditorState &state) {
 void refresh_syntax_highlights(EditorState &state) {
     EditorState::BufferUiState &buffer_ui = active_buffer_ui(state);
     EditorCore &core = active_core(state);
-    SyntaxMode mode = SyntaxMode::None;
+    SyntaxSelection selection;
     try {
-        mode = resolve_syntax_mode(state.config, core.file_path());
+        selection = resolve_syntax_selection(state.config, core.file_path());
     } catch (const std::exception &error) {
         if (!buffer_ui.syntax_config_error_reported) {
             set_status(state, std::string("Syntax config error: ") + error.what());
             buffer_ui.syntax_config_error_reported = true;
         }
-        mode = SyntaxMode::None;
+        selection = {};
     }
 
-    if (buffer_ui.syntax_revision == core.current_revision() && buffer_ui.syntax_mode == mode &&
+    if (buffer_ui.syntax_revision == core.current_revision() && buffer_ui.syntax_selection == selection &&
         buffer_ui.syntax_file_path == core.file_path()) {
         return;
     }
 
-    buffer_ui.syntax_mode = mode;
+    buffer_ui.syntax_selection = selection;
     buffer_ui.syntax_file_path = core.file_path();
     buffer_ui.syntax_revision = core.current_revision();
-    buffer_ui.syntax_highlights = highlight_document_syntax(core.lines(), buffer_ui.syntax_mode);
+    std::optional<std::string> error_message;
+    buffer_ui.syntax_highlights = highlight_document_syntax(core.lines(), state.config, buffer_ui.syntax_selection, error_message);
+    if (error_message) {
+        if (!buffer_ui.syntax_config_error_reported) {
+            set_status(state, "Syntax error: " + *error_message);
+            buffer_ui.syntax_config_error_reported = true;
+        }
+    } else {
+        buffer_ui.syntax_config_error_reported = false;
+    }
 }
 
 void append_after_cursor(EditorState &state) {

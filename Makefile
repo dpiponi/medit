@@ -9,6 +9,8 @@ BASE_LDLIBS :=
 
 ifeq ($(UNAME_S),Darwin)
 BASE_CPPFLAGS += -D_DARWIN_C_SOURCE
+else
+BASE_LDLIBS += -ldl
 endif
 
 CURSES_CFLAGS :=

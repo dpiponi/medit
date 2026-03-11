@@ -1,12 +1,94 @@
 #include "syntax.hpp"
 
 #include <cctype>
+#include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <type_traits>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
+#include <utility>
+#include <vector>
+
+#if defined(__unix__) || defined(__APPLE__)
+#include <dlfcn.h>
+#endif
 
 namespace {
+
+struct TSLanguage;
+struct TSParser;
+struct TSTree;
+struct TSQuery;
+struct TSQueryCursor;
+
+struct TSPoint {
+    uint32_t row;
+    uint32_t column;
+};
+
+struct TSNode {
+    uint32_t context[4];
+    const void *id;
+    const void *tree;
+};
+
+struct TSQueryCapture {
+    TSNode node;
+    uint32_t index;
+};
+
+struct TSQueryMatch {
+    uint32_t id;
+    uint16_t pattern_index;
+    uint16_t capture_count;
+    const TSQueryCapture *captures;
+};
+
+enum class TSQueryError : uint32_t {
+    None = 0,
+    Syntax = 1,
+    NodeType = 2,
+    Field = 3,
+    Capture = 4,
+    Structure = 5,
+    Language = 6,
+};
+
+struct TreeSitterApi {
+    void *handle = nullptr;
+    std::string error;
+    TSParser *(*parser_new)() = nullptr;
+    void (*parser_delete)(TSParser *) = nullptr;
+    bool (*parser_set_language)(TSParser *, const TSLanguage *) = nullptr;
+    TSTree *(*parser_parse_string)(TSParser *, const TSTree *, const char *, uint32_t) = nullptr;
+    void (*tree_delete)(TSTree *) = nullptr;
+    TSNode (*tree_root_node)(const TSTree *) = nullptr;
+    TSPoint (*node_start_point)(TSNode) = nullptr;
+    TSPoint (*node_end_point)(TSNode) = nullptr;
+    TSQuery *(*query_new)(const TSLanguage *, const char *, uint32_t, uint32_t *, TSQueryError *) = nullptr;
+    void (*query_delete)(TSQuery *) = nullptr;
+    uint32_t (*query_capture_count)(const TSQuery *) = nullptr;
+    const char *(*query_capture_name_for_id)(const TSQuery *, uint32_t, uint32_t *) = nullptr;
+    TSQueryCursor *(*query_cursor_new)() = nullptr;
+    void (*query_cursor_delete)(TSQueryCursor *) = nullptr;
+    void (*query_cursor_exec)(TSQueryCursor *, const TSQuery *, TSNode) = nullptr;
+    bool (*query_cursor_next_capture)(TSQueryCursor *, TSQueryMatch *, uint32_t *) = nullptr;
+
+    bool loaded() const {
+        return handle != nullptr;
+    }
+};
+
+struct LoadedTreeSitterLanguage {
+    void *grammar_handle = nullptr;
+    const TSLanguage *language = nullptr;
+    TSParser *parser = nullptr;
+    TSQuery *query = nullptr;
+    std::vector<std::string> capture_names;
+};
 
 bool is_ascii_identifier_start(char32_t codepoint) {
     return (codepoint >= U'a' && codepoint <= U'z') || (codepoint >= U'A' && codepoint <= U'Z') || codepoint == U'_';
@@ -39,11 +121,12 @@ void push_span(
     std::size_t row,
     std::size_t start,
     std::size_t end,
-    StyleRole role) {
-    if (start >= end) {
+    StyleRole role,
+    int priority = 5) {
+    if (row >= spans_by_line.size() || start >= end) {
         return;
     }
-    spans_by_line[row].push_back({{{row, start}, {row, end}}, role, 5});
+    spans_by_line[row].push_back({{{row, start}, {row, end}}, role, priority});
 }
 
 std::vector<std::vector<HighlightSpan>> highlight_cpp_document(const std::vector<std::u32string> &lines) {
@@ -159,50 +242,407 @@ std::vector<std::vector<HighlightSpan>> highlight_cpp_document(const std::vector
     return spans_by_line;
 }
 
-}  // namespace
-
-SyntaxMode syntax_mode_from_name(const std::string &name) {
-    if (name == "none") {
-        return SyntaxMode::None;
-    }
-    if (name == "cpp") {
-        return SyntaxMode::Cpp;
-    }
-    throw std::runtime_error("unknown syntax: " + name);
-}
-
-SyntaxMode detect_syntax_mode(const std::optional<std::string> &file_path) {
-    if (!file_path || file_path->empty()) {
-        return SyntaxMode::None;
-    }
-
-    std::string extension = std::filesystem::path(*file_path).extension().string();
-    for (char &ch : extension) {
+std::string lowercase(std::string value) {
+    for (char &ch : value) {
         ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
     }
-
-    if (extension == ".c" || extension == ".cc" || extension == ".cpp" || extension == ".cxx" ||
-        extension == ".h" || extension == ".hh" || extension == ".hpp" || extension == ".hxx") {
-        return SyntaxMode::Cpp;
-    }
-    return SyntaxMode::None;
+    return value;
 }
 
-SyntaxMode resolve_syntax_mode(const EditorConfig &config, const std::optional<std::string> &file_path) {
-    if (config.syntax_name && !config.syntax_name->empty()) {
-        return syntax_mode_from_name(*config.syntax_name);
+std::optional<const SyntaxLanguageConfig *> syntax_language_by_name(const EditorConfig &config, const std::string &name) {
+    for (const SyntaxLanguageConfig &language : config.syntax_languages) {
+        if (language.name == name) {
+            return &language;
+        }
     }
-    return detect_syntax_mode(file_path);
+    return std::nullopt;
+}
+
+std::optional<const SyntaxLanguageConfig *> syntax_language_for_file(
+    const EditorConfig &config,
+    const std::optional<std::string> &file_path) {
+    if (!file_path || file_path->empty()) {
+        return std::nullopt;
+    }
+    std::string extension = lowercase(std::filesystem::path(*file_path).extension().string());
+    for (const SyntaxLanguageConfig &language : config.syntax_languages) {
+        for (const std::string &configured_extension : language.extensions) {
+            if (configured_extension == extension) {
+                return &language;
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+bool is_legacy_cpp_extension(const std::optional<std::string> &file_path) {
+    if (!file_path || file_path->empty()) {
+        return false;
+    }
+    std::string extension = lowercase(std::filesystem::path(*file_path).extension().string());
+    return extension == ".c" || extension == ".cc" || extension == ".cpp" || extension == ".cxx" ||
+        extension == ".h" || extension == ".hh" || extension == ".hpp" || extension == ".hxx";
+}
+
+TreeSitterApi load_tree_sitter_api() {
+    TreeSitterApi api;
+#if defined(__unix__) || defined(__APPLE__)
+    const char *candidates[] = {
+        "libtree-sitter.so.0",
+        "libtree-sitter.so",
+        "libtree-sitter.dylib",
+        "/usr/local/lib/libtree-sitter.dylib",
+        "/opt/homebrew/lib/libtree-sitter.dylib",
+    };
+    for (const char *candidate : candidates) {
+        api.handle = dlopen(candidate, RTLD_NOW | RTLD_GLOBAL);
+        if (api.handle) {
+            break;
+        }
+    }
+    if (!api.handle) {
+        api.error = "tree-sitter runtime library not found";
+        return api;
+    }
+
+    auto load = [&](auto &slot, const char *symbol) -> bool {
+        using SlotType = std::remove_reference_t<decltype(slot)>;
+        slot = reinterpret_cast<SlotType>(dlsym(api.handle, symbol));
+        return slot != nullptr;
+    };
+
+    if (!load(api.parser_new, "ts_parser_new") ||
+        !load(api.parser_delete, "ts_parser_delete") ||
+        !load(api.parser_set_language, "ts_parser_set_language") ||
+        !load(api.parser_parse_string, "ts_parser_parse_string") ||
+        !load(api.tree_delete, "ts_tree_delete") ||
+        !load(api.tree_root_node, "ts_tree_root_node") ||
+        !load(api.node_start_point, "ts_node_start_point") ||
+        !load(api.node_end_point, "ts_node_end_point") ||
+        !load(api.query_new, "ts_query_new") ||
+        !load(api.query_delete, "ts_query_delete") ||
+        !load(api.query_capture_count, "ts_query_capture_count") ||
+        !load(api.query_capture_name_for_id, "ts_query_capture_name_for_id") ||
+        !load(api.query_cursor_new, "ts_query_cursor_new") ||
+        !load(api.query_cursor_delete, "ts_query_cursor_delete") ||
+        !load(api.query_cursor_exec, "ts_query_cursor_exec") ||
+        !load(api.query_cursor_next_capture, "ts_query_cursor_next_capture")) {
+        api.error = "tree-sitter runtime is missing required symbols";
+        dlclose(api.handle);
+        api.handle = nullptr;
+    }
+#else
+    api.error = "tree-sitter runtime loading unsupported on this platform";
+#endif
+    return api;
+}
+
+TreeSitterApi &tree_sitter_api() {
+    static TreeSitterApi api = load_tree_sitter_api();
+    return api;
+}
+
+std::unordered_map<std::string, LoadedTreeSitterLanguage> &language_cache() {
+    static std::unordered_map<std::string, LoadedTreeSitterLanguage> cache;
+    return cache;
+}
+
+std::string cache_key_for_language(const SyntaxLanguageConfig &language) {
+    return language.name + "|" + language.grammar_path.string() + "|" + language.symbol_name + "|" + language.highlights_path.string();
+}
+
+std::string read_text_file_or_throw(const std::filesystem::path &path) {
+    std::ifstream input(path);
+    if (!input) {
+        throw std::runtime_error("could not open file: " + path.string());
+    }
+    return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+}
+
+LoadedTreeSitterLanguage *load_tree_sitter_language(
+    const SyntaxLanguageConfig &language,
+    std::optional<std::string> &error_message) {
+    TreeSitterApi &api = tree_sitter_api();
+    if (!api.loaded()) {
+        error_message = api.error;
+        return nullptr;
+    }
+
+    std::string key = cache_key_for_language(language);
+    auto cached = language_cache().find(key);
+    if (cached != language_cache().end()) {
+        return &cached->second;
+    }
+
+#if defined(__unix__) || defined(__APPLE__)
+    void *grammar_handle = dlopen(language.grammar_path.c_str(), RTLD_NOW | RTLD_LOCAL);
+    if (!grammar_handle) {
+        error_message = "could not load grammar library: " + language.grammar_path.string();
+        return nullptr;
+    }
+
+    using LanguageFactory = const TSLanguage *(*)();
+    LanguageFactory factory = reinterpret_cast<LanguageFactory>(dlsym(grammar_handle, language.symbol_name.c_str()));
+    if (!factory) {
+        dlclose(grammar_handle);
+        error_message = "could not load grammar symbol: " + language.symbol_name;
+        return nullptr;
+    }
+
+    TSParser *parser = api.parser_new();
+    if (!parser) {
+        dlclose(grammar_handle);
+        error_message = "could not create tree-sitter parser";
+        return nullptr;
+    }
+
+    const TSLanguage *ts_language = factory();
+    if (!ts_language || !api.parser_set_language(parser, ts_language)) {
+        api.parser_delete(parser);
+        dlclose(grammar_handle);
+        error_message = "could not attach grammar language";
+        return nullptr;
+    }
+
+    std::string highlights_source;
+    try {
+        highlights_source = read_text_file_or_throw(language.highlights_path);
+    } catch (const std::exception &error) {
+        api.parser_delete(parser);
+        dlclose(grammar_handle);
+        error_message = error.what();
+        return nullptr;
+    }
+
+    uint32_t error_offset = 0;
+    TSQueryError query_error = TSQueryError::None;
+    TSQuery *query = api.query_new(
+        ts_language,
+        highlights_source.c_str(),
+        static_cast<uint32_t>(highlights_source.size()),
+        &error_offset,
+        &query_error);
+    if (!query) {
+        api.parser_delete(parser);
+        dlclose(grammar_handle);
+        error_message = "could not compile highlights query: " + language.highlights_path.string();
+        return nullptr;
+    }
+
+    LoadedTreeSitterLanguage loaded;
+    loaded.grammar_handle = grammar_handle;
+    loaded.language = ts_language;
+    loaded.parser = parser;
+    loaded.query = query;
+    uint32_t capture_count = api.query_capture_count(query);
+    loaded.capture_names.reserve(capture_count);
+    for (uint32_t index = 0; index < capture_count; ++index) {
+        uint32_t length = 0;
+        const char *name = api.query_capture_name_for_id(query, index, &length);
+        loaded.capture_names.emplace_back(name == nullptr ? "" : std::string(name, length));
+    }
+
+    auto inserted = language_cache().emplace(key, std::move(loaded));
+    return &inserted.first->second;
+#else
+    (void)language;
+    error_message = "tree-sitter runtime loading unsupported on this platform";
+    return nullptr;
+#endif
+}
+
+std::size_t codepoint_column_for_utf8_byte(const std::u32string &line, std::size_t byte_column) {
+    std::size_t bytes = 0;
+    for (std::size_t column = 0; column < line.size(); ++column) {
+        std::size_t width = u32_to_utf8(std::u32string(1, line[column])).size();
+        if (byte_column < bytes + width) {
+            return column;
+        }
+        bytes += width;
+        if (byte_column == bytes) {
+            return column + 1;
+        }
+    }
+    return line.size();
+}
+
+StyleRole capture_name_to_style_role(const std::string &capture_name) {
+    if (capture_name.find("comment") != std::string::npos) {
+        return StyleRole::SyntaxComment;
+    }
+    if (capture_name.find("string") != std::string::npos ||
+        capture_name.find("character") != std::string::npos ||
+        capture_name.find("escape") != std::string::npos) {
+        return StyleRole::SyntaxString;
+    }
+    if (capture_name.find("keyword") != std::string::npos ||
+        capture_name.find("operator") != std::string::npos ||
+        capture_name.find("conditional") != std::string::npos ||
+        capture_name.find("repeat") != std::string::npos ||
+        capture_name.find("exception") != std::string::npos ||
+        capture_name.find("include") != std::string::npos ||
+        capture_name.find("define") != std::string::npos ||
+        capture_name.find("preproc") != std::string::npos ||
+        capture_name.find("boolean") != std::string::npos ||
+        capture_name.find("constant") != std::string::npos ||
+        capture_name.find("type") != std::string::npos) {
+        return StyleRole::SyntaxKeyword;
+    }
+    return StyleRole::DefaultText;
+}
+
+std::vector<std::vector<HighlightSpan>> highlight_tree_sitter_document(
+    const std::vector<std::u32string> &lines,
+    const SyntaxLanguageConfig &language,
+    std::optional<std::string> &error_message) {
+    LoadedTreeSitterLanguage *loaded = load_tree_sitter_language(language, error_message);
+    std::vector<std::vector<HighlightSpan>> spans_by_line(lines.size());
+    if (!loaded) {
+        return spans_by_line;
+    }
+
+    TreeSitterApi &api = tree_sitter_api();
+    std::string source;
+    for (std::size_t row = 0; row < lines.size(); ++row) {
+        source += u32_to_utf8(lines[row]);
+        if (row + 1 < lines.size()) {
+            source.push_back('\n');
+        }
+    }
+
+    TSTree *tree = api.parser_parse_string(
+        loaded->parser,
+        nullptr,
+        source.c_str(),
+        static_cast<uint32_t>(source.size()));
+    if (!tree) {
+        error_message = "tree-sitter parse failed for " + language.name;
+        return spans_by_line;
+    }
+
+    TSQueryCursor *cursor = api.query_cursor_new();
+    if (!cursor) {
+        api.tree_delete(tree);
+        error_message = "could not create tree-sitter query cursor";
+        return spans_by_line;
+    }
+
+    api.query_cursor_exec(cursor, loaded->query, api.tree_root_node(tree));
+    TSQueryMatch match{};
+    uint32_t capture_index = 0;
+    while (api.query_cursor_next_capture(cursor, &match, &capture_index)) {
+        if (capture_index >= match.capture_count) {
+            continue;
+        }
+        const TSQueryCapture &capture = match.captures[capture_index];
+        if (capture.index >= loaded->capture_names.size()) {
+            continue;
+        }
+
+        StyleRole role = capture_name_to_style_role(loaded->capture_names[capture.index]);
+        if (role == StyleRole::DefaultText) {
+            continue;
+        }
+
+        TSPoint start = api.node_start_point(capture.node);
+        TSPoint end = api.node_end_point(capture.node);
+        if (start.row >= lines.size()) {
+            continue;
+        }
+        std::size_t end_row = std::min<std::size_t>(end.row, lines.empty() ? 0 : lines.size() - 1);
+        for (std::size_t row = start.row; row <= end_row && row < lines.size(); ++row) {
+            std::size_t start_column = row == start.row
+                ? codepoint_column_for_utf8_byte(lines[row], start.column)
+                : 0;
+            std::size_t end_column = row == end.row
+                ? codepoint_column_for_utf8_byte(lines[row], end.column)
+                : lines[row].size();
+            if (row != end.row && end.row >= lines.size()) {
+                end_column = lines[row].size();
+            }
+            if (row < end.row) {
+                end_column = lines[row].size();
+            }
+            push_span(spans_by_line, row, start_column, end_column, role, 5);
+        }
+    }
+
+    api.query_cursor_delete(cursor);
+    api.tree_delete(tree);
+    return spans_by_line;
+}
+
+}  // namespace
+
+bool operator==(const SyntaxSelection &left, const SyntaxSelection &right) {
+    return left.engine == right.engine && left.language_name == right.language_name;
+}
+
+bool operator!=(const SyntaxSelection &left, const SyntaxSelection &right) {
+    return !(left == right);
+}
+
+SyntaxSelection resolve_syntax_selection(const EditorConfig &config, const std::optional<std::string> &file_path) {
+    if (config.syntax_name && !config.syntax_name->empty()) {
+        if (*config.syntax_name == "none") {
+            return {};
+        }
+        if (std::optional<const SyntaxLanguageConfig *> language = syntax_language_by_name(config, *config.syntax_name)) {
+            return {SyntaxEngine::TreeSitter, (*language)->name};
+        }
+        if (*config.syntax_name == "cpp") {
+            return {SyntaxEngine::LegacyCpp, "cpp"};
+        }
+        throw std::runtime_error("unknown syntax: " + *config.syntax_name);
+    }
+
+    if (std::optional<const SyntaxLanguageConfig *> language = syntax_language_for_file(config, file_path)) {
+        return {SyntaxEngine::TreeSitter, (*language)->name};
+    }
+    if (is_legacy_cpp_extension(file_path)) {
+        return {SyntaxEngine::LegacyCpp, "cpp"};
+    }
+    return {};
 }
 
 std::vector<std::vector<HighlightSpan>> highlight_document_syntax(
     const std::vector<std::u32string> &lines,
-    SyntaxMode mode) {
-    switch (mode) {
-        case SyntaxMode::Cpp:
+    const EditorConfig &config,
+    const SyntaxSelection &selection,
+    std::optional<std::string> &error_message) {
+    error_message.reset();
+    switch (selection.engine) {
+        case SyntaxEngine::None:
+            return std::vector<std::vector<HighlightSpan>>(lines.size());
+        case SyntaxEngine::LegacyCpp:
             return highlight_cpp_document(lines);
-        case SyntaxMode::None:
+        case SyntaxEngine::TreeSitter:
+            for (const SyntaxLanguageConfig &language : config.syntax_languages) {
+                if (language.name == selection.language_name) {
+                    return highlight_tree_sitter_document(lines, language, error_message);
+                }
+            }
+            error_message = "configured syntax language not found: " + selection.language_name;
             return std::vector<std::vector<HighlightSpan>>(lines.size());
     }
     return std::vector<std::vector<HighlightSpan>>(lines.size());
+}
+
+void invalidate_syntax_runtime_cache() {
+    TreeSitterApi &api = tree_sitter_api();
+    for (auto &[key, language] : language_cache()) {
+        (void)key;
+#if defined(__unix__) || defined(__APPLE__)
+        if (language.query != nullptr && api.query_delete != nullptr) {
+            api.query_delete(language.query);
+        }
+        if (language.parser != nullptr && api.parser_delete != nullptr) {
+            api.parser_delete(language.parser);
+        }
+        if (language.grammar_handle != nullptr) {
+            dlclose(language.grammar_handle);
+        }
+#endif
+    }
+    language_cache().clear();
 }

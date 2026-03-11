@@ -45,14 +45,15 @@ Passing multiple files opens each one in its own buffer and leaves the first fil
 1. `./.config/meditrc`
 2. `~/.config/meditrc`
 
-If `meditrc` exists, it selects the keybindings JSON, colors JSON, and optional LSP rules JSON to load from `.config/medit/` unless you give absolute paths.
+If `meditrc` exists, it selects the keybindings JSON, colors JSON, optional LSP rules JSON, and optional syntax rules JSON to load from `.config/medit/` unless you give absolute paths.
 
 LSP can be configured per file extension through an LSP rules file:
 
 ```ini
 lsp = lsp.json
 log = debug.log
-syntax = cpp
+syntax_config = syntax.json
+syntax = python
 right_justify_diagnostics = true
 ```
 
@@ -98,7 +99,23 @@ Example [lsp.json](/home/dan/de/.config/medit/lsp.json):
 Each open buffer picks the first matching server by file extension and sends that server the configured language id. The old `lsp_command` and `lsp_language_id` keys still work as a single catch-all fallback.
 The workspace root for each server is found by walking upward from the opened file and looking for the configured `workspace.markers`, then falling back according to `workspace.fallback`.
 
-`syntax = cpp` forces the lightweight C++ syntax highlighter. If `syntax` is omitted, `medit` auto-detects C/C++ files by extension and otherwise leaves syntax coloring off.
+Tree-sitter syntax can be configured per language through a syntax rules file:
+
+```json
+{
+  "languages": [
+    {
+      "name": "python",
+      "extensions": [".py", ".pyi", ".pyw"],
+      "grammar_path": "/path/to/libtree-sitter-python.so",
+      "symbol_name": "tree_sitter_python",
+      "highlights_path": "/path/to/queries/highlights.scm"
+    }
+  ]
+}
+```
+
+`syntax_config = syntax.json` points `medit` at that file. `syntax = python` forces a specific configured syntax language by name. If `syntax` is omitted, `medit` picks the first configured tree-sitter language whose extension matches the file. If no configured tree-sitter language matches, `medit` falls back to the built-in lightweight C++ highlighter for C/C++ files and otherwise leaves syntax coloring off.
 
 `right_justify_diagnostics = true` makes inline diagnostic annotations render against the right edge of the text area instead of starting from the left.
 

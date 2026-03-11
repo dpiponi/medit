@@ -723,6 +723,7 @@ void test_config_file_selects_keybindings_and_colors() {
         rc << "colors = amber.json\n";
         rc << "lsp = lsp.json\n";
         rc << "log = debug.log\n";
+        rc << "syntax_config = syntax.json\n";
         rc << "syntax = cpp\n";
         rc << "right_justify_diagnostics = true\n";
     }
@@ -742,6 +743,20 @@ void test_config_file_selects_keybindings_and_colors() {
                "    }\n"
                "  ]\n"
                "}\n";
+    }
+    {
+        std::ofstream syntax(medit_dir + "/syntax.json");
+        syntax << "{\n"
+                  "  \"languages\": [\n"
+                  "    {\n"
+                  "      \"name\": \"python\",\n"
+                  "      \"extensions\": [\".py\", \".pyi\"],\n"
+                  "      \"grammar_path\": \"grammars/libtree-sitter-python.so\",\n"
+                  "      \"symbol_name\": \"tree_sitter_python\",\n"
+                  "      \"highlights_path\": \"queries/python/highlights.scm\"\n"
+                  "    }\n"
+                  "  ]\n"
+                  "}\n";
     }
     {
         std::ofstream keys(medit_dir + "/custom-keys.json");
@@ -778,13 +793,20 @@ void test_config_file_selects_keybindings_and_colors() {
     expect(config.colors_path.has_value(), "config should resolve colors path");
     expect(config.lsp_path.has_value(), "config should resolve lsp path");
     expect(config.log_path.has_value(), "config should resolve log path");
+    expect(config.syntax_config_path.has_value(), "config should resolve syntax config path");
     expect(
         config.keybindings_path->filename() == "custom-keys.json",
         "config should use configured keybindings file");
     expect(config.colors_path->filename() == "amber.json", "config should use configured colors file");
     expect(config.lsp_path->filename() == "lsp.json", "config should use configured lsp file");
     expect(config.log_path->filename() == "debug.log", "config should use configured log file");
+    expect(config.syntax_config_path->filename() == "syntax.json", "config should use configured syntax config file");
     expect(config.lsp_servers.size() == 1, "config should parse lsp server rules");
+    expect(config.syntax_languages.size() == 1, "config should parse syntax language rules");
+    expect(config.syntax_languages[0].name == "python", "config should parse syntax language name");
+    expect(config.syntax_languages[0].grammar_path.filename() == "libtree-sitter-python.so", "config should parse syntax grammar path");
+    expect(config.syntax_languages[0].symbol_name == "tree_sitter_python", "config should parse syntax symbol");
+    expect(config.syntax_languages[0].highlights_path.filename() == "highlights.scm", "config should parse syntax query path");
     expect(config.lsp_servers[0].name == "cpp", "config should parse lsp server name");
     expect(config.lsp_servers[0].command == "clangd --background-index", "config should parse lsp command");
     expect(config.lsp_servers[0].language_id == "cpp", "config should parse lsp language id");
@@ -896,7 +918,10 @@ void test_cpp_syntax_highlighting() {
         utf8_to_u32("#include <vector>"),
     };
 
-    std::vector<std::vector<HighlightSpan>> highlights = highlight_document_syntax(lines, SyntaxMode::Cpp);
+    EditorConfig config;
+    SyntaxSelection selection{SyntaxEngine::LegacyCpp, "cpp"};
+    std::optional<std::string> error_message;
+    std::vector<std::vector<HighlightSpan>> highlights = highlight_document_syntax(lines, config, selection, error_message);
     expect(highlights.size() == lines.size(), "syntax highlighter should return one span list per line");
     expect(line_has_span(highlights[0], 0, 3, StyleRole::SyntaxKeyword), "cpp keyword should highlight");
     expect(line_has_span(highlights[1], 22, 26, StyleRole::SyntaxString), "string literal should highlight");
@@ -906,9 +931,19 @@ void test_cpp_syntax_highlighting() {
     expect(line_has_span(highlights[3], 16, 22, StyleRole::SyntaxKeyword), "keyword after block comment should highlight");
     expect(line_has_span(highlights[4], 0, 8, StyleRole::SyntaxKeyword), "preprocessor directive should highlight");
 
-    expect(detect_syntax_mode(std::optional<std::string>("sample.cpp")) == SyntaxMode::Cpp, "cpp extension should auto-detect");
-    expect(detect_syntax_mode(std::optional<std::string>("notes.txt")) == SyntaxMode::None, "non-code file should not auto-detect");
-    expect(syntax_mode_from_name("cpp") == SyntaxMode::Cpp, "named cpp syntax should resolve");
+    expect(!error_message.has_value(), "legacy syntax should not report an error");
+
+    SyntaxSelection detected_cpp = resolve_syntax_selection(config, std::optional<std::string>("sample.cpp"));
+    expect(detected_cpp.engine == SyntaxEngine::LegacyCpp, "cpp extension should auto-detect legacy cpp syntax");
+
+    SyntaxSelection detected_none = resolve_syntax_selection(config, std::optional<std::string>("notes.txt"));
+    expect(detected_none.engine == SyntaxEngine::None, "non-code file should not auto-detect syntax");
+
+    EditorConfig explicit_python;
+    explicit_python.syntax_languages.push_back({"python", {".py"}, "python.so", "tree_sitter_python", "highlights.scm"});
+    explicit_python.syntax_name = "python";
+    SyntaxSelection configured = resolve_syntax_selection(explicit_python, std::optional<std::string>("notes.txt"));
+    expect(configured.engine == SyntaxEngine::TreeSitter && configured.language_name == "python", "named tree-sitter syntax should resolve");
 }
 
 void test_file_uri_normalization() {
