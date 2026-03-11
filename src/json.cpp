@@ -12,7 +12,7 @@ JsonValue JsonParser::parse() {
     skip_whitespace();
     JsonValue value = parse_value();
     skip_whitespace();
-    if (position_ != source_.size()) {
+    if (!at_end()) {
         throw std::runtime_error("unexpected trailing JSON content");
     }
     return value;
@@ -20,31 +20,32 @@ JsonValue JsonParser::parse() {
 
 JsonValue JsonParser::parse_value() {
     skip_whitespace();
-    if (position_ >= source_.size()) {
+    if (at_end()) {
         throw std::runtime_error("unexpected end of JSON");
     }
-    if (source_[position_] == '"') {
+    char ch = current();
+    if (ch == '"') {
         JsonValue value;
         value.type = JsonValue::Type::String;
         value.string_value = parse_string();
         return value;
     }
-    if (source_[position_] == '{') {
+    if (ch == '{') {
         return parse_object();
     }
-    if (source_[position_] == '[') {
+    if (ch == '[') {
         return parse_array();
     }
-    if (source_[position_] == '-' || std::isdigit(static_cast<unsigned char>(source_[position_]))) {
+    if (ch == '-' || std::isdigit(static_cast<unsigned char>(ch))) {
         return parse_number();
     }
-    if (source_[position_] == 't') {
+    if (ch == 't') {
         return parse_true();
     }
-    if (source_[position_] == 'f') {
+    if (ch == 'f') {
         return parse_false();
     }
-    if (source_[position_] == 'n') {
+    if (ch == 'n') {
         return parse_null();
     }
     throw std::runtime_error("unsupported JSON value");
@@ -99,25 +100,25 @@ JsonValue JsonParser::parse_array() {
 
 JsonValue JsonParser::parse_number() {
     std::size_t start = position_;
-    if (source_[position_] == '-') {
-        ++position_;
+    if (current() == '-') {
+        advance();
     }
-    while (position_ < source_.size() && std::isdigit(static_cast<unsigned char>(source_[position_]))) {
-        ++position_;
+    while (!at_end() && std::isdigit(static_cast<unsigned char>(current()))) {
+        advance();
     }
-    if (position_ < source_.size() && source_[position_] == '.') {
-        ++position_;
-        while (position_ < source_.size() && std::isdigit(static_cast<unsigned char>(source_[position_]))) {
-            ++position_;
+    if (!at_end() && current() == '.') {
+        advance();
+        while (!at_end() && std::isdigit(static_cast<unsigned char>(current()))) {
+            advance();
         }
     }
-    if (position_ < source_.size() && (source_[position_] == 'e' || source_[position_] == 'E')) {
-        ++position_;
-        if (position_ < source_.size() && (source_[position_] == '+' || source_[position_] == '-')) {
-            ++position_;
+    if (!at_end() && (current() == 'e' || current() == 'E')) {
+        advance();
+        if (!at_end() && (current() == '+' || current() == '-')) {
+            advance();
         }
-        while (position_ < source_.size() && std::isdigit(static_cast<unsigned char>(source_[position_]))) {
-            ++position_;
+        while (!at_end() && std::isdigit(static_cast<unsigned char>(current()))) {
+            advance();
         }
     }
     JsonValue value;
@@ -158,16 +159,16 @@ JsonValue JsonParser::parse_null() {
 std::string JsonParser::parse_string() {
     expect('"');
     std::string result;
-    while (position_ < source_.size()) {
-        char ch = source_[position_++];
+    while (!at_end()) {
+        char ch = advance();
         if (ch == '"') {
             return result;
         }
         if (ch == '\\') {
-            if (position_ >= source_.size()) {
+            if (at_end()) {
                 throw std::runtime_error("unterminated JSON escape");
             }
-            char escaped = source_[position_++];
+            char escaped = advance();
             switch (escaped) {
                 case '"':
                 case '\\':
@@ -199,21 +200,38 @@ std::string JsonParser::parse_string() {
     throw std::runtime_error("unterminated JSON string");
 }
 
+bool JsonParser::at_end() const {
+    return position_ >= source_.size();
+}
+
+char JsonParser::current() const {
+    if (at_end()) {
+        throw std::runtime_error("unexpected end of JSON");
+    }
+    return source_[position_];
+}
+
+char JsonParser::advance() {
+    char ch = current();
+    ++position_;
+    return ch;
+}
+
 void JsonParser::skip_whitespace() {
-    while (position_ < source_.size() && std::isspace(static_cast<unsigned char>(source_[position_]))) {
-        ++position_;
+    while (!at_end() && std::isspace(static_cast<unsigned char>(current()))) {
+        advance();
     }
 }
 
 bool JsonParser::peek(char expected) const {
-    return position_ < source_.size() && source_[position_] == expected;
+    return !at_end() && current() == expected;
 }
 
 void JsonParser::expect(char expected) {
-    if (position_ >= source_.size() || source_[position_] != expected) {
+    if (at_end() || current() != expected) {
         throw std::runtime_error("unexpected JSON token");
     }
-    ++position_;
+    advance();
 }
 
 bool JsonParser::match_literal(const std::string &literal) {

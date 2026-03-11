@@ -38,6 +38,9 @@ class JsonParser {
     JsonValue parse_false();
     JsonValue parse_null();
     std::string parse_string();
+    bool at_end() const;
+    char current() const;
+    char advance();
     void skip_whitespace();
     bool peek(char expected) const;
     void expect(char expected);
