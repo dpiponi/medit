@@ -594,6 +594,21 @@ void test_editor_command_entry_points() {
     expect(*result.status_message == "service says hi", "status command should preserve message");
 }
 
+void test_compound_edit_undo() {
+    EditorCore core;
+    core.begin_compound_edit();
+    core.insert_codepoint(U'a');
+    core.insert_codepoint(U'b');
+    core.insert_codepoint(U'c');
+    core.end_compound_edit();
+
+    expect_text(core, "abc", "compound edit should apply all edits");
+    expect(core.undo(), "compound edit should undo");
+    expect_text(core, "", "compound undo should revert entire sequence");
+    expect(core.redo(), "compound edit should redo");
+    expect_text(core, "abc", "compound redo should restore entire sequence");
+}
+
 void test_keybinding_dispatch() {
     KeyBindings keybindings = load_embedded_keybindings();
     std::vector<std::string> pending;
@@ -1010,6 +1025,7 @@ int main() {
         test_annotations_storage_and_events();
         test_diagnostics_follow_document_switches();
         test_editor_command_entry_points();
+        test_compound_edit_undo();
         test_keybinding_dispatch();
         test_config_file_selects_keybindings_and_colors();
         test_cpp_syntax_highlighting();

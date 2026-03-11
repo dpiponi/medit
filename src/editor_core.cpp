@@ -300,6 +300,28 @@ struct TransactionCommand : EditCommand {
     }
 };
 
+struct CompoundCommand : EditCommand {
+    std::vector<std::unique_ptr<EditCommand>> commands;
+
+    explicit CompoundCommand(std::vector<std::unique_ptr<EditCommand>> commands_in) : commands(std::move(commands_in)) {}
+
+    void apply(EditorCore &core) override {
+        for (auto &command : commands) {
+            command->apply(core);
+        }
+    }
+
+    void undo(EditorCore &core) override {
+        for (auto it = commands.rbegin(); it != commands.rend(); ++it) {
+            (*it)->undo(core);
+        }
+    }
+
+    const char *name() const override {
+        return "compound";
+    }
+};
+
 }  // namespace
 
 std::string file_uri_for_path(const std::string &path) {
@@ -1260,6 +1282,15 @@ std::optional<Range> EditorCore::a_word_range() const {
 }
 
 void EditorCore::apply_command(std::unique_ptr<EditCommand> command) {
+    if (compound_depth_ > 0) {
+        suppress_cursor_events_ = true;
+        command->apply(*this);
+        suppress_cursor_events_ = false;
+        compound_commands_.push_back(std::move(command));
+        redo_stack_.clear();
+        return;
+    }
+
     std::vector<std::u32string> before_lines = lines_;
     Position previous_cursor = cursor_;
     suppress_cursor_events_ = true;
@@ -1271,6 +1302,38 @@ void EditorCore::apply_command(std::unique_ptr<EditCommand> command) {
     ++document_version_;
     emit_document_changed(before_lines);
     emit_cursor_moved(previous_cursor);
+}
+
+void EditorCore::begin_compound_edit() {
+    if (compound_depth_ == 0) {
+        compound_before_lines_ = lines_;
+        compound_before_cursor_ = cursor_;
+        compound_commands_.clear();
+    }
+    ++compound_depth_;
+}
+
+void EditorCore::end_compound_edit() {
+    if (compound_depth_ == 0) {
+        return;
+    }
+
+    --compound_depth_;
+    if (compound_depth_ > 0) {
+        return;
+    }
+
+    if (compound_commands_.empty()) {
+        return;
+    }
+
+    undo_stack_.push_back(std::make_unique<CompoundCommand>(std::move(compound_commands_)));
+    compound_commands_.clear();
+    redo_stack_.clear();
+    ++current_revision_;
+    ++document_version_;
+    emit_document_changed(compound_before_lines_);
+    emit_cursor_moved(compound_before_cursor_);
 }
 
 void EditorCore::raw_insert_codepoint(Position position, char32_t codepoint) {

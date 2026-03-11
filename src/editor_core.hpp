@@ -226,6 +226,8 @@ class EditorCore {
     bool replace_selection_with_yank();
     bool undo();
     bool redo();
+    void begin_compound_edit();
+    void end_compound_edit();
     void set_diagnostics(std::vector<Diagnostic> diagnostics);
     void clear_diagnostics();
     void set_document_diagnostics(const std::string &document_uri, std::vector<Diagnostic> diagnostics);
@@ -246,6 +248,10 @@ class EditorCore {
     std::size_t preferred_column_ = 0;
     std::vector<std::unique_ptr<EditCommand>> undo_stack_;
     std::vector<std::unique_ptr<EditCommand>> redo_stack_;
+    std::vector<std::unique_ptr<EditCommand>> compound_commands_;
+    std::vector<std::u32string> compound_before_lines_;
+    Position compound_before_cursor_;
+    std::size_t compound_depth_ = 0;
     std::size_t current_revision_ = 0;
     std::size_t saved_revision_ = 0;
     std::size_t document_version_ = 0;

@@ -1738,6 +1738,7 @@ void handle_group_close(EditorState &state) {
     state.group_depth = 0;
     state.group_repeat_count = 1;
     replay_group_inputs(state, inputs, repeat);
+    state.core.end_compound_edit();
     set_status(state, mode_name(state.mode));
 }
 
@@ -1745,6 +1746,7 @@ void handle_group_open(EditorState &state) {
     if (state.group_depth == 0) {
         state.group_repeat_count = take_repeat_count(state);
         state.group_inputs.clear();
+        state.core.begin_compound_edit();
     } else {
         record_group_input(state, "(", '(', false);
     }
