@@ -5,6 +5,7 @@
 #include "keybindings.hpp"
 #include "logger.hpp"
 #include "lsp_service.hpp"
+#include "process_utils.hpp"
 #include "services.hpp"
 #include "syntax.hpp"
 #include "theme.hpp"
@@ -719,6 +720,11 @@ std::string shell_single_quote(const std::string &text) {
 
 std::optional<std::string> run_picker_command(EditorState &state, const std::string &pipeline_command, std::string &error_message) {
 #if defined(__unix__) || defined(__APPLE__)
+    if (std::optional<std::string> missing = missing_executable_in_pipeline(pipeline_command)) {
+        error_message = "missing executable: " + *missing;
+        log_debug("picker preflight failed missing executable=" + *missing + " pipeline=" + pipeline_command);
+        return std::nullopt;
+    }
     char temp_path[] = "/tmp/medit-picker-XXXXXX";
     int fd = mkstemp(temp_path);
     if (fd < 0) {

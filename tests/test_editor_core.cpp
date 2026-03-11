@@ -4,6 +4,7 @@
 #include "editor_session.hpp"
 #include "keybindings.hpp"
 #include "lsp_service.hpp"
+#include "process_utils.hpp"
 #include "services.hpp"
 #include "syntax.hpp"
 #include "theme.hpp"
@@ -923,6 +924,25 @@ void test_infer_workspace_root() {
     std::filesystem::remove_all(root);
 }
 
+void test_process_utils_detect_missing_executables() {
+    std::optional<std::string> first = first_command_word("clangd --background-index");
+    expect(first.has_value() && *first == "clangd", "first command word should parse simple commands");
+
+    std::optional<std::string> quoted = first_command_word("'custom tool' --flag");
+    expect(quoted.has_value() && *quoted == "custom tool", "first command word should parse quoted commands");
+
+    std::optional<std::string> missing = missing_executable_in_command("definitely-not-a-real-medit-command --version");
+    expect(
+        missing.has_value() && *missing == "definitely-not-a-real-medit-command",
+        "missing command should be detected");
+
+    std::optional<std::string> pipeline_missing =
+        missing_executable_in_pipeline("rg --files | definitely-not-a-real-medit-command");
+    expect(
+        pipeline_missing.has_value() && *pipeline_missing == "definitely-not-a-real-medit-command",
+        "missing pipeline executable should be detected");
+}
+
 void test_cpp_syntax_highlighting() {
     std::vector<std::u32string> lines = {
         utf8_to_u32("int main() {"),
@@ -1319,6 +1339,7 @@ int main() {
         test_lsp_config_rejects_duplicate_extensions();
         test_infer_language_id();
         test_infer_workspace_root();
+        test_process_utils_detect_missing_executables();
         test_cpp_syntax_highlighting();
         test_file_uri_normalization();
         test_lsp_message_framing();

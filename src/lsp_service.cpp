@@ -3,6 +3,7 @@
 #include "editor_commands.hpp"
 #include "json.hpp"
 #include "logger.hpp"
+#include "process_utils.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -188,6 +189,11 @@ void LspService::start() {
         return;
     }
 #if defined(__unix__) || defined(__APPLE__)
+    if (std::optional<std::string> missing = missing_executable_in_command(config_.command)) {
+        queue_status("LSP executable not found: " + *missing);
+        log_debug("external command kind=lsp-server missing executable=" + *missing + " command=" + config_.command);
+        return;
+    }
     if (!spawn_process()) {
         queue_status("LSP start failed");
         return;
