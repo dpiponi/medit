@@ -68,6 +68,7 @@ Items are ordered roughly by dependency and architectural leverage. Update this 
    Add core-level storage and querying for diagnostics with severity, range, message, and source fields.
 
 10. UI surfaces for LSP results
+    Status: in progress in [editor.cpp](/home/dan/de/src/editor.cpp), [keybindings.cpp](/home/dan/de/src/keybindings.cpp), [keybindings.json](/home/dan/de/.config/medit/keybindings.json), and [README.md](/home/dan/de/README.md)
     The frontend needs reusable presentation primitives for:
     diagnostics
     completion menus

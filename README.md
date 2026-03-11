@@ -83,6 +83,8 @@ colors = forest.json
 - `T<char>` move backward up to the previous matching character on the line
 - `n` jump to the next search match
 - `b` jump to the previous search match
+- `]d`, `[d` jump to the next and previous diagnostic
+- `gx` toggle the diagnostics panel
 - `PageUp`, `PageDown` move by a screen
 - `Ctrl-U`, `Ctrl-D` move by a half screen
 - `Ctrl-Z` suspend to the shell and resume with `fg` on platforms with job control support
@@ -109,3 +111,4 @@ colors = forest.json
 - `:q!` force quit
 - `:wq` or `:x` write and quit
 - `:e filename` open another file
+- `:diagnostics` toggle the diagnostics panel

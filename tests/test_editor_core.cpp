@@ -556,6 +556,20 @@ void test_keybinding_dispatch() {
         search_prev.action.has_value() && *search_prev.action == EditorAction::SearchPrevious,
         "b should map to previous search result");
 
+    KeyDispatch diag_next_first = dispatch_key_sequence(keybindings, "normal", pending, "]", false);
+    expect(diag_next_first.matched && diag_next_first.waiting_for_more, "] should wait for ]d");
+    KeyDispatch diag_next_second = dispatch_key_sequence(keybindings, "normal", pending, "d", false);
+    expect(
+        diag_next_second.action.has_value() && *diag_next_second.action == EditorAction::NextDiagnostic,
+        "]d should map to next diagnostic");
+
+    KeyDispatch diag_prev_first = dispatch_key_sequence(keybindings, "normal", pending, "[", false);
+    expect(diag_prev_first.matched && diag_prev_first.waiting_for_more, "[ should wait for [d");
+    KeyDispatch diag_prev_second = dispatch_key_sequence(keybindings, "normal", pending, "d", false);
+    expect(
+        diag_prev_second.action.has_value() && *diag_prev_second.action == EditorAction::PreviousDiagnostic,
+        "[d should map to previous diagnostic");
+
     KeyDispatch paste_after = dispatch_key_sequence(keybindings, "normal", pending, "p", false);
     expect(
         paste_after.action.has_value() && *paste_after.action == EditorAction::PasteAfter,

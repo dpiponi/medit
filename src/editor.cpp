@@ -57,6 +57,13 @@ struct EditorState {
     std::string compiled_search_pattern_utf8;
     std::unique_ptr<std::regex> compiled_search_regex;
     std::size_t search_matches_version = 0;
+    bool diagnostics_panel_visible = false;
+    std::optional<std::size_t> selected_diagnostic_index;
+};
+
+struct DiagnosticEntryView {
+    std::size_t index = 0;
+    Diagnostic diagnostic;
 };
 
 std::wstring u32_to_wstring(const std::u32string &text) {
@@ -250,6 +257,119 @@ void handle_edit_command(EditorState &state, const std::string &argument) {
     }
 }
 
+std::vector<DiagnosticEntryView> sorted_diagnostics(const EditorState &state) {
+    std::vector<DiagnosticEntryView> diagnostics;
+    const std::vector<Diagnostic> &source = state.core.diagnostics();
+    diagnostics.reserve(source.size());
+    for (std::size_t index = 0; index < source.size(); ++index) {
+        diagnostics.push_back({index, source[index]});
+    }
+    std::sort(diagnostics.begin(), diagnostics.end(), [](const DiagnosticEntryView &left, const DiagnosticEntryView &right) {
+        Range left_range = normalized_range(left.diagnostic.range);
+        Range right_range = normalized_range(right.diagnostic.range);
+        if (positions_equal(left_range.start, right_range.start)) {
+            return position_less_than(left_range.end, right_range.end);
+        }
+        return position_less_than(left_range.start, right_range.start);
+    });
+    return diagnostics;
+}
+
+std::size_t diagnostics_panel_height(const EditorState &state, int screen_rows) {
+    if (!state.diagnostics_panel_visible || state.core.diagnostics().empty()) {
+        return 0;
+    }
+    int available = screen_rows - 2;
+    if (available <= 0) {
+        return 0;
+    }
+    std::size_t desired = state.core.diagnostics().size();
+    std::size_t max_panel = available > 6 ? 6U : static_cast<std::size_t>(available);
+    return desired < max_panel ? desired : max_panel;
+}
+
+void normalize_selected_diagnostic(EditorState &state) {
+    if (state.core.diagnostics().empty()) {
+        state.selected_diagnostic_index.reset();
+        return;
+    }
+    if (!state.selected_diagnostic_index || *state.selected_diagnostic_index >= state.core.diagnostics().size()) {
+        state.selected_diagnostic_index = 0;
+    }
+}
+
+void focus_diagnostic(EditorState &state, std::size_t diagnostic_index) {
+    const std::vector<Diagnostic> &diagnostics = state.core.diagnostics();
+    if (diagnostic_index >= diagnostics.size()) {
+        return;
+    }
+    state.selected_diagnostic_index = diagnostic_index;
+    state.diagnostics_panel_visible = true;
+    Range range = normalized_range(diagnostics[diagnostic_index].range);
+    state.core.set_cursor(range.start);
+}
+
+void toggle_diagnostics_panel(EditorState &state) {
+    if (state.core.diagnostics().empty()) {
+        state.diagnostics_panel_visible = false;
+        state.selected_diagnostic_index.reset();
+        set_status(state, "No diagnostics");
+        return;
+    }
+    state.diagnostics_panel_visible = !state.diagnostics_panel_visible;
+    normalize_selected_diagnostic(state);
+    set_status(state, state.diagnostics_panel_visible ? "Diagnostics panel" : mode_name(state.mode));
+}
+
+void navigate_diagnostic(EditorState &state, bool forward) {
+    std::vector<DiagnosticEntryView> diagnostics = sorted_diagnostics(state);
+    if (diagnostics.empty()) {
+        state.diagnostics_panel_visible = false;
+        state.selected_diagnostic_index.reset();
+        set_status(state, "No diagnostics");
+        return;
+    }
+
+    std::size_t current_sorted_index = 0;
+    bool found_current = false;
+    if (state.selected_diagnostic_index) {
+        for (std::size_t index = 0; index < diagnostics.size(); ++index) {
+            if (diagnostics[index].index == *state.selected_diagnostic_index) {
+                current_sorted_index = index;
+                found_current = true;
+                break;
+            }
+        }
+    }
+    if (!found_current) {
+        Position cursor = state.core.cursor();
+        for (std::size_t index = 0; index < diagnostics.size(); ++index) {
+            Range range = normalized_range(diagnostics[index].diagnostic.range);
+            if (!position_less_than(range.start, cursor)) {
+                current_sorted_index = index;
+                found_current = true;
+                break;
+            }
+        }
+        if (!found_current) {
+            current_sorted_index = 0;
+        }
+    }
+
+    if (forward) {
+        current_sorted_index = (current_sorted_index + 1) % diagnostics.size();
+    } else {
+        current_sorted_index = current_sorted_index == 0 ? diagnostics.size() - 1 : current_sorted_index - 1;
+    }
+
+    focus_diagnostic(state, diagnostics[current_sorted_index].index);
+    const Diagnostic &diagnostic = diagnostics[current_sorted_index].diagnostic;
+    set_status(
+        state,
+        std::string(diagnostic.severity == DiagnosticSeverity::Error ? "Error: " : "Warning: ") +
+            u32_to_utf8(diagnostic.message));
+}
+
 void handle_quit_command(EditorState &state, bool force) {
     if (!force && !can_quit_without_force(state)) {
         set_status(state, "Unsaved changes; use :q! to quit");
@@ -300,6 +420,8 @@ void execute_command(EditorState &state) {
         handle_write_quit_command(state, argument);
     } else if (verb == "e") {
         handle_edit_command(state, argument);
+    } else if (verb == "diagnostics") {
+        toggle_diagnostics_panel(state);
     } else {
         set_status(state, "Unknown command: " + verb);
     }
@@ -641,6 +763,69 @@ void draw_buffer_rows(const EditorState &state, int buffer_rows, int buffer_cols
     }
 }
 
+std::string diagnostic_prefix(const Diagnostic &diagnostic) {
+    std::ostringstream prefix;
+    prefix << (diagnostic.severity == DiagnosticSeverity::Error ? "E" : "W");
+    Range range = normalized_range(diagnostic.range);
+    prefix << " " << (range.start.row + 1) << ":" << (range.start.column + 1);
+    if (!diagnostic.source.empty()) {
+        prefix << " " << diagnostic.source;
+    }
+    prefix << " ";
+    return prefix.str();
+}
+
+void draw_diagnostics_panel(const EditorState &state, int screen_rows, int screen_cols) {
+    std::size_t panel_rows = diagnostics_panel_height(state, screen_rows);
+    if (panel_rows == 0) {
+        return;
+    }
+
+    std::vector<DiagnosticEntryView> diagnostics = sorted_diagnostics(state);
+    if (diagnostics.empty()) {
+        return;
+    }
+
+    std::size_t selected_sorted_index = 0;
+    if (state.selected_diagnostic_index) {
+        for (std::size_t index = 0; index < diagnostics.size(); ++index) {
+            if (diagnostics[index].index == *state.selected_diagnostic_index) {
+                selected_sorted_index = index;
+                break;
+            }
+        }
+    }
+
+    std::size_t first_index = 0;
+    if (selected_sorted_index >= panel_rows) {
+        first_index = selected_sorted_index - panel_rows + 1;
+    }
+
+    int first_screen_row = screen_rows - 2 - static_cast<int>(panel_rows);
+    for (std::size_t offset = 0; offset < panel_rows; ++offset) {
+        int screen_row = first_screen_row + static_cast<int>(offset);
+        move(screen_row, 0);
+        clrtoeol();
+        std::size_t diagnostic_index = first_index + offset;
+        if (diagnostic_index >= diagnostics.size()) {
+            continue;
+        }
+
+        const Diagnostic &diagnostic = diagnostics[diagnostic_index].diagnostic;
+        std::string text = diagnostic_prefix(diagnostic) + u32_to_utf8(diagnostic.message);
+        StyleRole role;
+        if (state.selected_diagnostic_index && diagnostics[diagnostic_index].index == *state.selected_diagnostic_index) {
+            role = StyleRole::StatusBar;
+        } else {
+            role = diagnostic.severity == DiagnosticSeverity::Error ? StyleRole::DiagnosticError : StyleRole::DiagnosticWarning;
+        }
+        TextStyle style = theme_style(state.theme, role);
+        attron(curses_attributes(style, role));
+        mvaddnstr(screen_row, 0, text.c_str(), screen_cols);
+        attroff(curses_attributes(style, role));
+    }
+}
+
 std::string build_status_text(const EditorState &state) {
     Position cursor = state.core.cursor();
     std::ostringstream status;
@@ -750,12 +935,14 @@ void draw_editor(const EditorState &state) {
     int screen_cols = 0;
     getmaxyx(stdscr, screen_rows, screen_cols);
 
-    int buffer_rows = screen_rows - 2;
+    int panel_rows = static_cast<int>(diagnostics_panel_height(state, screen_rows));
+    int buffer_rows = screen_rows - 2 - panel_rows;
     int number_cols = line_number_width(state);
     int buffer_cols = screen_cols - number_cols - 1;
 
     erase();
     draw_buffer_rows(state, buffer_rows, buffer_cols, number_cols);
+    draw_diagnostics_panel(state, screen_rows, screen_cols);
     draw_status_bar(state, screen_rows, screen_cols);
     draw_message_bar(state, screen_rows, screen_cols);
 
@@ -1098,6 +1285,15 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             refresh_search_matches(state, false);
             navigate_search_match(state, false);
             break;
+        case EditorAction::NextDiagnostic:
+            navigate_diagnostic(state, true);
+            break;
+        case EditorAction::PreviousDiagnostic:
+            navigate_diagnostic(state, false);
+            break;
+        case EditorAction::ToggleDiagnosticsPanel:
+            toggle_diagnostics_panel(state);
+            break;
         case EditorAction::DeleteSelection:
             {
             SelectionMode selection_mode = state.core.selection_mode();
@@ -1253,6 +1449,7 @@ void update_input_timeout(const EditorState &state) {
 void run_editor(EditorState &state) {
     while (!state.should_quit) {
         state.runtime.process(state.core);
+        normalize_selected_diagnostic(state);
         state.runtime.take_service_events();
         int screen_rows = 0;
         int screen_cols = 0;
