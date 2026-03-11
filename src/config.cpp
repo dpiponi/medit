@@ -283,24 +283,35 @@ EditorConfig load_editor_config_from_path(const std::filesystem::path &path) {
     return config;
 }
 
-std::string infer_language_id(const EditorConfig &config, const std::optional<std::string> &file_path) {
-    auto matches_extension = [&](const std::string &extension) -> std::optional<std::string> {
+const LspServerConfig *matching_lsp_server(const EditorConfig &config, const std::optional<std::string> &file_path) {
+    if (file_path && !file_path->empty()) {
+        std::string extension = lowercase(std::filesystem::path(*file_path).extension().string());
         for (const LspServerConfig &server : config.lsp_servers) {
             for (const std::string &configured_extension : server.extensions) {
-                if (configured_extension == "*" || configured_extension == extension) {
-                    return server.language_id;
+                if (configured_extension == extension) {
+                    return &server;
                 }
             }
         }
-        return std::nullopt;
-    };
+    }
+
+    for (const LspServerConfig &server : config.lsp_servers) {
+        for (const std::string &configured_extension : server.extensions) {
+            if (configured_extension == "*") {
+                return &server;
+            }
+        }
+    }
+    return nullptr;
+}
+
+std::string infer_language_id(const EditorConfig &config, const std::optional<std::string> &file_path) {
+    if (const LspServerConfig *matched = matching_lsp_server(config, file_path)) {
+        return matched->language_id;
+    }
 
     if (file_path && !file_path->empty()) {
         std::string extension = lowercase(std::filesystem::path(*file_path).extension().string());
-        if (std::optional<std::string> matched = matches_extension(extension)) {
-            return *matched;
-        }
-
         if (extension == ".c" || extension == ".cc" || extension == ".cpp" || extension == ".cxx" ||
             extension == ".h" || extension == ".hh" || extension == ".hpp" || extension == ".hxx") {
             return "cpp";
@@ -318,9 +329,6 @@ std::string infer_language_id(const EditorConfig &config, const std::optional<st
     }
     if (config.syntax_name && !config.syntax_name->empty()) {
         return *config.syntax_name;
-    }
-    if (std::optional<std::string> wildcard = matches_extension("*")) {
-        return *wildcard;
     }
     return "text";
 }

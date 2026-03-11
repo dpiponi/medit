@@ -1157,24 +1157,82 @@ void draw_buffer_rows(const EditorState &state, int buffer_rows, int buffer_cols
 std::string build_status_text(const EditorState &state) {
     const EditorCore &core = active_core(state);
     Position cursor = core.cursor();
-    std::ostringstream status;
-    status << mode_name(state.mode) << "  " << core.display_file_name();
-    status << "  [" << (state.session.active_buffer_index() + 1) << "/" << state.session.buffer_count() << "]";
-    status << "  " << infer_language_id(state.config, core.file_path());
-    if (core.is_dirty()) {
-        status << " [+]";
+    std::string language = infer_language_id(state.config, core.file_path());
+    std::string workspace = "-";
+    if (const LspServerConfig *server = matching_lsp_server(state.config, core.file_path())) {
+        std::filesystem::path workspace_root = infer_workspace_root(*server, core.file_path());
+        if (!workspace_root.empty()) {
+            workspace = workspace_root.string();
+        }
     }
-    status << "  " << (cursor.row + 1) << ":" << (cursor.column + 1);
-    status << "  rev " << core.current_revision();
-    return status.str();
+
+    std::ostringstream left;
+    left << mode_name(state.mode) << "  " << core.display_file_name();
+    left << "  [" << (state.session.active_buffer_index() + 1) << "/" << state.session.buffer_count() << "]";
+    left << "  " << language;
+    left << "  ws:" << workspace;
+
+    std::ostringstream right;
+    if (core.is_dirty()) {
+        right << " [+]";
+    }
+    right << "  " << (cursor.row + 1) << ":" << (cursor.column + 1);
+    right << "  rev " << core.current_revision();
+
+    std::string left_text = left.str();
+    std::string right_text = right.str();
+    return left_text + right_text;
 }
 
 void draw_status_bar(const EditorState &state, int screen_rows, int screen_cols) {
+    auto ellipsize_middle = [](const std::string &text, std::size_t max_width) {
+        if (text.size() <= max_width) {
+            return text;
+        }
+        if (max_width <= 3) {
+            return text.substr(0, max_width);
+        }
+        std::size_t prefix = (max_width - 3) / 2;
+        std::size_t suffix = max_width - 3 - prefix;
+        return text.substr(0, prefix) + "..." + text.substr(text.size() - suffix);
+    };
+
     TextStyle style = theme_style(state.theme, StyleRole::StatusBar);
     attron(curses_attributes(style, StyleRole::StatusBar));
     move(screen_rows - 2, 0);
     clrtoeol();
-    std::string status = build_status_text(state);
+    const EditorCore &core = active_core(state);
+    Position cursor = core.cursor();
+    std::string language = infer_language_id(state.config, core.file_path());
+    std::string workspace = "-";
+    if (const LspServerConfig *server = matching_lsp_server(state.config, core.file_path())) {
+        std::filesystem::path workspace_root = infer_workspace_root(*server, core.file_path());
+        if (!workspace_root.empty()) {
+            workspace = workspace_root.string();
+        }
+    }
+    std::ostringstream left;
+    left << mode_name(state.mode) << "  " << core.display_file_name();
+    left << "  [" << (state.session.active_buffer_index() + 1) << "/" << state.session.buffer_count() << "]";
+    left << "  " << language;
+    left << "  ws:" << workspace;
+    std::ostringstream right;
+    if (core.is_dirty()) {
+        right << " [+]";
+    }
+    right << "  " << (cursor.row + 1) << ":" << (cursor.column + 1);
+    right << "  rev " << core.current_revision();
+
+    std::string left_text = left.str();
+    std::string right_text = right.str();
+    std::size_t total_width = screen_cols > 0 ? static_cast<std::size_t>(screen_cols) : 0;
+    std::string status;
+    if (right_text.size() >= total_width) {
+        status = ellipsize_middle(right_text, total_width);
+    } else {
+        std::size_t left_width = total_width - right_text.size();
+        status = ellipsize_middle(left_text, left_width) + right_text;
+    }
     mvaddnstr(screen_rows - 2, 0, status.c_str(), screen_cols);
     attroff(curses_attributes(style, StyleRole::StatusBar));
 }

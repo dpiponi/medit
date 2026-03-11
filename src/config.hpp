@@ -33,5 +33,6 @@ struct EditorConfig {
 
 EditorConfig load_editor_config();
 EditorConfig load_editor_config_from_path(const std::filesystem::path &path);
+const LspServerConfig *matching_lsp_server(const EditorConfig &config, const std::optional<std::string> &file_path);
 std::string infer_language_id(const EditorConfig &config, const std::optional<std::string> &file_path);
 std::filesystem::path infer_workspace_root(const LspServerConfig &config, const std::optional<std::string> &file_path);
