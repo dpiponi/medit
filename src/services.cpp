@@ -1,0 +1,86 @@
+#include "services.hpp"
+
+#include <utility>
+
+void EditorRuntime::add_service(std::unique_ptr<EditorService> service) {
+    if (!service) {
+        return;
+    }
+
+    if (started_) {
+        service->start();
+        pending_service_events_.push_back(
+            {ServiceEventType::ServiceStarted, service->name(), "service_started", std::nullopt, 0, std::nullopt, U""});
+    }
+    services_.push_back(std::move(service));
+}
+
+std::size_t EditorRuntime::service_count() const {
+    return services_.size();
+}
+
+bool EditorRuntime::started() const {
+    return started_;
+}
+
+void EditorRuntime::start_services() {
+    if (started_) {
+        return;
+    }
+
+    started_ = true;
+    for (const std::unique_ptr<EditorService> &service : services_) {
+        service->start();
+        pending_service_events_.push_back(
+            {ServiceEventType::ServiceStarted, service->name(), "service_started", std::nullopt, 0, std::nullopt, U""});
+    }
+}
+
+void EditorRuntime::stop_services() {
+    if (!started_) {
+        return;
+    }
+
+    for (const std::unique_ptr<EditorService> &service : services_) {
+        service->stop();
+        pending_service_events_.push_back(
+            {ServiceEventType::ServiceStopped, service->name(), "service_stopped", std::nullopt, 0, std::nullopt, U""});
+    }
+    started_ = false;
+}
+
+void EditorRuntime::dispatch_editor_events(EditorCore &core) {
+    std::vector<EditorEvent> events = core.take_events();
+    if (events.empty()) {
+        return;
+    }
+
+    for (const EditorEvent &event : events) {
+        for (const std::unique_ptr<EditorService> &service : services_) {
+            service->handle_editor_event(event);
+        }
+    }
+}
+
+void EditorRuntime::poll_services() {
+    for (const std::unique_ptr<EditorService> &service : services_) {
+        append_events(service->poll());
+    }
+}
+
+const std::vector<ServiceEvent> &EditorRuntime::pending_service_events() const {
+    return pending_service_events_;
+}
+
+std::vector<ServiceEvent> EditorRuntime::take_service_events() {
+    std::vector<ServiceEvent> events = std::move(pending_service_events_);
+    pending_service_events_.clear();
+    return events;
+}
+
+void EditorRuntime::append_events(std::vector<ServiceEvent> events) {
+    pending_service_events_.insert(
+        pending_service_events_.end(),
+        std::make_move_iterator(events.begin()),
+        std::make_move_iterator(events.end()));
+}

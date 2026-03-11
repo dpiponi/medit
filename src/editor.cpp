@@ -1,6 +1,7 @@
 #include "config.hpp"
 #include "editor_core.hpp"
 #include "keybindings.hpp"
+#include "services.hpp"
 #include "theme.hpp"
 
 #include <clocale>
@@ -35,6 +36,7 @@ enum class PendingMotion {
 
 struct EditorState {
     EditorCore core;
+    EditorRuntime runtime;
     KeyBindings keybindings;
     Theme theme = load_embedded_theme();
     std::size_t row_offset = 0;
@@ -1201,6 +1203,9 @@ void handle_input(EditorState &state) {
 
 void run_editor(EditorState &state) {
     while (!state.should_quit) {
+        state.runtime.dispatch_editor_events(state.core);
+        state.runtime.poll_services();
+        state.runtime.take_service_events();
         int screen_rows = 0;
         int screen_cols = 0;
         getmaxyx(stdscr, screen_rows, screen_cols);
@@ -1242,7 +1247,9 @@ int main(int argc, char **argv) {
     }
 
     setup_terminal(state.theme);
+    state.runtime.start_services();
     run_editor(state);
+    state.runtime.stop_services();
     teardown_terminal();
     return 0;
 }

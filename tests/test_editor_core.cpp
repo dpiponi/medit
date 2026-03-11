@@ -1,6 +1,7 @@
 #include "config.hpp"
 #include "editor_core.hpp"
 #include "keybindings.hpp"
+#include "services.hpp"
 #include "theme.hpp"
 
 #include <cstdio>
@@ -575,6 +576,82 @@ void test_config_file_selects_keybindings_and_colors() {
     std::filesystem::remove_all(root);
 }
 
+class RecordingService : public EditorService {
+  public:
+    std::string name() const override {
+        return "recording";
+    }
+
+    void start() override {
+        started = true;
+    }
+
+    void stop() override {
+        stopped = true;
+    }
+
+    void handle_editor_event(const EditorEvent &event) override {
+        received_events.push_back(event);
+        queued_events.push_back(
+            {ServiceEventType::Notification,
+             name(),
+             event.type == EditorEventType::DocumentChanged ? "document_changed" : "editor_event",
+             event.document_uri,
+             event.document_version,
+             event.range,
+             event.text});
+    }
+
+    std::vector<ServiceEvent> poll() override {
+        std::vector<ServiceEvent> events = std::move(queued_events);
+        queued_events.clear();
+        return events;
+    }
+
+    bool started = false;
+    bool stopped = false;
+    std::vector<EditorEvent> received_events;
+    std::vector<ServiceEvent> queued_events;
+};
+
+void test_editor_runtime_service_boundary() {
+    EditorRuntime runtime;
+    auto service = std::make_unique<RecordingService>();
+    RecordingService *service_ptr = service.get();
+
+    runtime.add_service(std::move(service));
+    expect(runtime.service_count() == 1, "runtime should track registered service");
+    expect(!runtime.started(), "runtime should not start automatically");
+
+    runtime.start_services();
+    expect(runtime.started(), "runtime should enter started state");
+    expect(service_ptr->started, "runtime should start registered services");
+
+    std::vector<ServiceEvent> lifecycle_events = runtime.take_service_events();
+    expect(lifecycle_events.size() == 1, "starting runtime should emit one service lifecycle event");
+    expect(lifecycle_events[0].type == ServiceEventType::ServiceStarted, "runtime should emit service started");
+
+    EditorCore core;
+    core.insert_codepoint(U'a');
+    runtime.dispatch_editor_events(core);
+    expect(core.pending_events().empty(), "runtime dispatch should drain core editor events");
+    expect(service_ptr->received_events.size() == 2, "service should receive change and cursor events");
+
+    runtime.poll_services();
+    std::vector<ServiceEvent> service_events = runtime.take_service_events();
+    expect(service_events.size() == 2, "polling runtime should collect service notifications");
+    expect(service_events[0].service_name == "recording", "service event should carry service name");
+    expect(service_events[0].document_uri.has_value(), "service event should carry document identity");
+    expect(service_events[0].document_version == core.document_version(), "service event should carry document version");
+
+    runtime.stop_services();
+    expect(!runtime.started(), "runtime stop should clear started state");
+    expect(service_ptr->stopped, "runtime should stop registered services");
+    std::vector<ServiceEvent> stopped_events = runtime.take_service_events();
+    expect(stopped_events.size() == 1, "stopping runtime should emit one lifecycle event");
+    expect(stopped_events[0].type == ServiceEventType::ServiceStopped, "runtime should emit service stopped");
+}
+
 }  // namespace
 
 int main() {
@@ -600,6 +677,7 @@ int main() {
         test_unicode_position_conversions();
         test_keybinding_dispatch();
         test_config_file_selects_keybindings_and_colors();
+        test_editor_runtime_service_boundary();
     } catch (const std::exception &error) {
         std::cerr << "test failure: " << error.what() << '\n';
         return 1;

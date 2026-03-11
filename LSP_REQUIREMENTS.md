@@ -14,7 +14,8 @@ Items are ordered roughly by dependency and architectural leverage. Update this 
 - Done: UTF-8 and UTF-16 position conversion utilities in the core
 - Done: document identity model in the core
 - Done: structured core events for document lifecycle and cursor movement
-- In progress: building a reusable editor core API around protocol-facing tests and service boundaries
+- Done: external service/runtime boundary for background integrations
+- In progress: building a reusable editor core API around protocol-facing tests and runtime polling
 - Not started: everything else below
 
 ## Outstanding Requirements
@@ -54,9 +55,11 @@ Items are ordered roughly by dependency and architectural leverage. Update this 
    These events should be consumable without depending on `ncurses`.
 
 7. External command/service boundary
+   Status: done in [services.hpp](/home/dan/de/src/services.hpp), [services.cpp](/home/dan/de/src/services.cpp), [editor.cpp](/home/dan/de/src/editor.cpp), and [test_editor_core.cpp](/home/dan/de/tests/test_editor_core.cpp)
    Introduce a clean interface for long-lived background services so an LSP client can be attached without coupling protocol code to the editor core.
 
 8. Asynchronous event loop
+   Status: in progress in [editor.cpp](/home/dan/de/src/editor.cpp) and [services.cpp](/home/dan/de/src/services.cpp)
    The frontend/runtime needs a non-blocking way to process editor input, background responses, and UI updates together.
 
 9. Diagnostics data model

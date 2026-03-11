@@ -15,6 +15,7 @@
 - Wide-character terminal input with `get_wch()`
 - Small, function-oriented implementation intended to be scriptable later
 - Core document/edit/history logic separated from the terminal UI for future protocol integrations like LSP
+- Runtime service boundary for future background integrations like LSP clients
 
 ## Build
 
