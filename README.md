@@ -16,6 +16,7 @@
 - Small, function-oriented implementation intended to be scriptable later
 - Core document/edit/history logic separated from the terminal UI for future protocol integrations like LSP
 - Runtime service boundary for future background integrations like LSP clients
+- Optional single-server LSP stdio transport configured through `meditrc`
 
 ## Build
 
@@ -43,6 +44,13 @@ make test
 2. `~/.config/meditrc`
 
 If `meditrc` exists, it selects the keybindings JSON and colors JSON to load from `.config/medit/` unless you give absolute paths.
+
+It can also configure one LSP server command and language id, for example:
+
+```ini
+lsp_command = clangd --background-index
+lsp_language_id = cpp
+```
 
 The checked-in local config is:
 

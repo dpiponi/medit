@@ -2,6 +2,7 @@
 #include "editor_commands.hpp"
 #include "editor_core.hpp"
 #include "keybindings.hpp"
+#include "lsp_service.hpp"
 #include "services.hpp"
 #include "theme.hpp"
 
@@ -1619,6 +1620,9 @@ int main(int argc, char **argv) {
     }
 
     setup_terminal(state.theme);
+    if (config.lsp_command && !config.lsp_command->empty()) {
+        state.runtime.add_service(std::make_unique<LspService>(config));
+    }
     state.runtime.start_services();
     run_editor(state);
     state.runtime.stop_services();

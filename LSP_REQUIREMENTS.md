@@ -17,6 +17,7 @@ Items are ordered roughly by dependency and architectural leverage. Update this 
 - Done: external service/runtime boundary for background integrations
 - Done: diagnostics data model in the core with renderer highlights
 - Done: command entry points for service-driven editor actions
+- Done: process and transport management for one configured stdio language server
 - In progress: building a reusable editor core API around protocol-facing tests and runtime polling
 - Not started: everything else below
 
@@ -87,6 +88,7 @@ Items are ordered roughly by dependency and architectural leverage. Update this 
     LSP needs project/workspace awareness, not just single-file editing. The editor needs a concept of workspace root and opened documents within it.
 
 14. Process and transport management
+    Status: done in [lsp_service.hpp](/home/dan/de/src/lsp_service.hpp), [lsp_service.cpp](/home/dan/de/src/lsp_service.cpp), [config.hpp](/home/dan/de/src/config.hpp), [config.cpp](/home/dan/de/src/config.cpp), and [test_editor_core.cpp](/home/dan/de/tests/test_editor_core.cpp)
     Implement a managed JSON-RPC transport layer over stdio for language server processes, including startup, shutdown, restart, and failure handling.
 
 15. Request/notification routing

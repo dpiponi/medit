@@ -111,6 +111,10 @@ EditorConfig load_editor_config_from_path(const std::filesystem::path &path) {
             config.keybindings_path = resolve_config_reference(path, value);
         } else if (key == "colors") {
             config.colors_path = resolve_config_reference(path, value);
+        } else if (key == "lsp_command") {
+            config.lsp_command = value;
+        } else if (key == "lsp_language_id") {
+            config.lsp_language_id = value;
         } else {
             throw std::runtime_error("unknown config key: " + key);
         }

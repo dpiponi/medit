@@ -2,6 +2,7 @@
 #include "editor_commands.hpp"
 #include "editor_core.hpp"
 #include "keybindings.hpp"
+#include "lsp_service.hpp"
 #include "services.hpp"
 #include "theme.hpp"
 
@@ -666,6 +667,8 @@ void test_config_file_selects_keybindings_and_colors() {
         std::ofstream rc(config_dir + "/meditrc");
         rc << "keybindings = custom-keys.json\n";
         rc << "colors = amber.json\n";
+        rc << "lsp_command = clangd --background-index\n";
+        rc << "lsp_language_id = cpp\n";
     }
     {
         std::ofstream keys(medit_dir + "/custom-keys.json");
@@ -704,6 +707,9 @@ void test_config_file_selects_keybindings_and_colors() {
         config.keybindings_path->filename() == "custom-keys.json",
         "config should use configured keybindings file");
     expect(config.colors_path->filename() == "amber.json", "config should use configured colors file");
+    expect(config.lsp_command.has_value(), "config should parse lsp command");
+    expect(*config.lsp_command == "clangd --background-index", "config should preserve full lsp command");
+    expect(config.lsp_language_id.has_value() && *config.lsp_language_id == "cpp", "config should parse lsp language id");
 
     KeyBindings keybindings = load_keybindings(config);
     std::vector<std::string> pending;
@@ -715,6 +721,16 @@ void test_config_file_selects_keybindings_and_colors() {
     expect(line_number.foreground == COLOR_YELLOW, "custom color theme should load selected file");
 
     std::filesystem::remove_all(root);
+}
+
+void test_lsp_message_framing() {
+    std::string payload = "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}";
+    std::string encoded = encode_lsp_message(payload);
+    std::string buffer = encoded;
+    std::vector<std::string> messages = extract_lsp_messages(buffer);
+    expect(messages.size() == 1, "lsp framing should extract one message");
+    expect(messages[0] == payload, "lsp framing should preserve payload");
+    expect(buffer.empty(), "lsp framing should consume buffer");
 }
 
 class RecordingService : public EditorService {
@@ -851,6 +867,7 @@ int main() {
         test_editor_command_entry_points();
         test_keybinding_dispatch();
         test_config_file_selects_keybindings_and_colors();
+        test_lsp_message_framing();
         test_editor_runtime_service_boundary();
         test_editor_runtime_idle_timeout();
     } catch (const std::exception &error) {

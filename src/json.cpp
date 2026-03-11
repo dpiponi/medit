@@ -32,6 +32,21 @@ JsonValue JsonParser::parse_value() {
     if (source_[position_] == '{') {
         return parse_object();
     }
+    if (source_[position_] == '[') {
+        return parse_array();
+    }
+    if (source_[position_] == '-' || std::isdigit(static_cast<unsigned char>(source_[position_]))) {
+        return parse_number();
+    }
+    if (source_[position_] == 't') {
+        return parse_true();
+    }
+    if (source_[position_] == 'f') {
+        return parse_false();
+    }
+    if (source_[position_] == 'n') {
+        return parse_null();
+    }
     throw std::runtime_error("unsupported JSON value");
 }
 
@@ -58,6 +73,85 @@ JsonValue JsonParser::parse_object() {
         }
         expect(',');
     }
+    return value;
+}
+
+JsonValue JsonParser::parse_array() {
+    expect('[');
+    JsonValue value;
+    value.type = JsonValue::Type::Array;
+    skip_whitespace();
+    if (peek(']')) {
+        expect(']');
+        return value;
+    }
+    while (true) {
+        value.array_value.push_back(parse_value());
+        skip_whitespace();
+        if (peek(']')) {
+            expect(']');
+            break;
+        }
+        expect(',');
+    }
+    return value;
+}
+
+JsonValue JsonParser::parse_number() {
+    std::size_t start = position_;
+    if (source_[position_] == '-') {
+        ++position_;
+    }
+    while (position_ < source_.size() && std::isdigit(static_cast<unsigned char>(source_[position_]))) {
+        ++position_;
+    }
+    if (position_ < source_.size() && source_[position_] == '.') {
+        ++position_;
+        while (position_ < source_.size() && std::isdigit(static_cast<unsigned char>(source_[position_]))) {
+            ++position_;
+        }
+    }
+    if (position_ < source_.size() && (source_[position_] == 'e' || source_[position_] == 'E')) {
+        ++position_;
+        if (position_ < source_.size() && (source_[position_] == '+' || source_[position_] == '-')) {
+            ++position_;
+        }
+        while (position_ < source_.size() && std::isdigit(static_cast<unsigned char>(source_[position_]))) {
+            ++position_;
+        }
+    }
+    JsonValue value;
+    value.type = JsonValue::Type::Number;
+    value.number_value = std::stod(source_.substr(start, position_ - start));
+    return value;
+}
+
+JsonValue JsonParser::parse_true() {
+    if (!match_literal("true")) {
+        throw std::runtime_error("unexpected JSON token");
+    }
+    JsonValue value;
+    value.type = JsonValue::Type::Bool;
+    value.bool_value = true;
+    return value;
+}
+
+JsonValue JsonParser::parse_false() {
+    if (!match_literal("false")) {
+        throw std::runtime_error("unexpected JSON token");
+    }
+    JsonValue value;
+    value.type = JsonValue::Type::Bool;
+    value.bool_value = false;
+    return value;
+}
+
+JsonValue JsonParser::parse_null() {
+    if (!match_literal("null")) {
+        throw std::runtime_error("unexpected JSON token");
+    }
+    JsonValue value;
+    value.type = JsonValue::Type::Null;
     return value;
 }
 
@@ -120,6 +214,14 @@ void JsonParser::expect(char expected) {
         throw std::runtime_error("unexpected JSON token");
     }
     ++position_;
+}
+
+bool JsonParser::match_literal(const std::string &literal) {
+    if (source_.compare(position_, literal.size(), literal) != 0) {
+        return false;
+    }
+    position_ += literal.size();
+    return true;
 }
 
 JsonValue parse_json(const std::string &source) {
