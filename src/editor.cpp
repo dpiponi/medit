@@ -11,6 +11,9 @@
 #include <algorithm>
 #include <clocale>
 #include <csignal>
+#include <cstdlib>
+#include <fstream>
+#include <filesystem>
 #include <limits>
 #include <memory>
 #include <map>
@@ -21,6 +24,11 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+#if defined(__unix__) || defined(__APPLE__)
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 enum class Mode {
     Normal,
@@ -657,6 +665,156 @@ void handle_buffer_delete_command(EditorState &state, bool force) {
     set_status(state, "Closed " + closing_name);
 }
 
+std::string shell_single_quote(const std::string &text) {
+    std::string quoted = "'";
+    for (char ch : text) {
+        if (ch == '\'') {
+            quoted += "'\\''";
+        } else {
+            quoted.push_back(ch);
+        }
+    }
+    quoted.push_back('\'');
+    return quoted;
+}
+
+std::optional<std::string> run_picker_command(EditorState &state, const std::string &pipeline_command, std::string &error_message) {
+#if defined(__unix__) || defined(__APPLE__)
+    char temp_path[] = "/tmp/medit-picker-XXXXXX";
+    int fd = mkstemp(temp_path);
+    if (fd < 0) {
+        error_message = "could not create temporary file";
+        return std::nullopt;
+    }
+    close(fd);
+
+    std::string shell_command = pipeline_command + " > " + shell_single_quote(temp_path);
+    state.pending_tokens.clear();
+    state.pending_motion = PendingMotion::None;
+    state.pending_motion_repeat_count = 1;
+    state.repeat_digits.clear();
+    def_prog_mode();
+    endwin();
+    int result = std::system(shell_command.c_str());
+    reset_prog_mode();
+    refresh();
+    clearok(stdscr, TRUE);
+
+    std::ifstream input(temp_path);
+    std::string selection;
+    std::getline(input, selection);
+    std::filesystem::remove(temp_path);
+
+    if (result != 0) {
+        error_message = "picker canceled";
+        return std::nullopt;
+    }
+    if (selection.empty()) {
+        error_message = "no selection";
+        return std::nullopt;
+    }
+    return selection;
+#else
+    (void)state;
+    (void)pipeline_command;
+    error_message = "external pickers unsupported on this platform";
+    return std::nullopt;
+#endif
+}
+
+EditorBuffer *find_buffer_by_path(EditorState &state, const std::string &path) {
+    for (EditorBuffer &buffer : state.session.buffers()) {
+        if (buffer.core.file_path() && *buffer.core.file_path() == path) {
+            return &buffer;
+        }
+    }
+    return nullptr;
+}
+
+bool parse_grep_selection(
+    const std::string &selection,
+    std::string &path,
+    std::size_t &row,
+    std::size_t &column) {
+    std::size_t first_colon = selection.find(':');
+    if (first_colon == std::string::npos) {
+        return false;
+    }
+    std::size_t second_colon = selection.find(':', first_colon + 1);
+    if (second_colon == std::string::npos) {
+        return false;
+    }
+    std::size_t third_colon = selection.find(':', second_colon + 1);
+    if (third_colon == std::string::npos) {
+        return false;
+    }
+
+    path = selection.substr(0, first_colon);
+    try {
+        std::size_t parsed_row = static_cast<std::size_t>(std::stoul(selection.substr(first_colon + 1, second_colon - first_colon - 1)));
+        std::size_t parsed_column =
+            static_cast<std::size_t>(std::stoul(selection.substr(second_colon + 1, third_colon - second_colon - 1)));
+        row = parsed_row > 0 ? parsed_row - 1 : 0;
+        column = parsed_column > 0 ? parsed_column - 1 : 0;
+    } catch (const std::exception &) {
+        return false;
+    }
+    return !path.empty();
+}
+
+void handle_find_file_command(EditorState &state) {
+    std::string error_message;
+    std::optional<std::string> selection =
+        run_picker_command(state, "sh -lc \"rg --files | fzf\"", error_message);
+    if (!selection) {
+        set_status(state, error_message);
+        return;
+    }
+    handle_edit_command(state, *selection);
+}
+
+void handle_grep_command(EditorState &state, const std::string &argument) {
+    if (argument.empty()) {
+        set_status(state, "No grep pattern");
+        return;
+    }
+
+    std::string error_message;
+    std::string command =
+        "sh -lc \"rg --column --line-number --no-heading --color=never --smart-case " +
+        shell_single_quote(argument) + " | fzf\"";
+    std::optional<std::string> selection = run_picker_command(state, command, error_message);
+    if (!selection) {
+        set_status(state, error_message);
+        return;
+    }
+
+    std::string path;
+    std::size_t row = 0;
+    std::size_t column = 0;
+    if (!parse_grep_selection(*selection, path, row, column)) {
+        set_status(state, "Could not parse grep result");
+        return;
+    }
+
+    EditorBuffer *existing = find_buffer_by_path(state, path);
+    if (existing) {
+        state.session.switch_to_id(existing->id);
+        active_core(state).set_cursor({row, column});
+        set_status(state, "Opened " + path);
+        return;
+    }
+
+    EditorBuffer *buffer = state.session.open_file(path, true);
+    if (!buffer) {
+        set_status(state, "Could not open file");
+        return;
+    }
+    state.buffer_ui.try_emplace(buffer->id);
+    active_core(state).set_cursor({row, column});
+    set_status(state, "Opened " + path);
+}
+
 bool reload_editor_configuration(EditorState &state, std::string &error_message) {
     try {
         EditorConfig new_config = load_editor_config();
@@ -726,6 +884,10 @@ void execute_command(EditorState &state) {
         handle_buffer_delete_command(state, false);
     } else if (verb == "bd!") {
         handle_buffer_delete_command(state, true);
+    } else if (verb == "find-file") {
+        handle_find_file_command(state);
+    } else if (verb == "grep") {
+        handle_grep_command(state, argument);
     } else if (verb == "reload-config") {
         std::string error_message;
         if (reload_editor_configuration(state, error_message)) {

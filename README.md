@@ -178,6 +178,8 @@ colors = forest.json
 - `:bnext` / `:bprev` switch buffers
 - `:bd` close the current buffer if clean
 - `:bd!` force close the current buffer
+- `:find-file` open a project file via `rg --files | fzf`
+- `:grep pattern` search with `rg` and jump via `fzf`
 - `:reload-config` reload `meditrc`, keybindings, and colors
 - `:diagnostics` show a diagnostics summary
 
