@@ -66,7 +66,7 @@ constexpr const char *kEmbeddedDefaultKeybindings = R"json(
     "pageup": "page_up",
     "pagedown": "page_down"
   },
-  "visual": {
+    "visual": {
     "left": "move_left",
     "right": "move_right",
     "up": "move_up",
@@ -93,6 +93,7 @@ constexpr const char *kEmbeddedDefaultKeybindings = R"json(
     "g i": "jump_forward",
     "] d": "next_diagnostic",
     "[ d": "previous_diagnostic",
+    "|": "filter_selection",
     "c": "change_selection",
     "d": "delete_selection",
     "y": "yank_selection",
@@ -204,6 +205,7 @@ std::optional<EditorAction> action_from_name(const std::string &name) {
         {"previous_diagnostic", EditorAction::PreviousDiagnostic},
         {"toggle_diagnostics_panel", EditorAction::ToggleDiagnosticsPanel},
         {"delete_selection", EditorAction::DeleteSelection},
+        {"filter_selection", EditorAction::FilterSelection},
         {"change_selection", EditorAction::ChangeSelection},
         {"yank_selection", EditorAction::YankSelection},
         {"replace_selection_with_yank", EditorAction::ReplaceSelectionWithYank},

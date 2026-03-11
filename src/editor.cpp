@@ -54,6 +54,11 @@ enum class PendingMotion {
     TillBackward,
 };
 
+enum class CommandPromptKind {
+    EditorCommand,
+    FilterSelection,
+};
+
 struct EditorState {
     struct JumpLocation {
         std::string document_uri;
@@ -94,6 +99,7 @@ struct EditorState {
     std::map<std::size_t, BufferUiState> buffer_ui;
     bool should_quit = false;
     Mode mode = Mode::Normal;
+    CommandPromptKind command_prompt_kind = CommandPromptKind::EditorCommand;
     std::u32string command_buffer;
     std::u32string search_buffer;
     std::string status_message = "NORMAL";
@@ -362,6 +368,7 @@ void enter_insert_mode(EditorState &state) {
 void enter_command_mode(EditorState &state) {
     active_core(state).clear_selection();
     state.mode = Mode::Command;
+    state.command_prompt_kind = CommandPromptKind::EditorCommand;
     state.command_buffer.clear();
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
@@ -369,6 +376,22 @@ void enter_command_mode(EditorState &state) {
     state.repeat_digits.clear();
     state.search_buffer.clear();
     set_status(state, ":");
+}
+
+void enter_filter_command_mode(EditorState &state) {
+    if (!active_core(state).has_selection()) {
+        set_status(state, "No selection");
+        return;
+    }
+    state.mode = Mode::Command;
+    state.command_prompt_kind = CommandPromptKind::FilterSelection;
+    state.command_buffer.clear();
+    state.pending_tokens.clear();
+    state.pending_motion = PendingMotion::None;
+    state.pending_motion_repeat_count = 1;
+    state.repeat_digits.clear();
+    state.search_buffer.clear();
+    set_status(state, "|");
 }
 
 void enter_search_mode(EditorState &state) {
@@ -828,6 +851,93 @@ std::optional<std::string> run_picker_command(EditorState &state, const std::str
 #endif
 }
 
+bool run_selection_filter_command(
+    EditorState &state,
+    const std::string &command,
+    const std::u32string &input_text,
+    std::u32string &output_text,
+    std::string &error_message) {
+#if defined(__unix__) || defined(__APPLE__)
+    char input_path[] = "/tmp/medit-filter-in-XXXXXX";
+    int input_fd = mkstemp(input_path);
+    if (input_fd < 0) {
+        error_message = "could not create filter input file";
+        return false;
+    }
+    close(input_fd);
+
+    char output_path[] = "/tmp/medit-filter-out-XXXXXX";
+    int output_fd = mkstemp(output_path);
+    if (output_fd < 0) {
+        std::filesystem::remove(input_path);
+        error_message = "could not create filter output file";
+        return false;
+    }
+    close(output_fd);
+
+    char error_path[] = "/tmp/medit-filter-err-XXXXXX";
+    int stderr_fd = mkstemp(error_path);
+    if (stderr_fd < 0) {
+        std::filesystem::remove(input_path);
+        std::filesystem::remove(output_path);
+        error_message = "could not create filter error file";
+        return false;
+    }
+    close(stderr_fd);
+
+    {
+        std::ofstream input_file(input_path, std::ios::binary);
+        input_file << u32_to_utf8(input_text);
+    }
+
+    std::string shell_command =
+        "sh -c " + shell_single_quote(command) +
+        " < " + shell_single_quote(input_path) +
+        " > " + shell_single_quote(output_path) +
+        " 2> " + shell_single_quote(error_path);
+    log_debug("external command kind=selection-filter spawn command=" + shell_command);
+    state.pending_tokens.clear();
+    state.pending_motion = PendingMotion::None;
+    state.pending_motion_repeat_count = 1;
+    state.repeat_digits.clear();
+    def_prog_mode();
+    endwin();
+    restore_shell_terminal_state();
+    int result = std::system(shell_command.c_str());
+    reset_prog_mode();
+    refresh();
+    clearok(stdscr, TRUE);
+    log_debug("external command kind=selection-filter exit command=" + shell_command + " status=" + std::to_string(result));
+
+    std::ifstream output_file(output_path, std::ios::binary);
+    std::string output_utf8((std::istreambuf_iterator<char>(output_file)), std::istreambuf_iterator<char>());
+    output_text = utf8_to_u32(output_utf8);
+
+    std::ifstream stderr_file(error_path, std::ios::binary);
+    std::string stderr_text((std::istreambuf_iterator<char>(stderr_file)), std::istreambuf_iterator<char>());
+
+    std::filesystem::remove(input_path);
+    std::filesystem::remove(output_path);
+    std::filesystem::remove(error_path);
+
+    if (result != 0) {
+        error_message = trim_ascii_whitespace(stderr_text);
+        if (error_message.empty()) {
+            error_message = "filter command failed";
+        }
+        return false;
+    }
+    return true;
+#else
+    (void)state;
+    (void)command;
+    (void)input_text;
+    (void)output_text;
+    error_message = "selection filters unsupported on this platform";
+    return false;
+#endif
+}
+
 std::vector<std::string> run_capture_command(const std::string &command, const std::filesystem::path &working_directory) {
 #if defined(__unix__) || defined(__APPLE__)
     char temp_path[] = "/tmp/medit-capture-XXXXXX";
@@ -1257,7 +1367,45 @@ bool reload_editor_configuration(EditorState &state, std::string &error_message)
     }
 }
 
+void execute_filter_command(EditorState &state) {
+    EditorCore &core = active_core(state);
+    std::optional<Range> selection = core.selection_range();
+    if (!selection) {
+        set_status(state, "No selection");
+        enter_normal_mode(state);
+        return;
+    }
+
+    std::string command = u32_to_utf8(state.command_buffer);
+    if (command.empty()) {
+        set_status(state, "No filter command");
+        enter_normal_mode(state);
+        return;
+    }
+
+    std::u32string output_text;
+    std::string error_message;
+    if (!run_selection_filter_command(state, command, core.read_text(*selection), output_text, error_message)) {
+        set_status(state, error_message);
+        enter_normal_mode(state);
+        return;
+    }
+
+    if (core.selection_mode() == SelectionMode::Line && !output_text.empty() && output_text.back() != U'\n') {
+        output_text.push_back(U'\n');
+    }
+
+    core.replace_range(*selection, output_text);
+    enter_normal_mode(state);
+    set_status(state, "Selection filtered");
+}
+
 void execute_command(EditorState &state) {
+    if (state.command_prompt_kind == CommandPromptKind::FilterSelection) {
+        execute_filter_command(state);
+        return;
+    }
+
     std::string command = u32_to_utf8(state.command_buffer);
     std::istringstream parser(command);
     std::string verb;
@@ -1821,7 +1969,9 @@ void draw_message_bar(const EditorState &state, int screen_rows, int screen_cols
     if (state.mode == Mode::Command) {
         TextStyle style = theme_style(state.theme, StyleRole::CommandLine);
         attron(curses_attributes(style, StyleRole::CommandLine));
-        std::string command = ":" + u32_to_utf8(state.command_buffer);
+        std::string command =
+            std::string(state.command_prompt_kind == CommandPromptKind::FilterSelection ? "|" : ":") +
+            u32_to_utf8(state.command_buffer);
         mvaddnstr(screen_rows - 1, 0, command.c_str(), screen_cols);
         attroff(curses_attributes(style, StyleRole::CommandLine));
         return;
@@ -2515,6 +2665,9 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             }
             break;
             }
+        case EditorAction::FilterSelection:
+            enter_filter_command_mode(state);
+            break;
         case EditorAction::YankSelection:
             if (core.yank_selection()) {
                 SelectionMode selection_mode = core.selection_mode();

@@ -668,6 +668,11 @@ void test_keybinding_dispatch() {
         linewise.action.has_value() && *linewise.action == EditorAction::EnterVisualLineMode,
         "V should map to linewise visual mode");
 
+    KeyDispatch filter = dispatch_key_sequence(keybindings, "visual", pending, "|", false);
+    expect(
+        filter.action.has_value() && *filter.action == EditorAction::FilterSelection,
+        "| should map to filter selection in visual mode");
+
     KeyDispatch find = dispatch_key_sequence(keybindings, "normal", pending, "f", false);
     expect(find.action.has_value() && *find.action == EditorAction::FindForward, "f should map to find forward");
 

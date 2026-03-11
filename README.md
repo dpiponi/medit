@@ -212,6 +212,7 @@ colors = forest.json
 - In visual mode, `c` deletes the selection and enters insert mode to replace it
 - In visual mode, `y` yanks the selection
 - In visual mode, `p` or `P` replaces the selection with the yanked text
+- In visual mode, `|` runs a Unix command on the selection and replaces it with stdout
 - In visual mode, `iw` extends the selection to include the inner word at the cursor
 - In visual mode, `aw` extends the selection to include the word plus adjacent spaces at the cursor
 - Search updates dynamically as you type and highlights all matches, with the current match highlighted separately
