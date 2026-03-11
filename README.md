@@ -179,6 +179,7 @@ colors = forest.json
 - `i` enter insert mode
 - `v` enter visual selection mode
 - `V` enter linewise visual selection mode
+- `%` select the entire buffer
 - `/` enter regex search mode
 - `a` append after cursor
 - `o` open line below

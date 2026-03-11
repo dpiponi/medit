@@ -752,6 +752,11 @@ void test_keybinding_dispatch() {
         change.action.has_value() && *change.action == EditorAction::ChangeSelection,
         "visual c should map to change selection");
 
+    KeyDispatch select_all = dispatch_key_sequence(keybindings, "normal", pending, "%", false);
+    expect(
+        select_all.action.has_value() && *select_all.action == EditorAction::SelectAll,
+        "% should map to select all");
+
     KeyDispatch search_insert = dispatch_key_sequence(keybindings, "search", pending, "x", true);
     expect(
         search_insert.action.has_value() && *search_insert.action == EditorAction::SearchInsert,

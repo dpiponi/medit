@@ -44,6 +44,7 @@ constexpr const char *kEmbeddedDefaultKeybindings = R"json(
     "r": "redo",
     "p": "paste_after",
     "P": "paste_before",
+    "%": "select_all",
     "g g": "goto_top",
     "G": "goto_bottom",
     "/": "enter_search_mode",
@@ -99,6 +100,7 @@ constexpr const char *kEmbeddedDefaultKeybindings = R"json(
     "y": "yank_selection",
     "p": "replace_selection_with_yank",
     "P": "replace_selection_with_yank",
+    "%": "select_all",
     "v": "enter_normal_mode",
     "V": "enter_visual_line_mode",
     "esc": "enter_normal_mode",
@@ -209,6 +211,7 @@ std::optional<EditorAction> action_from_name(const std::string &name) {
         {"change_selection", EditorAction::ChangeSelection},
         {"yank_selection", EditorAction::YankSelection},
         {"replace_selection_with_yank", EditorAction::ReplaceSelectionWithYank},
+        {"select_all", EditorAction::SelectAll},
         {"select_inner_word", EditorAction::SelectInnerWord},
         {"select_around_word", EditorAction::SelectAroundWord},
     };

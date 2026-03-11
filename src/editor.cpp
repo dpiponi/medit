@@ -2171,6 +2171,24 @@ void enter_visual_line_mode(EditorState &state) {
     set_status(state, mode_name(state.mode));
 }
 
+bool select_entire_buffer(EditorState &state) {
+    EditorCore &core = active_core(state);
+    if (core.line_count() == 0) {
+        return false;
+    }
+
+    std::size_t last_row = core.line_count() - 1;
+    Range whole_buffer{{0, 0}, {last_row, core.line_length(last_row)}};
+    SelectionMode selection_mode = state.mode == Mode::VisualLine ? SelectionMode::Line : SelectionMode::Character;
+    if (!core.set_selection_range(whole_buffer, selection_mode)) {
+        return false;
+    }
+
+    state.mode = selection_mode == SelectionMode::Line ? Mode::VisualLine : Mode::Visual;
+    set_status(state, mode_name(state.mode));
+    return true;
+}
+
 bool motion_is_character_based(PendingMotion motion) {
     return motion != PendingMotion::None;
 }
@@ -2703,6 +2721,11 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             }
             break;
             }
+        case EditorAction::SelectAll:
+            if (!select_entire_buffer(state)) {
+                set_status(state, "Selection empty");
+            }
+            break;
         case EditorAction::SelectInnerWord:
             if (state.mode == Mode::Visual || state.mode == Mode::VisualLine) {
                 std::optional<Range> range = core.inner_word_range();
