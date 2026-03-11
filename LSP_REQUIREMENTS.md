@@ -92,6 +92,7 @@ Items are ordered roughly by dependency and architectural leverage. Update this 
     Implement a managed JSON-RPC transport layer over stdio for language server processes, including startup, shutdown, restart, and failure handling.
 
 15. Request/notification routing
+    Status: in progress in [lsp_service.hpp](/home/dan/de/src/lsp_service.hpp), [lsp_service.cpp](/home/dan/de/src/lsp_service.cpp), and [test_editor_core.cpp](/home/dan/de/tests/test_editor_core.cpp)
     Add client-side handling for:
     initialize
     initialized

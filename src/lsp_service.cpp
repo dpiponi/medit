@@ -158,6 +158,23 @@ void LspService::handle_editor_event(const EditorEvent &event) {
     }
     switch (event.type) {
         case EditorEventType::DocumentOpened:
+        case EditorEventType::DocumentChanged:
+        case EditorEventType::DocumentSaved:
+        case EditorEventType::DocumentClosed:
+            if (!initialized_) {
+                pending_editor_events_.push_back(event);
+                return;
+            }
+            send_editor_event(event);
+            return;
+        default:
+            return;
+    }
+}
+
+void LspService::send_editor_event(const EditorEvent &event) {
+    switch (event.type) {
+        case EditorEventType::DocumentOpened:
             send_did_open(event);
             break;
         case EditorEventType::DocumentChanged:
@@ -171,6 +188,14 @@ void LspService::handle_editor_event(const EditorEvent &event) {
             break;
         default:
             break;
+    }
+}
+
+void LspService::flush_pending_editor_events() {
+    std::vector<EditorEvent> events = std::move(pending_editor_events_);
+    pending_editor_events_.clear();
+    for (const EditorEvent &event : events) {
+        send_editor_event(event);
     }
 }
 
@@ -386,6 +411,7 @@ void LspService::handle_message(const std::string &payload) {
         static_cast<int>(id->second.number_value) == initialize_request_id_) {
         initialized_ = true;
         send_initialized();
+        flush_pending_editor_events();
         queue_status("LSP initialized");
         return;
     }

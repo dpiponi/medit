@@ -14,6 +14,7 @@
 #include <ncursesw/curses.h>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unistd.h>
 
 namespace {
@@ -733,6 +734,54 @@ void test_lsp_message_framing() {
     expect(buffer.empty(), "lsp framing should consume buffer");
 }
 
+void test_lsp_service_roundtrip() {
+#if defined(__unix__) || defined(__APPLE__)
+    char path[] = "/tmp/medit-lsp-XXXXXX";
+    int fd = mkstemp(path);
+    expect(fd >= 0, "mkstemp for lsp test should succeed");
+    close(fd);
+    {
+        std::ofstream file(path);
+        file << "abc";
+    }
+
+    EditorConfig config;
+    config.lsp_command = std::string("python3 ") + std::filesystem::current_path().string() + "/tests/fake_lsp_server.py";
+    config.lsp_language_id = "cpp";
+
+    EditorRuntime runtime;
+    runtime.add_service(std::make_unique<LspService>(config));
+    runtime.start_services();
+
+    EditorCore core;
+    expect(core.load_file(path), "load file for lsp roundtrip test");
+
+    auto drive_runtime = [&](int iterations) {
+        for (int i = 0; i < iterations; ++i) {
+            runtime.process(core);
+            for (const ServiceEvent &event : runtime.take_service_events()) {
+                if (event.command) {
+                    apply_editor_command(core, *event.command);
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+    };
+
+    drive_runtime(30);
+    expect(core.diagnostics().size() == 1, "lsp roundtrip should apply open diagnostics");
+    expect(u32_to_utf8(core.diagnostics()[0].message) == "open diagnostic", "lsp open diagnostic message");
+
+    core.insert_codepoint(U'x');
+    drive_runtime(30);
+    expect(core.diagnostics().size() == 1, "lsp roundtrip should update diagnostics after change");
+    expect(u32_to_utf8(core.diagnostics()[0].message) == "changed diagnostic", "lsp changed diagnostic message");
+
+    runtime.stop_services();
+    std::remove(path);
+#endif
+}
+
 class RecordingService : public EditorService {
   public:
     explicit RecordingService(std::optional<int> interval_ms = std::nullopt) : interval_ms_(interval_ms) {}
@@ -868,6 +917,7 @@ int main() {
         test_keybinding_dispatch();
         test_config_file_selects_keybindings_and_colors();
         test_lsp_message_framing();
+        test_lsp_service_roundtrip();
         test_editor_runtime_service_boundary();
         test_editor_runtime_idle_timeout();
     } catch (const std::exception &error) {

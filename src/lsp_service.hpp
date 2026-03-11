@@ -36,10 +36,13 @@ class LspService : public EditorService {
     std::thread reader_thread_;
     std::mutex mutex_;
     std::vector<ServiceEvent> pending_events_;
+    std::vector<EditorEvent> pending_editor_events_;
     std::string read_buffer_;
 
     void queue_event(ServiceEvent event);
     void queue_status(const std::string &message);
+    void send_editor_event(const EditorEvent &event);
+    void flush_pending_editor_events();
     bool spawn_process();
     void shutdown_process();
     void reader_loop();
