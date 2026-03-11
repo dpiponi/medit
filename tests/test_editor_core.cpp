@@ -1125,6 +1125,35 @@ void test_editor_session_open_and_close_rules() {
     expect_event_type(close_events.back(), EditorEventType::DocumentClosed, "close should emit document closed");
 }
 
+void test_editor_session_open_multiple_files() {
+    EditorSession session;
+    std::filesystem::path temp_dir = std::filesystem::temp_directory_path() / "medit_multi_open_test";
+    std::filesystem::create_directories(temp_dir);
+    std::filesystem::path first_path = temp_dir / "first.txt";
+    std::filesystem::path second_path = temp_dir / "second.txt";
+
+    {
+        std::ofstream output(first_path);
+        output << "first\n";
+    }
+    {
+        std::ofstream output(second_path);
+        output << "second\n";
+    }
+
+    EditorCore &first_core = session.active_buffer().core;
+    expect(first_core.load_file(first_path.string()), "initial startup file should load into first buffer");
+    std::size_t first_id = session.active_buffer_id();
+    EditorBuffer *second = session.open_file(second_path.string(), false);
+    expect(second != nullptr, "second startup file should open in another buffer");
+    expect(session.buffer_count() == 2, "opening two startup files should create two buffers");
+    expect(session.active_buffer_id() == first_id, "first startup file should remain active");
+    expect_text(session.active_buffer().core, "first", "first startup buffer should preserve first file");
+    expect_text(second->core, "second", "second startup buffer should contain second file");
+
+    std::filesystem::remove_all(temp_dir);
+}
+
 }  // namespace
 
 int main() {
@@ -1165,6 +1194,7 @@ int main() {
         test_editor_runtime_idle_timeout();
         test_editor_session_buffers_and_clipboard();
         test_editor_session_open_and_close_rules();
+        test_editor_session_open_multiple_files();
     } catch (const std::exception &error) {
         std::cerr << "test failure: " << error.what() << '\n';
         return 1;

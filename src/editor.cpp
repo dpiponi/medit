@@ -2133,6 +2133,42 @@ void run_editor(EditorState &state) {
     }
 }
 
+void open_startup_files(EditorState &state, int argc, char **argv) {
+    if (argc <= 1) {
+        return;
+    }
+
+    std::size_t first_buffer_id = state.session.active_buffer_id();
+    bool opened_any = false;
+    std::string last_failure;
+    for (int index = 1; index < argc; ++index) {
+        std::string path = argv[index];
+        if (!opened_any) {
+            if (active_core(state).load_file(path)) {
+                opened_any = true;
+                set_status(state, "Opened " + path);
+            } else {
+                last_failure = "Could not open file: " + path;
+            }
+            continue;
+        }
+
+        EditorBuffer *buffer = state.session.open_file(path, false);
+        if (buffer) {
+            state.buffer_ui.try_emplace(buffer->id);
+            set_status(state, "Opened " + path);
+        } else {
+            last_failure = "Could not open file: " + path;
+        }
+    }
+
+    state.session.switch_to_id(first_buffer_id);
+    active_buffer_ui(state);
+    if (!last_failure.empty()) {
+        set_status(state, last_failure);
+    }
+}
+
 int main(int argc, char **argv) {
     initialize_locale();
     EditorState state;
@@ -2154,11 +2190,7 @@ int main(int argc, char **argv) {
     }
     active_buffer_ui(state);
     if (argc > 1) {
-        if (active_core(state).load_file(argv[1])) {
-            set_status(state, "Opened " + std::string(argv[1]));
-        } else {
-            set_status(state, "Could not open file");
-        }
+        open_startup_files(state, argc, argv);
     } else if (!state.config.source_path.empty()) {
         set_status(state, "Config: " + state.config.source_path);
     } else if (!state.keybindings.source_path.empty()) {

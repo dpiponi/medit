@@ -33,8 +33,10 @@ make test
 ## Run
 
 ```sh
-./medit [file]
+./medit [file...]
 ```
+
+Passing multiple files opens each one in its own buffer and leaves the first file active.
 
 ## Config
 
