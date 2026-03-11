@@ -48,6 +48,8 @@ enum class EditorAction {
     Backspace,
     CommandExecute,
     CommandBackspace,
+    CommandHistoryPrevious,
+    CommandHistoryNext,
     SelfInsert,
     CommandInsert,
     SearchExecute,

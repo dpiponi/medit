@@ -61,6 +61,12 @@ enum class CommandPromptKind {
 };
 
 struct EditorState {
+    struct PromptHistory {
+        std::vector<std::u32string> entries;
+        std::optional<std::size_t> browse_index;
+        std::u32string draft;
+    };
+
     struct JumpLocation {
         std::string document_uri;
         std::optional<std::string> file_path;
@@ -102,6 +108,9 @@ struct EditorState {
     Mode mode = Mode::Normal;
     CommandPromptKind command_prompt_kind = CommandPromptKind::EditorCommand;
     std::u32string command_buffer;
+    PromptHistory editor_command_history;
+    PromptHistory filter_command_history;
+    PromptHistory sed_command_history;
     std::u32string search_buffer;
     std::string status_message = "NORMAL";
     std::vector<std::string> pending_tokens;
@@ -142,6 +151,61 @@ const EditorState::BufferUiState &active_buffer_ui(const EditorState &state) {
         return found->second;
     }
     return const_cast<EditorState &>(state).buffer_ui.try_emplace(state.session.active_buffer_id()).first->second;
+}
+
+EditorState::PromptHistory &active_prompt_history(EditorState &state) {
+    switch (state.command_prompt_kind) {
+        case CommandPromptKind::EditorCommand:
+            return state.editor_command_history;
+        case CommandPromptKind::FilterSelection:
+            return state.filter_command_history;
+        case CommandPromptKind::SedSelection:
+            return state.sed_command_history;
+    }
+    return state.editor_command_history;
+}
+
+void reset_prompt_history_navigation(EditorState::PromptHistory &history) {
+    history.browse_index.reset();
+    history.draft.clear();
+}
+
+void add_prompt_history_entry(EditorState &state, const std::u32string &entry) {
+    if (entry.empty()) {
+        return;
+    }
+    EditorState::PromptHistory &history = active_prompt_history(state);
+    if (history.entries.empty() || history.entries.back() != entry) {
+        history.entries.push_back(entry);
+    }
+    reset_prompt_history_navigation(history);
+}
+
+void browse_prompt_history(EditorState &state, bool previous) {
+    EditorState::PromptHistory &history = active_prompt_history(state);
+    if (history.entries.empty()) {
+        return;
+    }
+    if (!history.browse_index) {
+        if (!previous) {
+            return;
+        }
+        history.draft = state.command_buffer;
+        history.browse_index = history.entries.size() - 1;
+    } else if (previous) {
+        if (*history.browse_index == 0) {
+            return;
+        }
+        --*history.browse_index;
+    } else {
+        if (*history.browse_index + 1 >= history.entries.size()) {
+            state.command_buffer = history.draft;
+            reset_prompt_history_navigation(history);
+            return;
+        }
+        ++*history.browse_index;
+    }
+    state.command_buffer = history.entries[*history.browse_index];
 }
 
 struct DiagnosticEntryView {
@@ -371,6 +435,7 @@ void enter_command_mode(EditorState &state) {
     state.mode = Mode::Command;
     state.command_prompt_kind = CommandPromptKind::EditorCommand;
     state.command_buffer.clear();
+    reset_prompt_history_navigation(state.editor_command_history);
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
     state.pending_motion_repeat_count = 1;
@@ -387,6 +452,7 @@ void enter_filter_command_mode(EditorState &state) {
     state.mode = Mode::Command;
     state.command_prompt_kind = CommandPromptKind::FilterSelection;
     state.command_buffer.clear();
+    reset_prompt_history_navigation(state.filter_command_history);
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
     state.pending_motion_repeat_count = 1;
@@ -403,6 +469,7 @@ void enter_sed_command_mode(EditorState &state) {
     state.mode = Mode::Command;
     state.command_prompt_kind = CommandPromptKind::SedSelection;
     state.command_buffer.clear();
+    reset_prompt_history_navigation(state.sed_command_history);
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
     state.pending_motion_repeat_count = 1;
@@ -1465,7 +1532,8 @@ void execute_command(EditorState &state) {
         return;
     }
 
-    std::string command = u32_to_utf8(state.command_buffer);
+    std::u32string command_text = state.command_buffer;
+    std::string command = u32_to_utf8(command_text);
     std::istringstream parser(command);
     std::string verb;
     parser >> verb;
@@ -1480,6 +1548,7 @@ void execute_command(EditorState &state) {
         enter_normal_mode(state);
         return;
     }
+    add_prompt_history_entry(state, command_text);
     if (std::ranges::all_of(verb, [](unsigned char ch) { return std::isdigit(ch) != 0; })) {
         handle_goto_line_command(state, verb);
     } else if (verb == "w") {
@@ -2672,6 +2741,12 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             if (!state.command_buffer.empty()) {
                 state.command_buffer.pop_back();
             }
+            break;
+        case EditorAction::CommandHistoryPrevious:
+            browse_prompt_history(state, true);
+            break;
+        case EditorAction::CommandHistoryNext:
+            browse_prompt_history(state, false);
             break;
         case EditorAction::SelfInsert:
             core.insert_codepoint(static_cast<char32_t>(key));

@@ -678,6 +678,18 @@ void test_keybinding_dispatch() {
         sed.action.has_value() && *sed.action == EditorAction::SedSelection,
         "S should map to sed selection in visual mode");
 
+    KeyDispatch command_history_previous = dispatch_key_sequence(keybindings, "command", pending, "up", false);
+    expect(
+        command_history_previous.action.has_value() &&
+            *command_history_previous.action == EditorAction::CommandHistoryPrevious,
+        "command up should browse previous history");
+
+    KeyDispatch command_history_next = dispatch_key_sequence(keybindings, "command", pending, "down", false);
+    expect(
+        command_history_next.action.has_value() &&
+            *command_history_next.action == EditorAction::CommandHistoryNext,
+        "command down should browse next history");
+
     KeyDispatch find = dispatch_key_sequence(keybindings, "normal", pending, "f", false);
     expect(find.action.has_value() && *find.action == EditorAction::FindForward, "f should map to find forward");
 

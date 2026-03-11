@@ -111,6 +111,8 @@
     "esc": "enter_normal_mode",
     "enter": "command_execute",
     "backspace": "command_backspace",
+    "up": "command_history_previous",
+    "down": "command_history_next",
     "printable": "command_insert"
   },
   "search": {
