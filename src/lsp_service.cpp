@@ -70,6 +70,64 @@ DiagnosticSeverity diagnostic_severity_from_lsp(const JsonValue &value) {
     return static_cast<int>(value.number_value) == 1 ? DiagnosticSeverity::Error : DiagnosticSeverity::Warning;
 }
 
+std::optional<std::pair<std::string, Position>> definition_location_from_result(const JsonValue &result) {
+    const JsonValue *location = &result;
+    if (result.type == JsonValue::Type::Array) {
+        if (result.array_value.empty()) {
+            return std::nullopt;
+        }
+        location = &result.array_value.front();
+    }
+
+    if (location->type != JsonValue::Type::Object) {
+        return std::nullopt;
+    }
+
+    auto extract_start_position = [](const std::string &document_uri, const JsonValue &range_object) -> std::optional<Position> {
+        auto start = range_object.object_value.find("start");
+        if (start == range_object.object_value.end() || start->second.type != JsonValue::Type::Object) {
+            return std::nullopt;
+        }
+        EditorCore conversion_core;
+        std::string path = file_path_from_uri(document_uri);
+        if (!path.empty()) {
+            conversion_core.load_file(path);
+        }
+        return position_from_lsp(start->second, conversion_core);
+    };
+
+    auto uri = location->object_value.find("uri");
+    if (uri != location->object_value.end() && uri->second.type == JsonValue::Type::String) {
+        std::string normalized_uri = normalize_document_uri(uri->second.string_value);
+        auto range = location->object_value.find("range");
+        if (range != location->object_value.end() && range->second.type == JsonValue::Type::Object) {
+            if (std::optional<Position> start = extract_start_position(normalized_uri, range->second)) {
+                return std::make_pair(normalized_uri, *start);
+            }
+        }
+    }
+
+    auto target_uri = location->object_value.find("targetUri");
+    if (target_uri != location->object_value.end() && target_uri->second.type == JsonValue::Type::String) {
+        std::string normalized_uri = normalize_document_uri(target_uri->second.string_value);
+        auto target_selection_range = location->object_value.find("targetSelectionRange");
+        if (target_selection_range != location->object_value.end() &&
+            target_selection_range->second.type == JsonValue::Type::Object) {
+            if (std::optional<Position> start = extract_start_position(normalized_uri, target_selection_range->second)) {
+                return std::make_pair(normalized_uri, *start);
+            }
+        }
+        auto target_range = location->object_value.find("targetRange");
+        if (target_range != location->object_value.end() && target_range->second.type == JsonValue::Type::Object) {
+            if (std::optional<Position> start = extract_start_position(normalized_uri, target_range->second)) {
+                return std::make_pair(normalized_uri, *start);
+            }
+        }
+    }
+
+    return std::nullopt;
+}
+
 std::string lowercase(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
         return static_cast<char>(std::tolower(ch));
@@ -155,6 +213,7 @@ void LspService::stop() {
     initialize_request_id_ = -1;
     workspace_root_.reset();
     open_documents_.clear();
+    pending_requests_.clear();
 }
 
 void LspService::handle_editor_event(const EditorEvent &event) {
@@ -179,6 +238,20 @@ void LspService::handle_editor_event(const EditorEvent &event) {
         default:
             return;
     }
+}
+
+void LspService::handle_request(const ServiceRequest &request) {
+    if (!running_ || request.type != ServiceRequestType::GoToDefinition) {
+        return;
+    }
+    if (!matches_document(request.document_uri)) {
+        return;
+    }
+    if (!initialized_ || open_documents_.find(request.document_uri) == open_documents_.end()) {
+        queue_status("Definition unavailable");
+        return;
+    }
+    send_definition_request(request);
 }
 
 void LspService::send_editor_event(const EditorEvent &event) {
@@ -485,6 +558,26 @@ void LspService::send_did_close(const EditorEvent &event) {
     open_documents_.erase(event.document_uri);
 }
 
+void LspService::send_definition_request(const ServiceRequest &request) {
+    int request_id = next_request_id_++;
+    pending_requests_[request_id] = request;
+    std::ostringstream payload;
+    payload << "{"
+            << "\"jsonrpc\":\"2.0\","
+            << "\"id\":" << request_id << ","
+            << "\"method\":\"textDocument/definition\","
+            << "\"params\":{"
+            << "\"textDocument\":{\"uri\":" << json_string(request.document_uri) << "},"
+            << "\"position\":{\"line\":" << request.utf16_position.row
+            << ",\"character\":" << request.utf16_position.column << "}"
+            << "}"
+            << "}";
+    if (!write_payload(payload.str())) {
+        pending_requests_.erase(request_id);
+        queue_status("Definition request failed");
+    }
+}
+
 void LspService::handle_message(const std::string &payload) {
     JsonValue root = parse_json(payload);
     if (root.type != JsonValue::Type::Object) {
@@ -509,6 +602,39 @@ void LspService::handle_message(const std::string &payload) {
         flush_pending_editor_events();
         queue_status("LSP initialized");
         return;
+    }
+
+    if (id != root.object_value.end() && id->second.type == JsonValue::Type::Number) {
+        int request_id = static_cast<int>(id->second.number_value);
+        auto pending = pending_requests_.find(request_id);
+        if (pending != pending_requests_.end()) {
+            pending_requests_.erase(pending);
+
+            auto error = root.object_value.find("error");
+            if (error != root.object_value.end()) {
+                queue_status("Definition request failed");
+                return;
+            }
+
+            auto result = root.object_value.find("result");
+            if (result == root.object_value.end() || result->second.type == JsonValue::Type::Null) {
+                queue_status("Definition not found");
+                return;
+            }
+
+            std::optional<std::pair<std::string, Position>> location = definition_location_from_result(result->second);
+            if (!location) {
+                queue_status("Definition not found");
+                return;
+            }
+
+            EditorCommand command;
+            command.type = EditorCommandType::OpenLocation;
+            command.document_uri = location->first;
+            command.position = location->second;
+            queue_event({ServiceEventType::Notification, name(), "definition", command, location->first, 0, std::nullopt, U""});
+            return;
+        }
     }
 
     auto method = root.object_value.find("method");

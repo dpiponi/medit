@@ -14,6 +14,16 @@ enum class ServiceEventType {
     Notification,
 };
 
+enum class ServiceRequestType {
+    GoToDefinition,
+};
+
+struct ServiceRequest {
+    ServiceRequestType type = ServiceRequestType::GoToDefinition;
+    std::string document_uri;
+    Utf16Position utf16_position;
+};
+
 struct ServiceEvent {
     ServiceEventType type = ServiceEventType::Notification;
     std::string service_name;
@@ -33,6 +43,7 @@ class EditorService {
     virtual void start() = 0;
     virtual void stop() = 0;
     virtual void handle_editor_event(const EditorEvent &event) = 0;
+    virtual void handle_request(const ServiceRequest &request);
     virtual std::vector<ServiceEvent> poll() = 0;
     virtual std::optional<int> poll_interval_ms() const;
 };
@@ -49,6 +60,7 @@ class EditorRuntime {
     void process(EditorCore &core);
     void dispatch_editor_event(const EditorEvent &event);
     void dispatch_editor_events(EditorCore &core);
+    void dispatch_service_request(const ServiceRequest &request);
     void poll_services();
     std::optional<int> idle_wait_timeout_ms() const;
 

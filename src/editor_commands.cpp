@@ -42,6 +42,8 @@ EditorCommandResult apply_editor_command(EditorCore &core, const EditorCommand &
                 result.applied = true;
             }
             return result;
+        case EditorCommandType::OpenLocation:
+            return result;
         case EditorCommandType::SetStatusMessage:
             result.applied = true;
             result.status_message = command.message;

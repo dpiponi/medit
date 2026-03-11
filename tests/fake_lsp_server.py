@@ -65,6 +65,22 @@ while True:
         publish(message["params"]["textDocument"]["uri"], "open diagnostic")
     elif method == "textDocument/didChange":
         publish(message["params"]["textDocument"]["uri"], "changed diagnostic")
+    elif method == "textDocument/definition":
+        send_message(
+            {
+                "jsonrpc": "2.0",
+                "id": message["id"],
+                "result": [
+                    {
+                        "uri": message["params"]["textDocument"]["uri"],
+                        "range": {
+                            "start": {"line": 0, "character": 1},
+                            "end": {"line": 0, "character": 2},
+                        },
+                    }
+                ],
+            }
+        )
     elif method == "shutdown":
         send_message({"jsonrpc": "2.0", "id": message["id"], "result": None})
     elif method == "exit":

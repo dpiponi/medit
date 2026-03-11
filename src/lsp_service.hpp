@@ -4,6 +4,7 @@
 #include "services.hpp"
 
 #include <atomic>
+#include <map>
 #include <set>
 #include <mutex>
 #include <optional>
@@ -23,6 +24,7 @@ class LspService : public EditorService {
     void start() override;
     void stop() override;
     void handle_editor_event(const EditorEvent &event) override;
+    void handle_request(const ServiceRequest &request) override;
     std::vector<ServiceEvent> poll() override;
     std::optional<int> poll_interval_ms() const override;
 
@@ -44,6 +46,7 @@ class LspService : public EditorService {
     std::vector<ServiceEvent> pending_events_;
     std::vector<EditorEvent> pending_editor_events_;
     std::set<std::string> open_documents_;
+    std::map<int, ServiceRequest> pending_requests_;
     std::string read_buffer_;
     std::string stderr_buffer_;
 
@@ -67,5 +70,6 @@ class LspService : public EditorService {
     void send_did_change(const EditorEvent &event);
     void send_did_save(const EditorEvent &event);
     void send_did_close(const EditorEvent &event);
+    void send_definition_request(const ServiceRequest &request);
     void handle_message(const std::string &payload);
 };

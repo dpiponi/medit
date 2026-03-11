@@ -12,6 +12,7 @@ enum class EditorCommandType {
     SetAnnotations,
     ClearAnnotations,
     MoveCursor,
+    OpenLocation,
     SetStatusMessage,
 };
 

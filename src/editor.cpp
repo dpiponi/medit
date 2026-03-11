@@ -846,6 +846,16 @@ void handle_grep_command(EditorState &state, const std::string &argument) {
     set_status(state, "Opened " + path);
 }
 
+void request_definition(EditorState &state) {
+    EditorCore &core = active_core(state);
+    ServiceRequest request;
+    request.type = ServiceRequestType::GoToDefinition;
+    request.document_uri = core.document_uri();
+    request.utf16_position = core.utf16_position_for_position(core.cursor());
+    state.runtime.dispatch_service_request(request);
+    set_status(state, "Definition requested");
+}
+
 bool reload_editor_configuration(EditorState &state, std::string &error_message) {
     try {
         EditorConfig new_config = load_editor_config();
@@ -2087,6 +2097,9 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             refresh_search_matches(state, false);
             navigate_search_match(state, false);
             break;
+        case EditorAction::GoToDefinition:
+            request_definition(state);
+            break;
         case EditorAction::NextDiagnostic:
             navigate_diagnostic(state, true);
             break;
@@ -2343,6 +2356,32 @@ void handle_service_events(EditorState &state) {
         EditorCommand command = *event.command;
         if (!command.document_uri && event.document_uri) {
             command.document_uri = event.document_uri;
+        }
+        if (command.type == EditorCommandType::OpenLocation) {
+            if (!command.document_uri || !command.position) {
+                continue;
+            }
+
+            EditorBuffer *buffer = state.session.find_buffer_by_uri(*command.document_uri);
+            if (!buffer) {
+                std::string path = file_path_from_uri(*command.document_uri);
+                if (path.empty()) {
+                    set_status(state, "Definition target unavailable");
+                    continue;
+                }
+                buffer = state.session.open_file(path, true);
+                if (!buffer) {
+                    set_status(state, "Could not open definition target");
+                    continue;
+                }
+                state.buffer_ui.try_emplace(buffer->id);
+            } else {
+                state.session.switch_to_id(buffer->id);
+            }
+
+            buffer->core.set_cursor(*command.position);
+            set_status(state, "Opened definition");
+            continue;
         }
         EditorCore *target = &active_core(state);
         if (command.document_uri) {

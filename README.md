@@ -168,6 +168,7 @@ colors = forest.json
 - In visual mode, `iw` extends the selection to include the inner word at the cursor
 - In visual mode, `aw` extends the selection to include the word plus adjacent spaces at the cursor
 - Search updates dynamically as you type and highlights all matches, with the current match highlighted separately
+- `g d` jump to the LSP definition of the symbol under the cursor, switching to an open buffer or opening the target file in a new buffer
 - `u` undo last edit
 - `r` redo last undone edit
 - `:w` write

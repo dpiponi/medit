@@ -7,6 +7,10 @@ std::optional<int> EditorService::poll_interval_ms() const {
     return std::nullopt;
 }
 
+void EditorService::handle_request(const ServiceRequest &request) {
+    (void)request;
+}
+
 void EditorRuntime::add_service(std::unique_ptr<EditorService> service) {
     if (!service) {
         return;
@@ -80,6 +84,12 @@ void EditorRuntime::dispatch_editor_events(EditorCore &core) {
 
     for (const EditorEvent &event : events) {
         dispatch_editor_event(event);
+    }
+}
+
+void EditorRuntime::dispatch_service_request(const ServiceRequest &request) {
+    for (const std::unique_ptr<EditorService> &service : services_) {
+        service->handle_request(request);
     }
 }
 

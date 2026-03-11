@@ -656,6 +656,13 @@ void test_keybinding_dispatch() {
         search_prev.action.has_value() && *search_prev.action == EditorAction::SearchPrevious,
         "b should map to previous search result");
 
+    KeyDispatch definition_first = dispatch_key_sequence(keybindings, "normal", pending, "g", false);
+    expect(definition_first.matched && definition_first.waiting_for_more, "g should wait for gd");
+    KeyDispatch definition_second = dispatch_key_sequence(keybindings, "normal", pending, "d", false);
+    expect(
+        definition_second.action.has_value() && *definition_second.action == EditorAction::GoToDefinition,
+        "gd should map to go to definition");
+
     KeyDispatch diag_next_first = dispatch_key_sequence(keybindings, "normal", pending, "]", false);
     expect(diag_next_first.matched && diag_next_first.waiting_for_more, "] should wait for ]d");
     KeyDispatch diag_next_second = dispatch_key_sequence(keybindings, "normal", pending, "d", false);
@@ -972,6 +979,28 @@ void test_lsp_service_roundtrip() {
     drive_runtime(30);
     expect(core.diagnostics().size() == 1, "lsp roundtrip should update diagnostics after change");
     expect(u32_to_utf8(core.diagnostics()[0].message) == "changed diagnostic", "lsp changed diagnostic message");
+
+    ServiceRequest request;
+    request.type = ServiceRequestType::GoToDefinition;
+    request.document_uri = core.document_uri();
+    request.utf16_position = core.utf16_position_for_position({0, 0});
+    runtime.dispatch_service_request(request);
+
+    bool saw_definition = false;
+    for (int i = 0; i < 30 && !saw_definition; ++i) {
+        runtime.poll_services();
+        for (const ServiceEvent &event : runtime.take_service_events()) {
+            if (!event.command || event.command->type != EditorCommandType::OpenLocation) {
+                continue;
+            }
+            expect(event.command->document_uri == core.document_uri(), "definition should target same document in fake server");
+            expect(event.command->position.has_value(), "definition should include a target position");
+            expect(event.command->position->row == 0 && event.command->position->column == 1, "definition should decode target position");
+            saw_definition = true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    expect(saw_definition, "lsp roundtrip should produce a definition location");
 
     runtime.stop_services();
     std::filesystem::remove_all(dir);
