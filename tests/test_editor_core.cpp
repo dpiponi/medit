@@ -664,6 +664,13 @@ void test_keybinding_dispatch() {
         definition_second.action.has_value() && *definition_second.action == EditorAction::GoToDefinition,
         "gd should map to go to definition");
 
+    KeyDispatch file_first = dispatch_key_sequence(keybindings, "normal", pending, "g", false);
+    expect(file_first.matched && file_first.waiting_for_more, "g should wait for gf");
+    KeyDispatch file_second = dispatch_key_sequence(keybindings, "normal", pending, "f", false);
+    expect(
+        file_second.action.has_value() && *file_second.action == EditorAction::GoToFileUnderCursor,
+        "gf should map to go to file under cursor");
+
     KeyDispatch jump_back_first = dispatch_key_sequence(keybindings, "normal", pending, "g", false);
     expect(jump_back_first.matched && jump_back_first.waiting_for_more, "g should wait for go");
     KeyDispatch jump_back_second = dispatch_key_sequence(keybindings, "normal", pending, "o", false);

@@ -56,6 +56,7 @@ enum class EditorAction {
     SearchNext,
     SearchPrevious,
     GoToDefinition,
+    GoToFileUnderCursor,
     JumpBack,
     JumpForward,
     NextDiagnostic,

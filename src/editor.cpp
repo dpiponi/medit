@@ -781,6 +781,47 @@ std::optional<std::string> run_picker_command(EditorState &state, const std::str
 #endif
 }
 
+std::vector<std::string> run_capture_command(const std::string &command, const std::filesystem::path &working_directory) {
+#if defined(__unix__) || defined(__APPLE__)
+    char temp_path[] = "/tmp/medit-capture-XXXXXX";
+    int fd = mkstemp(temp_path);
+    if (fd < 0) {
+        log_debug("capture temp file creation failed command=" + command);
+        return {};
+    }
+    close(fd);
+
+    std::string shell_command =
+        "sh -c " + shell_single_quote("cd " + shell_single_quote(working_directory.string()) + " && " + command) +
+        " > " + shell_single_quote(temp_path);
+    log_debug("external command kind=capture spawn command=" + shell_command);
+    int result = std::system(shell_command.c_str());
+    log_debug("external command kind=capture exit command=" + shell_command + " status=" + std::to_string(result));
+    if (result != 0) {
+        std::filesystem::remove(temp_path);
+        return {};
+    }
+
+    std::ifstream input(temp_path);
+    std::vector<std::string> lines;
+    std::string line;
+    while (std::getline(input, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        if (!line.empty()) {
+            lines.push_back(line);
+        }
+    }
+    std::filesystem::remove(temp_path);
+    return lines;
+#else
+    (void)command;
+    (void)working_directory;
+    return {};
+#endif
+}
+
 EditorBuffer *find_buffer_by_path(EditorState &state, const std::string &path) {
     for (EditorBuffer &buffer : state.session.buffers()) {
         if (buffer.core.file_path() && *buffer.core.file_path() == path) {
@@ -925,6 +966,154 @@ void request_definition(EditorState &state) {
     request.utf16_position = core.utf16_position_for_position(core.cursor());
     state.runtime.dispatch_service_request(request);
     set_status(state, "Definition requested");
+}
+
+std::optional<std::string> token_under_cursor(const EditorCore &core) {
+    Position cursor = core.cursor();
+    if (cursor.row >= core.line_count()) {
+        return std::nullopt;
+    }
+    const std::u32string &line = core.lines()[cursor.row];
+    if (line.empty()) {
+        return std::nullopt;
+    }
+
+    auto is_path_char = [](char32_t ch) {
+        return (ch >= U'a' && ch <= U'z') || (ch >= U'A' && ch <= U'Z') || (ch >= U'0' && ch <= U'9') ||
+            ch == U'_' || ch == U'-' || ch == U'.' || ch == U'/' || ch == U'\\';
+    };
+
+    std::size_t column = cursor.column;
+    if (column >= line.size()) {
+        if (column == 0) {
+            return std::nullopt;
+        }
+        column = line.size() - 1;
+    } else if (!is_path_char(line[column]) && column > 0 && is_path_char(line[column - 1])) {
+        --column;
+    }
+
+    if (!is_path_char(line[column])) {
+        return std::nullopt;
+    }
+
+    std::size_t start = column;
+    while (start > 0 && is_path_char(line[start - 1])) {
+        --start;
+    }
+    std::size_t end = column + 1;
+    while (end < line.size() && is_path_char(line[end])) {
+        ++end;
+    }
+
+    std::string token = u32_to_utf8(line.substr(start, end - start));
+    while (!token.empty() && (token.front() == '"' || token.front() == '\'')) {
+        token.erase(token.begin());
+    }
+    while (!token.empty() && (token.back() == '"' || token.back() == '\'' || token.back() == ',' || token.back() == ';')) {
+        token.pop_back();
+    }
+    if (token.empty()) {
+        return std::nullopt;
+    }
+    return token;
+}
+
+std::filesystem::path workspace_root_for_buffer(const EditorState &state, const EditorCore &core) {
+    if (const LspServerConfig *server = matching_lsp_server(state.config, core.file_path())) {
+        return infer_workspace_root(*server, core.file_path());
+    }
+    if (core.file_path()) {
+        return std::filesystem::path(*core.file_path()).parent_path();
+    }
+    return std::filesystem::current_path();
+}
+
+std::optional<std::filesystem::path> resolve_direct_file_reference(
+    const EditorState &state,
+    const EditorCore &core,
+    const std::string &token) {
+    std::filesystem::path candidate = token;
+    std::vector<std::filesystem::path> roots;
+    if (candidate.is_absolute()) {
+        if (std::filesystem::exists(candidate) && std::filesystem::is_regular_file(candidate)) {
+            return candidate.lexically_normal();
+        }
+        return std::nullopt;
+    }
+    if (core.file_path()) {
+        roots.push_back(std::filesystem::path(*core.file_path()).parent_path());
+    }
+    std::filesystem::path workspace_root = workspace_root_for_buffer(state, core);
+    if (!workspace_root.empty()) {
+        roots.push_back(workspace_root);
+    }
+    roots.push_back(std::filesystem::current_path());
+
+    for (const std::filesystem::path &root : roots) {
+        std::filesystem::path resolved = (root / candidate).lexically_normal();
+        if (std::filesystem::exists(resolved) && std::filesystem::is_regular_file(resolved)) {
+            return resolved;
+        }
+    }
+    return std::nullopt;
+}
+
+std::vector<std::filesystem::path> search_workspace_for_file(
+    const EditorState &state,
+    const std::filesystem::path &workspace_root,
+    const std::string &token) {
+    std::optional<std::string> finder = first_available_executable({"fdfind", "fd"});
+    if (!finder) {
+        return {};
+    }
+
+    std::filesystem::path token_path = token;
+    std::string pattern = token_path.has_parent_path() ? "*" + token : token_path.filename().string();
+    std::string command =
+        *finder + " -a -t f -g " + shell_single_quote(pattern) + " " + shell_single_quote(workspace_root.string()) + " 2>/dev/null";
+    log_debug("file-under-cursor search root=" + workspace_root.string() + " token=" + token + " pattern=" + pattern);
+    std::vector<std::string> lines = run_capture_command(command, std::filesystem::current_path());
+    std::vector<std::filesystem::path> matches;
+    for (const std::string &line : lines) {
+        std::filesystem::path path = line;
+        if (std::filesystem::exists(path) && std::filesystem::is_regular_file(path)) {
+            matches.push_back(path.lexically_normal());
+        }
+    }
+    std::sort(matches.begin(), matches.end());
+    matches.erase(std::unique(matches.begin(), matches.end()), matches.end());
+    return matches;
+}
+
+void open_file_under_cursor(EditorState &state) {
+    EditorCore &core = active_core(state);
+    std::optional<std::string> token = token_under_cursor(core);
+    if (!token) {
+        set_status(state, "No file reference under cursor");
+        return;
+    }
+
+    if (std::optional<std::filesystem::path> direct = resolve_direct_file_reference(state, core, *token)) {
+        handle_edit_command(state, direct->string());
+        return;
+    }
+
+    std::filesystem::path workspace_root = workspace_root_for_buffer(state, core);
+    std::vector<std::filesystem::path> matches = search_workspace_for_file(state, workspace_root, *token);
+    if (matches.empty()) {
+        if (!first_available_executable({"fdfind", "fd"})) {
+            set_status(state, "Missing executable: fdfind/fd");
+        } else {
+            set_status(state, "File not found: " + *token);
+        }
+        return;
+    }
+    if (matches.size() > 1) {
+        set_status(state, "Ambiguous file reference: " + *token);
+        return;
+    }
+    handle_edit_command(state, matches.front().string());
 }
 
 EditorState::JumpLocation current_jump_location(const EditorState &state) {
@@ -2252,6 +2441,9 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             break;
         case EditorAction::GoToDefinition:
             request_definition(state);
+            break;
+        case EditorAction::GoToFileUnderCursor:
+            open_file_under_cursor(state);
             break;
         case EditorAction::JumpBack:
             navigate_jump_history(state, state.jump_back_stack, state.jump_forward_stack, "No older jump", "Jumped back");

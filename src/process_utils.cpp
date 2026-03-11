@@ -10,8 +10,6 @@
 #include <unistd.h>
 #endif
 
-namespace {
-
 std::string trim(const std::string &value) {
     std::size_t start = 0;
     while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start]))) {
@@ -101,8 +99,6 @@ bool executable_exists(const std::string &executable) {
     return false;
 }
 
-}  // namespace
-
 std::optional<std::string> first_command_word(const std::string &command) {
     std::string trimmed = trim(command);
     if (trimmed.empty()) {
@@ -152,6 +148,15 @@ std::optional<std::string> missing_executable_in_command(const std::string &comm
         return std::nullopt;
     }
     return word;
+}
+
+std::optional<std::string> first_available_executable(const std::vector<std::string> &executables) {
+    for (const std::string &executable : executables) {
+        if (executable_exists(executable)) {
+            return executable;
+        }
+    }
+    return std::nullopt;
 }
 
 std::optional<std::string> missing_executable_in_pipeline(const std::string &pipeline) {
