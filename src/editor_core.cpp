@@ -403,6 +403,29 @@ const std::vector<Diagnostic> &EditorCore::document_diagnostics(const std::strin
     return found->second;
 }
 
+const std::vector<InlineAnnotation> &EditorCore::annotations() const {
+    return document_annotations(document_uri_);
+}
+
+const std::vector<InlineAnnotation> &EditorCore::document_annotations(const std::string &document_uri) const {
+    static const std::vector<InlineAnnotation> kEmptyAnnotations;
+    auto found = annotations_by_uri_.find(document_uri);
+    if (found == annotations_by_uri_.end()) {
+        return kEmptyAnnotations;
+    }
+    return found->second;
+}
+
+std::vector<InlineAnnotation> EditorCore::projected_annotations() const {
+    std::vector<InlineAnnotation> projected = annotations();
+    for (const Diagnostic &diagnostic : diagnostics()) {
+        AnnotationSeverity severity =
+            diagnostic.severity == DiagnosticSeverity::Error ? AnnotationSeverity::Error : AnnotationSeverity::Warning;
+        projected.push_back({diagnostic.range, severity, AnnotationKind::Diagnostic, diagnostic.source, diagnostic.message});
+    }
+    return projected;
+}
+
 bool EditorCore::has_selection() const {
     return selection_anchor_.has_value();
 }
@@ -588,6 +611,10 @@ void EditorCore::emit_cursor_moved(Position previous_cursor) {
 
 void EditorCore::emit_diagnostics_changed(const std::string &document_uri) {
     emit_event({EditorEventType::DiagnosticsChanged, document_uri, document_version_, cursor_, std::nullopt, U""});
+}
+
+void EditorCore::emit_annotations_changed(const std::string &document_uri) {
+    emit_event({EditorEventType::AnnotationsChanged, document_uri, document_version_, cursor_, std::nullopt, U""});
 }
 
 void EditorCore::set_cursor_internal(Position position, bool emit_cursor_event) {
@@ -815,6 +842,7 @@ void EditorCore::set_document_diagnostics(const std::string &document_uri, std::
     diagnostics_by_uri_[document_uri] = std::move(diagnostics);
     if (document_uri == document_uri_) {
         emit_diagnostics_changed(document_uri);
+        emit_annotations_changed(document_uri);
     }
 }
 
@@ -822,6 +850,29 @@ void EditorCore::clear_document_diagnostics(const std::string &document_uri) {
     diagnostics_by_uri_.erase(document_uri);
     if (document_uri == document_uri_) {
         emit_diagnostics_changed(document_uri);
+        emit_annotations_changed(document_uri);
+    }
+}
+
+void EditorCore::set_annotations(std::vector<InlineAnnotation> annotations) {
+    set_document_annotations(document_uri_, std::move(annotations));
+}
+
+void EditorCore::clear_annotations() {
+    clear_document_annotations(document_uri_);
+}
+
+void EditorCore::set_document_annotations(const std::string &document_uri, std::vector<InlineAnnotation> annotations) {
+    annotations_by_uri_[document_uri] = std::move(annotations);
+    if (document_uri == document_uri_) {
+        emit_annotations_changed(document_uri);
+    }
+}
+
+void EditorCore::clear_document_annotations(const std::string &document_uri) {
+    annotations_by_uri_.erase(document_uri);
+    if (document_uri == document_uri_) {
+        emit_annotations_changed(document_uri);
     }
 }
 

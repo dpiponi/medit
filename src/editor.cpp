@@ -4,6 +4,7 @@
 #include "services.hpp"
 #include "theme.hpp"
 
+#include <algorithm>
 #include <clocale>
 #include <csignal>
 #include <cstdint>
@@ -57,13 +58,29 @@ struct EditorState {
     std::string compiled_search_pattern_utf8;
     std::unique_ptr<std::regex> compiled_search_regex;
     std::size_t search_matches_version = 0;
-    bool diagnostics_panel_visible = false;
     std::optional<std::size_t> selected_diagnostic_index;
 };
 
 struct DiagnosticEntryView {
     std::size_t index = 0;
     Diagnostic diagnostic;
+};
+
+struct AnnotationEntryView {
+    std::optional<std::size_t> diagnostic_index;
+    InlineAnnotation annotation;
+};
+
+enum class VisualRowKind {
+    SourceLine,
+    Annotation,
+};
+
+struct VisualRow {
+    VisualRowKind kind = VisualRowKind::SourceLine;
+    std::size_t buffer_row = 0;
+    std::size_t wrap_offset = 0;
+    std::optional<AnnotationEntryView> annotation;
 };
 
 std::wstring u32_to_wstring(const std::u32string &text) {
@@ -275,19 +292,6 @@ std::vector<DiagnosticEntryView> sorted_diagnostics(const EditorState &state) {
     return diagnostics;
 }
 
-std::size_t diagnostics_panel_height(const EditorState &state, int screen_rows) {
-    if (!state.diagnostics_panel_visible || state.core.diagnostics().empty()) {
-        return 0;
-    }
-    int available = screen_rows - 2;
-    if (available <= 0) {
-        return 0;
-    }
-    std::size_t desired = state.core.diagnostics().size();
-    std::size_t max_panel = available > 6 ? 6U : static_cast<std::size_t>(available);
-    return desired < max_panel ? desired : max_panel;
-}
-
 void normalize_selected_diagnostic(EditorState &state) {
     if (state.core.diagnostics().empty()) {
         state.selected_diagnostic_index.reset();
@@ -304,27 +308,39 @@ void focus_diagnostic(EditorState &state, std::size_t diagnostic_index) {
         return;
     }
     state.selected_diagnostic_index = diagnostic_index;
-    state.diagnostics_panel_visible = true;
     Range range = normalized_range(diagnostics[diagnostic_index].range);
     state.core.set_cursor(range.start);
 }
 
-void toggle_diagnostics_panel(EditorState &state) {
-    if (state.core.diagnostics().empty()) {
-        state.diagnostics_panel_visible = false;
-        state.selected_diagnostic_index.reset();
+void show_diagnostics_summary(EditorState &state) {
+    std::size_t errors = 0;
+    std::size_t warnings = 0;
+    for (const Diagnostic &diagnostic : state.core.diagnostics()) {
+        if (diagnostic.severity == DiagnosticSeverity::Error) {
+            ++errors;
+        } else {
+            ++warnings;
+        }
+    }
+    if (errors == 0 && warnings == 0) {
         set_status(state, "No diagnostics");
         return;
     }
-    state.diagnostics_panel_visible = !state.diagnostics_panel_visible;
-    normalize_selected_diagnostic(state);
-    set_status(state, state.diagnostics_panel_visible ? "Diagnostics panel" : mode_name(state.mode));
+    std::ostringstream message;
+    message << errors << " error";
+    if (errors != 1) {
+        message << "s";
+    }
+    message << ", " << warnings << " warning";
+    if (warnings != 1) {
+        message << "s";
+    }
+    set_status(state, message.str());
 }
 
 void navigate_diagnostic(EditorState &state, bool forward) {
     std::vector<DiagnosticEntryView> diagnostics = sorted_diagnostics(state);
     if (diagnostics.empty()) {
-        state.diagnostics_panel_visible = false;
         state.selected_diagnostic_index.reset();
         set_status(state, "No diagnostics");
         return;
@@ -368,6 +384,104 @@ void navigate_diagnostic(EditorState &state, bool forward) {
         state,
         std::string(diagnostic.severity == DiagnosticSeverity::Error ? "Error: " : "Warning: ") +
             u32_to_utf8(diagnostic.message));
+}
+
+std::vector<AnnotationEntryView> sorted_annotations(const EditorState &state) {
+    std::vector<AnnotationEntryView> annotations;
+    std::vector<InlineAnnotation> projected = state.core.projected_annotations();
+    annotations.reserve(projected.size());
+
+    std::vector<DiagnosticEntryView> diagnostics = sorted_diagnostics(state);
+    for (const InlineAnnotation &annotation : projected) {
+        std::optional<std::size_t> diagnostic_index;
+        if (annotation.kind == AnnotationKind::Diagnostic) {
+            for (const DiagnosticEntryView &diagnostic : diagnostics) {
+                if (positions_equal(normalized_range(diagnostic.diagnostic.range).start, normalized_range(annotation.range).start) &&
+                    positions_equal(normalized_range(diagnostic.diagnostic.range).end, normalized_range(annotation.range).end) &&
+                    diagnostic.diagnostic.source == annotation.source &&
+                    diagnostic.diagnostic.message == annotation.text) {
+                    diagnostic_index = diagnostic.index;
+                    break;
+                }
+            }
+        }
+        annotations.push_back({diagnostic_index, annotation});
+    }
+
+    std::sort(annotations.begin(), annotations.end(), [](const AnnotationEntryView &left, const AnnotationEntryView &right) {
+        Range left_range = normalized_range(left.annotation.range);
+        Range right_range = normalized_range(right.annotation.range);
+        std::size_t left_anchor = left_range.end.row;
+        std::size_t right_anchor = right_range.end.row;
+        if (left_anchor != right_anchor) {
+            return left_anchor < right_anchor;
+        }
+        if (positions_equal(left_range.start, right_range.start)) {
+            return position_less_than(left_range.end, right_range.end);
+        }
+        return position_less_than(left_range.start, right_range.start);
+    });
+    return annotations;
+}
+
+std::vector<std::u32string> wrap_annotation_text(const std::u32string &text, int max_cols) {
+    if (max_cols <= 1) {
+        return {text};
+    }
+
+    std::vector<std::u32string> wrapped;
+    std::u32string current_line;
+    int current_width = 0;
+    for (char32_t codepoint : text) {
+        if (codepoint == U'\n') {
+            wrapped.push_back(current_line);
+            current_line.clear();
+            current_width = 0;
+            continue;
+        }
+        int width = codepoint_width(codepoint);
+        if (!current_line.empty() && current_width + width > max_cols) {
+            wrapped.push_back(current_line);
+            current_line.clear();
+            current_width = 0;
+        }
+        current_line.push_back(codepoint);
+        current_width += width;
+    }
+    wrapped.push_back(current_line);
+    return wrapped;
+}
+
+std::vector<VisualRow> build_visual_rows(const EditorState &state, int buffer_cols) {
+    std::vector<VisualRow> rows;
+    std::vector<AnnotationEntryView> annotations = sorted_annotations(state);
+    std::size_t annotation_index = 0;
+
+    for (std::size_t row = 0; row < state.core.line_count(); ++row) {
+        rows.push_back({VisualRowKind::SourceLine, row, 0, std::nullopt});
+        while (annotation_index < annotations.size()) {
+            Range range = normalized_range(annotations[annotation_index].annotation.range);
+            if (range.end.row != row) {
+                break;
+            }
+            std::vector<std::u32string> wrapped = wrap_annotation_text(annotations[annotation_index].annotation.text, buffer_cols - 2);
+            for (std::size_t wrap_index = 0; wrap_index < wrapped.size(); ++wrap_index) {
+                rows.push_back({VisualRowKind::Annotation, row, wrap_index, annotations[annotation_index]});
+            }
+            ++annotation_index;
+        }
+    }
+
+    return rows;
+}
+
+std::size_t visual_row_for_buffer_row(const std::vector<VisualRow> &rows, std::size_t buffer_row) {
+    for (std::size_t index = 0; index < rows.size(); ++index) {
+        if (rows[index].kind == VisualRowKind::SourceLine && rows[index].buffer_row == buffer_row) {
+            return index;
+        }
+    }
+    return 0;
 }
 
 void handle_quit_command(EditorState &state, bool force) {
@@ -421,7 +535,7 @@ void execute_command(EditorState &state) {
     } else if (verb == "e") {
         handle_edit_command(state, argument);
     } else if (verb == "diagnostics") {
-        toggle_diagnostics_panel(state);
+        show_diagnostics_summary(state);
     } else {
         set_status(state, "Unknown command: " + verb);
     }
@@ -559,19 +673,23 @@ void ensure_horizontal_visibility(EditorState &state, int screen_cols) {
     }
 }
 
-void ensure_vertical_visibility(EditorState &state, int screen_rows) {
+void ensure_vertical_visibility(EditorState &state, int screen_rows, int buffer_cols) {
     std::size_t usable_rows = screen_rows > 0 ? static_cast<std::size_t>(screen_rows) : 1;
-    Position cursor = state.core.cursor();
-    if (cursor.row < state.row_offset) {
-        state.row_offset = cursor.row;
+    std::vector<VisualRow> visual_rows = build_visual_rows(state, buffer_cols);
+    std::size_t cursor_visual_row = visual_row_for_buffer_row(visual_rows, state.core.cursor().row);
+    if (cursor_visual_row < state.row_offset) {
+        state.row_offset = cursor_visual_row;
     }
-    while (cursor.row >= state.row_offset + usable_rows) {
+    while (cursor_visual_row >= state.row_offset + usable_rows) {
         ++state.row_offset;
+    }
+    if (state.row_offset > 0 && state.row_offset >= visual_rows.size()) {
+        state.row_offset = visual_rows.empty() ? 0 : visual_rows.size() - 1;
     }
 }
 
 void ensure_cursor_visible(EditorState &state, int buffer_rows, int buffer_cols) {
-    ensure_vertical_visibility(state, buffer_rows);
+    ensure_vertical_visibility(state, buffer_rows, buffer_cols);
     ensure_horizontal_visibility(state, buffer_cols);
 }
 
@@ -738,90 +856,73 @@ void draw_line_number(const Theme &theme, int screen_row, std::size_t line_numbe
     attroff(curses_attributes(style, role));
 }
 
+StyleRole annotation_role(const InlineAnnotation &annotation) {
+    switch (annotation.severity) {
+        case AnnotationSeverity::Error:
+            return StyleRole::DiagnosticError;
+        case AnnotationSeverity::Warning:
+            return StyleRole::DiagnosticWarning;
+        case AnnotationSeverity::Info:
+            return StyleRole::MessageBar;
+    }
+    return StyleRole::MessageBar;
+}
+
+std::u32string annotation_prefix(const InlineAnnotation &annotation) {
+    std::ostringstream prefix;
+    prefix << (annotation.severity == AnnotationSeverity::Error ? "E" :
+               annotation.severity == AnnotationSeverity::Warning ? "W" : "I");
+    Range range = normalized_range(annotation.range);
+    prefix << " " << (range.start.row + 1) << ":" << (range.start.column + 1);
+    if (!annotation.source.empty()) {
+        prefix << " " << annotation.source;
+    }
+    prefix << " ";
+    return utf8_to_u32(prefix.str());
+}
+
 void draw_buffer_rows(const EditorState &state, int buffer_rows, int buffer_cols, int line_number_width) {
+    std::vector<VisualRow> visual_rows = build_visual_rows(state, buffer_cols);
     for (int screen_row = 0; screen_row < buffer_rows; ++screen_row) {
-        std::size_t line_index = state.row_offset + static_cast<std::size_t>(screen_row);
+        std::size_t visual_row_index = state.row_offset + static_cast<std::size_t>(screen_row);
         move(screen_row, 0);
         clrtoeol();
-        if (line_index >= state.core.line_count()) {
+        if (visual_row_index >= visual_rows.size()) {
             mvaddch(screen_row, 0, '~');
             continue;
         }
-        StyleRole line_number_role =
-            state.core.cursor().row == line_index ? StyleRole::CursorLineNumber : StyleRole::LineNumber;
-        draw_line_number(state.theme, screen_row, line_index + 1, line_number_width, line_number_role);
-        std::vector<HighlightSpan> spans = collect_line_highlights(state, line_index);
-        draw_styled_line(
-            state.theme,
-            screen_row,
-            line_number_width + 1,
-            state.core.lines()[line_index],
-            spans,
-            line_index,
-            state.col_offset,
-            buffer_cols);
-    }
-}
 
-std::string diagnostic_prefix(const Diagnostic &diagnostic) {
-    std::ostringstream prefix;
-    prefix << (diagnostic.severity == DiagnosticSeverity::Error ? "E" : "W");
-    Range range = normalized_range(diagnostic.range);
-    prefix << " " << (range.start.row + 1) << ":" << (range.start.column + 1);
-    if (!diagnostic.source.empty()) {
-        prefix << " " << diagnostic.source;
-    }
-    prefix << " ";
-    return prefix.str();
-}
-
-void draw_diagnostics_panel(const EditorState &state, int screen_rows, int screen_cols) {
-    std::size_t panel_rows = diagnostics_panel_height(state, screen_rows);
-    if (panel_rows == 0) {
-        return;
-    }
-
-    std::vector<DiagnosticEntryView> diagnostics = sorted_diagnostics(state);
-    if (diagnostics.empty()) {
-        return;
-    }
-
-    std::size_t selected_sorted_index = 0;
-    if (state.selected_diagnostic_index) {
-        for (std::size_t index = 0; index < diagnostics.size(); ++index) {
-            if (diagnostics[index].index == *state.selected_diagnostic_index) {
-                selected_sorted_index = index;
-                break;
-            }
-        }
-    }
-
-    std::size_t first_index = 0;
-    if (selected_sorted_index >= panel_rows) {
-        first_index = selected_sorted_index - panel_rows + 1;
-    }
-
-    int first_screen_row = screen_rows - 2 - static_cast<int>(panel_rows);
-    for (std::size_t offset = 0; offset < panel_rows; ++offset) {
-        int screen_row = first_screen_row + static_cast<int>(offset);
-        move(screen_row, 0);
-        clrtoeol();
-        std::size_t diagnostic_index = first_index + offset;
-        if (diagnostic_index >= diagnostics.size()) {
+        const VisualRow &visual_row = visual_rows[visual_row_index];
+        if (visual_row.kind == VisualRowKind::SourceLine) {
+            StyleRole line_number_role =
+                state.core.cursor().row == visual_row.buffer_row ? StyleRole::CursorLineNumber : StyleRole::LineNumber;
+            draw_line_number(state.theme, screen_row, visual_row.buffer_row + 1, line_number_width, line_number_role);
+            std::vector<HighlightSpan> spans = collect_line_highlights(state, visual_row.buffer_row);
+            draw_styled_line(
+                state.theme,
+                screen_row,
+                line_number_width + 1,
+                state.core.lines()[visual_row.buffer_row],
+                spans,
+                visual_row.buffer_row,
+                state.col_offset,
+                buffer_cols);
             continue;
         }
 
-        const Diagnostic &diagnostic = diagnostics[diagnostic_index].diagnostic;
-        std::string text = diagnostic_prefix(diagnostic) + u32_to_utf8(diagnostic.message);
-        StyleRole role;
-        if (state.selected_diagnostic_index && diagnostics[diagnostic_index].index == *state.selected_diagnostic_index) {
-            role = StyleRole::StatusBar;
-        } else {
-            role = diagnostic.severity == DiagnosticSeverity::Error ? StyleRole::DiagnosticError : StyleRole::DiagnosticWarning;
-        }
+        const AnnotationEntryView &annotation = *visual_row.annotation;
+        StyleRole role =
+            annotation.diagnostic_index && state.selected_diagnostic_index &&
+                    *annotation.diagnostic_index == *state.selected_diagnostic_index
+                ? StyleRole::StatusBar
+                : annotation_role(annotation.annotation);
         TextStyle style = theme_style(state.theme, role);
         attron(curses_attributes(style, role));
-        mvaddnstr(screen_row, 0, text.c_str(), screen_cols);
+        mvprintw(screen_row, 0, "%*s ", line_number_width, ">");
+        std::vector<std::u32string> wrapped =
+            wrap_annotation_text(annotation_prefix(annotation.annotation) + annotation.annotation.text, buffer_cols - 2);
+        std::u32string text = visual_row.wrap_offset < wrapped.size() ? wrapped[visual_row.wrap_offset] : U"";
+        mvaddnwstr(screen_row, line_number_width + 1, u32_to_wstring(text).c_str(), buffer_cols);
         attroff(curses_attributes(style, role));
     }
 }
@@ -884,10 +985,17 @@ int line_number_width(const EditorState &state) {
 }
 
 std::pair<int, int> cursor_screen_position(const EditorState &state, int line_number_cols) {
+    int screen_rows = 0;
+    int screen_cols = 0;
+    getmaxyx(stdscr, screen_rows, screen_cols);
+    (void)screen_rows;
+    int buffer_cols = screen_cols - line_number_cols - 1;
+    std::vector<VisualRow> visual_rows = build_visual_rows(state, buffer_cols);
+    std::size_t visual_row_index = visual_row_for_buffer_row(visual_rows, state.core.cursor().row);
     Position cursor = state.core.cursor();
     const std::u32string &line = state.core.lines()[cursor.row];
     std::size_t width = display_width_until(line, cursor.column);
-    int screen_row = static_cast<int>(cursor.row - state.row_offset);
+    int screen_row = static_cast<int>(visual_row_index - state.row_offset);
     int screen_col = static_cast<int>(width - state.col_offset) + line_number_cols + 1;
     return {screen_row, screen_col};
 }
@@ -908,19 +1016,22 @@ std::optional<Position> buffer_position_from_screen_point(const EditorState &sta
     int total_rows = 0;
     int total_cols = 0;
     getmaxyx(stdscr, total_rows, total_cols);
-    (void)total_cols;
-
     int buffer_rows = total_rows - 2;
     if (screen_row < 0 || screen_row >= buffer_rows) {
         return std::nullopt;
     }
 
-    std::size_t row = state.row_offset + static_cast<std::size_t>(screen_row);
-    if (row >= state.core.line_count()) {
+    int line_number_cols = line_number_width(state);
+    int buffer_cols = total_cols - line_number_cols - 1;
+    std::vector<VisualRow> visual_rows = build_visual_rows(state, buffer_cols);
+    std::size_t visual_row_index = state.row_offset + static_cast<std::size_t>(screen_row);
+    if (visual_row_index >= visual_rows.size()) {
         return std::nullopt;
     }
+    const VisualRow &visual_row = visual_rows[visual_row_index];
+    std::size_t row = visual_row.buffer_row;
 
-    int gutter_start = line_number_width(state) + 1;
+    int gutter_start = line_number_cols + 1;
     std::size_t visual_column = state.col_offset;
     if (screen_col > gutter_start) {
         visual_column += static_cast<std::size_t>(screen_col - gutter_start);
@@ -935,14 +1046,12 @@ void draw_editor(const EditorState &state) {
     int screen_cols = 0;
     getmaxyx(stdscr, screen_rows, screen_cols);
 
-    int panel_rows = static_cast<int>(diagnostics_panel_height(state, screen_rows));
-    int buffer_rows = screen_rows - 2 - panel_rows;
+    int buffer_rows = screen_rows - 2;
     int number_cols = line_number_width(state);
     int buffer_cols = screen_cols - number_cols - 1;
 
     erase();
     draw_buffer_rows(state, buffer_rows, buffer_cols, number_cols);
-    draw_diagnostics_panel(state, screen_rows, screen_cols);
     draw_status_bar(state, screen_rows, screen_cols);
     draw_message_bar(state, screen_rows, screen_cols);
 
@@ -1292,7 +1401,7 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             navigate_diagnostic(state, false);
             break;
         case EditorAction::ToggleDiagnosticsPanel:
-            toggle_diagnostics_panel(state);
+            show_diagnostics_summary(state);
             break;
         case EditorAction::DeleteSelection:
             {

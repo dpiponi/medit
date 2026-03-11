@@ -461,17 +461,38 @@ void test_diagnostics_storage_and_events() {
 
     core.set_diagnostics({error, warning});
     expect(core.diagnostics().size() == 2, "set_diagnostics should store current document diagnostics");
+    expect(core.projected_annotations().size() == 2, "diagnostics should project to inline annotations");
 
     std::vector<EditorEvent> events = core.take_events();
-    expect(events.size() == 1, "setting diagnostics should emit one event");
+    expect(events.size() == 2, "setting diagnostics should emit diagnostics and annotations events");
     expect_event_type(events[0], EditorEventType::DiagnosticsChanged, "diagnostics change should emit diagnostics event");
+    expect_event_type(events[1], EditorEventType::AnnotationsChanged, "diagnostics change should emit annotations event");
     expect(events[0].document_uri == core.document_uri(), "diagnostics event should use current document uri");
 
     core.clear_diagnostics();
     expect(core.diagnostics().empty(), "clear_diagnostics should remove current diagnostics");
     events = core.take_events();
-    expect(events.size() == 1, "clearing diagnostics should emit one event");
+    expect(events.size() == 2, "clearing diagnostics should emit diagnostics and annotations events");
     expect_event_type(events[0], EditorEventType::DiagnosticsChanged, "clearing diagnostics emits diagnostics event");
+    expect_event_type(events[1], EditorEventType::AnnotationsChanged, "clearing diagnostics emits annotations event");
+}
+
+void test_annotations_storage_and_events() {
+    EditorCore core;
+    InlineAnnotation note{{{0, 0}, {0, 1}}, AnnotationSeverity::Info, AnnotationKind::Note, "note", utf8_to_u32("hello\nworld")};
+    core.set_annotations({note});
+    expect(core.annotations().size() == 1, "set_annotations should store current document annotations");
+    expect(core.projected_annotations().size() == 1, "projected annotations should include explicit annotations");
+
+    std::vector<EditorEvent> events = core.take_events();
+    expect(events.size() == 1, "setting annotations should emit one event");
+    expect_event_type(events[0], EditorEventType::AnnotationsChanged, "setting annotations emits annotations changed");
+
+    core.clear_annotations();
+    expect(core.annotations().empty(), "clear_annotations should remove current document annotations");
+    events = core.take_events();
+    expect(events.size() == 1, "clearing annotations should emit one event");
+    expect_event_type(events[0], EditorEventType::AnnotationsChanged, "clearing annotations emits annotations changed");
 }
 
 void test_diagnostics_follow_document_switches() {
@@ -784,6 +805,7 @@ int main() {
         test_open_save_and_save_as_events();
         test_unicode_position_conversions();
         test_diagnostics_storage_and_events();
+        test_annotations_storage_and_events();
         test_diagnostics_follow_document_switches();
         test_keybinding_dispatch();
         test_config_file_selects_keybindings_and_colors();

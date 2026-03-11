@@ -84,7 +84,8 @@ colors = forest.json
 - `n` jump to the next search match
 - `b` jump to the previous search match
 - `]d`, `[d` jump to the next and previous diagnostic
-- `gx` toggle the diagnostics panel
+- Inline diagnostic annotations render below relevant code and are skipped by normal cursoring
+- `gx` show a diagnostics summary
 - `PageUp`, `PageDown` move by a screen
 - `Ctrl-U`, `Ctrl-D` move by a half screen
 - `Ctrl-Z` suspend to the shell and resume with `fg` on platforms with job control support
@@ -111,4 +112,4 @@ colors = forest.json
 - `:q!` force quit
 - `:wq` or `:x` write and quit
 - `:e filename` open another file
-- `:diagnostics` toggle the diagnostics panel
+- `:diagnostics` show a diagnostics summary
