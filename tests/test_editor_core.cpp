@@ -670,6 +670,7 @@ void test_config_file_selects_keybindings_and_colors() {
         rc << "colors = amber.json\n";
         rc << "lsp_command = clangd --background-index\n";
         rc << "lsp_language_id = cpp\n";
+        rc << "right_justify_diagnostics = true\n";
     }
     {
         std::ofstream keys(medit_dir + "/custom-keys.json");
@@ -711,6 +712,7 @@ void test_config_file_selects_keybindings_and_colors() {
     expect(config.lsp_command.has_value(), "config should parse lsp command");
     expect(*config.lsp_command == "clangd --background-index", "config should preserve full lsp command");
     expect(config.lsp_language_id.has_value() && *config.lsp_language_id == "cpp", "config should parse lsp language id");
+    expect(config.right_justify_diagnostics, "config should parse right-justify diagnostics");
 
     KeyBindings keybindings = load_keybindings(config);
     std::vector<std::string> pending;

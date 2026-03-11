@@ -23,6 +23,16 @@ std::string trim(const std::string &value) {
     return value.substr(start, end - start);
 }
 
+bool parse_bool_value(const std::string &value) {
+    if (value == "true") {
+        return true;
+    }
+    if (value == "false") {
+        return false;
+    }
+    throw std::runtime_error("invalid boolean value: " + value);
+}
+
 std::optional<std::filesystem::path> first_existing_meditrc_path() {
     std::filesystem::path local = std::filesystem::current_path() / ".config" / "meditrc";
     if (std::filesystem::exists(local)) {
@@ -115,6 +125,8 @@ EditorConfig load_editor_config_from_path(const std::filesystem::path &path) {
             config.lsp_command = value;
         } else if (key == "lsp_language_id") {
             config.lsp_language_id = value;
+        } else if (key == "right_justify_diagnostics") {
+            config.right_justify_diagnostics = parse_bool_value(value);
         } else {
             throw std::runtime_error("unknown config key: " + key);
         }

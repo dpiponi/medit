@@ -41,6 +41,7 @@ enum class PendingMotion {
 struct EditorState {
     EditorCore core;
     EditorRuntime runtime;
+    EditorConfig config;
     KeyBindings keybindings;
     Theme theme = load_embedded_theme();
     std::size_t row_offset = 0;
@@ -661,6 +662,10 @@ std::size_t display_width_until(const std::u32string &line, std::size_t limit) {
     return width;
 }
 
+std::size_t display_width(const std::u32string &line) {
+    return display_width_until(line, line.size());
+}
+
 void ensure_horizontal_visibility(EditorState &state, int screen_cols) {
     Position cursor = state.core.cursor();
     const std::u32string &line = state.core.lines()[cursor.row];
@@ -924,7 +929,12 @@ void draw_buffer_rows(const EditorState &state, int buffer_rows, int buffer_cols
         std::vector<std::u32string> wrapped =
             wrap_annotation_text(annotation_prefix(annotation.annotation) + annotation.annotation.text, buffer_cols - 2);
         std::u32string text = visual_row.wrap_offset < wrapped.size() ? wrapped[visual_row.wrap_offset] : U"";
-        mvaddnwstr(screen_row, line_number_width + 1, u32_to_wstring(text).c_str(), buffer_cols);
+        int annotation_col = line_number_width + 1;
+        if (state.config.right_justify_diagnostics && annotation.annotation.kind == AnnotationKind::Diagnostic) {
+            int rendered_width = static_cast<int>(display_width(text));
+            annotation_col += std::max(0, buffer_cols - rendered_width);
+        }
+        mvaddnwstr(screen_row, annotation_col, u32_to_wstring(text).c_str(), buffer_cols);
         attroff(curses_attributes(style, role));
     }
 }
@@ -1590,16 +1600,15 @@ void run_editor(EditorState &state) {
 int main(int argc, char **argv) {
     initialize_locale();
     EditorState state;
-    EditorConfig config;
     try {
-        config = load_editor_config();
-        state.keybindings = load_keybindings(config);
+        state.config = load_editor_config();
+        state.keybindings = load_keybindings(state.config);
     } catch (const std::exception &error) {
         state.keybindings = load_embedded_keybindings();
         set_status(state, std::string("Keybindings config error: ") + error.what());
     }
     try {
-        state.theme = load_theme(config);
+        state.theme = load_theme(state.config);
     } catch (const std::exception &error) {
         state.theme = load_embedded_theme();
         set_status(state, std::string("Theme config error: ") + error.what());
@@ -1613,15 +1622,15 @@ int main(int argc, char **argv) {
         } else {
             set_status(state, "Could not open file");
         }
-    } else if (!config.source_path.empty()) {
-        set_status(state, "Config: " + config.source_path);
+    } else if (!state.config.source_path.empty()) {
+        set_status(state, "Config: " + state.config.source_path);
     } else if (!state.keybindings.source_path.empty()) {
         set_status(state, "Keybindings: " + state.keybindings.source_path);
     }
 
     setup_terminal(state.theme);
-    if (config.lsp_command && !config.lsp_command->empty()) {
-        state.runtime.add_service(std::make_unique<LspService>(config));
+    if (state.config.lsp_command && !state.config.lsp_command->empty()) {
+        state.runtime.add_service(std::make_unique<LspService>(state.config));
     }
     state.runtime.start_services();
     run_editor(state);

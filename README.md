@@ -50,7 +50,10 @@ It can also configure one LSP server command and language id, for example:
 ```ini
 lsp_command = clangd --background-index
 lsp_language_id = cpp
+right_justify_diagnostics = true
 ```
+
+`right_justify_diagnostics = true` makes inline diagnostic annotations render against the right edge of the text area instead of starting from the left.
 
 The checked-in local config is:
 
