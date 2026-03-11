@@ -1,9 +1,14 @@
 CXX := c++
 CXXFLAGS := -std=c++17 -Wall -Wextra -pedantic
-NCURSESW_CFLAGS := $(shell pkg-config --cflags ncursesw 2>/dev/null)
-NCURSESW_LIBS := $(shell pkg-config --libs ncursesw 2>/dev/null)
-CPPFLAGS := -Isrc $(NCURSESW_CFLAGS)
-LDFLAGS := $(if $(strip $(NCURSESW_LIBS)),$(NCURSESW_LIBS),-lncursesw)
+UNAME_S := $(shell uname -s)
+NCURSES_PKG := $(shell if pkg-config --exists ncursesw 2>/dev/null; then echo ncursesw; elif pkg-config --exists ncurses 2>/dev/null; then echo ncurses; fi)
+NCURSES_CFLAGS := $(if $(NCURSES_PKG),$(shell pkg-config --cflags $(NCURSES_PKG) 2>/dev/null))
+NCURSES_LIBS := $(if $(NCURSES_PKG),$(shell pkg-config --libs $(NCURSES_PKG) 2>/dev/null))
+BREW_NCURSES_PREFIX := $(shell if command -v brew >/dev/null 2>&1; then brew --prefix ncurses 2>/dev/null; fi)
+BREW_NCURSES_CFLAGS := $(if $(BREW_NCURSES_PREFIX),-I$(BREW_NCURSES_PREFIX)/include)
+BREW_NCURSES_LIBS := $(if $(BREW_NCURSES_PREFIX),-L$(BREW_NCURSES_PREFIX)/lib -lncursesw)
+CPPFLAGS := -Isrc $(if $(strip $(NCURSES_CFLAGS)),$(NCURSES_CFLAGS),$(if $(filter Darwin,$(UNAME_S)),$(BREW_NCURSES_CFLAGS)))
+LDFLAGS := $(if $(strip $(NCURSES_LIBS)),$(NCURSES_LIBS),$(if $(filter Darwin,$(UNAME_S)),$(if $(BREW_NCURSES_PREFIX),$(BREW_NCURSES_LIBS),-lncursesw),-lncursesw))
 SRC_DIR := src
 TEST_DIR := tests
 
