@@ -15,13 +15,13 @@ struct LspServerConfig {
     std::string name;
     std::string command;
     std::string language_id;
-    std::vector<std::string> extensions;
+    std::vector<std::string> patterns;
     WorkspaceConfig workspace;
 };
 
 struct SyntaxLanguageConfig {
     std::string name;
-    std::vector<std::string> extensions;
+    std::vector<std::string> patterns;
     std::filesystem::path grammar_path;
     std::string symbol_name;
     std::filesystem::path highlights_path;

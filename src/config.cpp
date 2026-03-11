@@ -73,6 +73,25 @@ const JsonValue &required_object_member(const JsonValue &object, const char *key
     return found->second;
 }
 
+const JsonValue &required_patterns_member(const JsonValue &object, const char *config_kind) {
+    auto patterns = object.object_value.find("patterns");
+    if (patterns != object.object_value.end()) {
+        return patterns->second;
+    }
+    auto extensions = object.object_value.find("extensions");
+    if (extensions != object.object_value.end()) {
+        return extensions->second;
+    }
+    throw std::runtime_error(std::string("missing ") + config_kind + " config field: patterns");
+}
+
+std::string pattern_from_legacy_extension(const std::string &extension) {
+    if (extension == "*") {
+        return "*";
+    }
+    return "*" + normalize_extension(extension);
+}
+
 LspServerConfig::WorkspaceConfig parse_workspace_config(const JsonValue &value) {
     if (value.type != JsonValue::Type::Object) {
         throw std::runtime_error("lsp workspace config must be an object");
@@ -123,7 +142,7 @@ std::vector<LspServerConfig> load_lsp_servers_from_path(const std::filesystem::p
     }
 
     std::vector<LspServerConfig> parsed_servers;
-    std::map<std::string, std::string> extension_owners;
+    std::map<std::string, std::string> pattern_owners;
     for (const JsonValue &server_value : servers->second.array_value) {
         if (server_value.type != JsonValue::Type::Object) {
             throw std::runtime_error("lsp server entries must be objects");
@@ -132,9 +151,9 @@ std::vector<LspServerConfig> load_lsp_servers_from_path(const std::filesystem::p
         const JsonValue &name = required_object_member(server_value, "name");
         const JsonValue &command = required_object_member(server_value, "command");
         const JsonValue &language_id = required_object_member(server_value, "language_id");
-        const JsonValue &extensions = required_object_member(server_value, "extensions");
+        const JsonValue &patterns = required_patterns_member(server_value, "lsp server");
         if (name.type != JsonValue::Type::String || command.type != JsonValue::Type::String ||
-            language_id.type != JsonValue::Type::String || extensions.type != JsonValue::Type::Array) {
+            language_id.type != JsonValue::Type::String || patterns.type != JsonValue::Type::Array) {
             throw std::runtime_error("invalid lsp server field types");
         }
 
@@ -142,20 +161,23 @@ std::vector<LspServerConfig> load_lsp_servers_from_path(const std::filesystem::p
         server.name = name.string_value;
         server.command = command.string_value;
         server.language_id = language_id.string_value;
-        for (const JsonValue &extension_value : extensions.array_value) {
-            if (extension_value.type != JsonValue::Type::String) {
-                throw std::runtime_error("lsp server extensions must be strings");
+        bool using_legacy_extensions = server_value.object_value.find("patterns") == server_value.object_value.end();
+        for (const JsonValue &pattern_value : patterns.array_value) {
+            if (pattern_value.type != JsonValue::Type::String) {
+                throw std::runtime_error("lsp server patterns must be strings");
             }
-            std::string extension = normalize_extension(extension_value.string_value);
-            auto existing_owner = extension_owners.find(extension);
-            if (existing_owner != extension_owners.end()) {
+            std::string pattern = using_legacy_extensions
+                ? pattern_from_legacy_extension(pattern_value.string_value)
+                : pattern_value.string_value;
+            auto existing_owner = pattern_owners.find(pattern);
+            if (existing_owner != pattern_owners.end()) {
                 throw std::runtime_error(
-                    "duplicate lsp extension mapping for " + extension + ": " + existing_owner->second + " and " + name.string_value);
+                    "duplicate lsp pattern mapping for " + pattern + ": " + existing_owner->second + " and " + name.string_value);
             }
-            extension_owners.emplace(extension, name.string_value);
-            server.extensions.push_back(std::move(extension));
+            pattern_owners.emplace(pattern, name.string_value);
+            server.patterns.push_back(std::move(pattern));
         }
-        if (server.name.empty() || server.command.empty() || server.language_id.empty() || server.extensions.empty()) {
+        if (server.name.empty() || server.command.empty() || server.language_id.empty() || server.patterns.empty()) {
             throw std::runtime_error("lsp server entries must not be empty");
         }
         auto workspace = server_value.object_value.find("workspace");
@@ -185,18 +207,18 @@ std::vector<SyntaxLanguageConfig> load_syntax_languages_from_path(const std::fil
     }
 
     std::vector<SyntaxLanguageConfig> parsed_languages;
-    std::map<std::string, std::string> extension_owners;
+    std::map<std::string, std::string> pattern_owners;
     for (const JsonValue &language_value : languages->second.array_value) {
         if (language_value.type != JsonValue::Type::Object) {
             throw std::runtime_error("syntax language entries must be objects");
         }
 
         const JsonValue &name = required_object_member(language_value, "name");
-        const JsonValue &extensions = required_object_member(language_value, "extensions");
+        const JsonValue &patterns = required_patterns_member(language_value, "syntax language");
         const JsonValue &grammar_path = required_object_member(language_value, "grammar_path");
         const JsonValue &symbol_name = required_object_member(language_value, "symbol_name");
         const JsonValue &highlights_path = required_object_member(language_value, "highlights_path");
-        if (name.type != JsonValue::Type::String || extensions.type != JsonValue::Type::Array ||
+        if (name.type != JsonValue::Type::String || patterns.type != JsonValue::Type::Array ||
             grammar_path.type != JsonValue::Type::String || symbol_name.type != JsonValue::Type::String ||
             highlights_path.type != JsonValue::Type::String) {
             throw std::runtime_error("invalid syntax language field types");
@@ -213,21 +235,24 @@ std::vector<SyntaxLanguageConfig> load_syntax_languages_from_path(const std::fil
         if (!language.highlights_path.is_absolute()) {
             language.highlights_path = path.parent_path() / language.highlights_path;
         }
-        for (const JsonValue &extension_value : extensions.array_value) {
-            if (extension_value.type != JsonValue::Type::String) {
-                throw std::runtime_error("syntax language extensions must be strings");
+        bool using_legacy_extensions = language_value.object_value.find("patterns") == language_value.object_value.end();
+        for (const JsonValue &pattern_value : patterns.array_value) {
+            if (pattern_value.type != JsonValue::Type::String) {
+                throw std::runtime_error("syntax language patterns must be strings");
             }
-            std::string extension = normalize_extension(extension_value.string_value);
-            auto existing_owner = extension_owners.find(extension);
-            if (existing_owner != extension_owners.end()) {
+            std::string pattern = using_legacy_extensions
+                ? pattern_from_legacy_extension(pattern_value.string_value)
+                : pattern_value.string_value;
+            auto existing_owner = pattern_owners.find(pattern);
+            if (existing_owner != pattern_owners.end()) {
                 throw std::runtime_error(
-                    "duplicate syntax extension mapping for " + extension + ": " + existing_owner->second + " and " + language.name);
+                    "duplicate syntax pattern mapping for " + pattern + ": " + existing_owner->second + " and " + language.name);
             }
-            extension_owners.emplace(extension, language.name);
-            language.extensions.push_back(std::move(extension));
+            pattern_owners.emplace(pattern, language.name);
+            language.patterns.push_back(std::move(pattern));
         }
 
-        if (language.name.empty() || language.symbol_name.empty() || language.extensions.empty()) {
+        if (language.name.empty() || language.symbol_name.empty() || language.patterns.empty()) {
             throw std::runtime_error("syntax language entries must not be empty");
         }
         parsed_languages.push_back(std::move(language));
@@ -329,7 +354,7 @@ EditorConfig load_editor_config_from_path(const std::filesystem::path &path) {
         fallback.name = *config.lsp_language_id;
         fallback.command = *config.lsp_command;
         fallback.language_id = *config.lsp_language_id;
-        fallback.extensions.push_back("*");
+        fallback.patterns.push_back("*");
         fallback.workspace.fallback = "current_working_directory";
         config.lsp_servers.push_back(std::move(fallback));
     }
@@ -345,10 +370,9 @@ EditorConfig load_editor_config_from_path(const std::filesystem::path &path) {
 
 const LspServerConfig *matching_lsp_server(const EditorConfig &config, const std::optional<std::string> &file_path) {
     if (file_path && !file_path->empty()) {
-        std::string extension = ascii_lowercase(std::filesystem::path(*file_path).extension().string());
         for (const LspServerConfig &server : config.lsp_servers) {
-            for (const std::string &configured_extension : server.extensions) {
-                if (configured_extension == extension) {
+            for (const std::string &pattern : server.patterns) {
+                if (file_path_matches_glob(*file_path, pattern)) {
                     return &server;
                 }
             }
@@ -356,8 +380,8 @@ const LspServerConfig *matching_lsp_server(const EditorConfig &config, const std
     }
 
     for (const LspServerConfig &server : config.lsp_servers) {
-        for (const std::string &configured_extension : server.extensions) {
-            if (configured_extension == "*") {
+        for (const std::string &pattern : server.patterns) {
+            if (pattern == "*") {
                 return &server;
             }
         }

@@ -85,7 +85,7 @@ Example [lsp.json](/home/dan/de/.config/medit/lsp.json):
       "name": "cpp",
       "command": "clangd --background-index",
       "language_id": "cpp",
-      "extensions": [".cpp", ".hpp"],
+      "patterns": ["*.cpp", "*.hpp", "Makefile"],
       "workspace": {
         "markers": ["compile_commands.json", ".clangd", "CMakeLists.txt", ".git"],
         "fallback": "file_directory"
@@ -95,7 +95,7 @@ Example [lsp.json](/home/dan/de/.config/medit/lsp.json):
       "name": "json",
       "command": "vscode-json-languageserver --stdio",
       "language_id": "json",
-      "extensions": [".json", ".jsonc"],
+      "patterns": ["*.json", "*.jsonc"],
       "workspace": {
         "markers": ["package.json", ".git"],
         "fallback": "file_directory"
@@ -105,7 +105,7 @@ Example [lsp.json](/home/dan/de/.config/medit/lsp.json):
       "name": "python",
       "command": "pyright-langserver --stdio",
       "language_id": "python",
-      "extensions": [".py", ".pyi", ".pyw"],
+      "patterns": ["*.py", "*.pyi", "*.pyw"],
       "workspace": {
         "markers": ["pyrightconfig.json", "pyproject.toml", "setup.py", "setup.cfg", ".git"],
         "fallback": "file_directory"
@@ -115,7 +115,7 @@ Example [lsp.json](/home/dan/de/.config/medit/lsp.json):
 }
 ```
 
-Each open buffer picks the first matching server by file extension and sends that server the configured language id. The old `lsp_command` and `lsp_language_id` keys still work as a single catch-all fallback.
+Each open buffer picks the first matching server by filename glob pattern and sends that server the configured language id. The old `lsp_command` and `lsp_language_id` keys still work as a single catch-all fallback.
 The workspace root for each server is found by walking upward from the opened file and looking for the configured `workspace.markers`, then falling back according to `workspace.fallback`.
 
 Tree-sitter syntax can be configured per language through a syntax rules file:
@@ -125,7 +125,7 @@ Tree-sitter syntax can be configured per language through a syntax rules file:
   "languages": [
     {
       "name": "python",
-      "extensions": [".py", ".pyi", ".pyw"],
+      "patterns": ["*.py", "*.pyi", ".pyw"],
       "grammar_path": "/path/to/libtree-sitter-python.so",
       "symbol_name": "tree_sitter_python",
       "highlights_path": "/path/to/queries/highlights.scm"
@@ -134,13 +134,13 @@ Tree-sitter syntax can be configured per language through a syntax rules file:
 }
 ```
 
-`syntax_config = syntax.json` points `medit` at that file. `syntax = python` forces a specific configured syntax language by name. If `syntax` is omitted, `medit` picks the first configured tree-sitter language whose extension matches the file. If no configured tree-sitter language matches, `medit` falls back to the built-in lightweight C++ highlighter for C/C++ files and otherwise leaves syntax coloring off.
+`syntax_config = syntax.json` points `medit` at that file. `syntax = python` forces a specific configured syntax language by name. If `syntax` is omitted, `medit` picks the first configured tree-sitter language whose filename glob pattern matches the file. If no configured tree-sitter language matches, `medit` falls back to the built-in lightweight C++ highlighter for C/C++ files and otherwise leaves syntax coloring off.
 
 For reproducible fresh-checkout setup, the repo now ships a pinned tree-sitter manifest at [tools/tree_sitter_languages.json](/home/dan/de/tools/tree_sitter_languages.json) plus a bootstrap script at [tools/bootstrap_tree_sitter.py](/home/dan/de/tools/bootstrap_tree_sitter.py). Adding a bundled language means adding one manifest entry with:
 
 - repo URL
 - pinned commit
-- file extensions
+- filename glob patterns
 - symbol name
 - query path
 - optional scanner path

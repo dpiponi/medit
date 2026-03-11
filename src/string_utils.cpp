@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 
 std::string trim_ascii_whitespace(std::string_view value) {
     std::size_t start = 0;
@@ -46,4 +47,48 @@ std::string ellipsize_middle(std::string_view text, std::size_t max_width) {
     std::size_t prefix = (max_width - 3) / 2;
     std::size_t suffix = max_width - 3 - prefix;
     return std::string(text.substr(0, prefix)) + "..." + std::string(text.substr(text.size() - suffix));
+}
+
+bool glob_match(std::string_view text, std::string_view pattern) {
+    std::size_t text_index = 0;
+    std::size_t pattern_index = 0;
+    std::size_t star_index = std::string_view::npos;
+    std::size_t match_index = 0;
+
+    while (text_index < text.size()) {
+        if (pattern_index < pattern.size() &&
+            (pattern[pattern_index] == '?' || pattern[pattern_index] == text[text_index])) {
+            ++text_index;
+            ++pattern_index;
+            continue;
+        }
+        if (pattern_index < pattern.size() && pattern[pattern_index] == '*') {
+            star_index = pattern_index++;
+            match_index = text_index;
+            continue;
+        }
+        if (star_index != std::string_view::npos) {
+            pattern_index = star_index + 1;
+            text_index = ++match_index;
+            continue;
+        }
+        return false;
+    }
+
+    while (pattern_index < pattern.size() && pattern[pattern_index] == '*') {
+        ++pattern_index;
+    }
+    return pattern_index == pattern.size();
+}
+
+bool file_path_matches_glob(std::string_view file_path, std::string_view pattern) {
+    if (pattern.empty()) {
+        return false;
+    }
+    std::string file_path_text(file_path);
+    std::string pattern_text(pattern);
+    if (pattern_text.contains('/') || pattern_text.contains('\\')) {
+        return glob_match(file_path_text, pattern_text);
+    }
+    return glob_match(std::filesystem::path(file_path_text).filename().string(), pattern_text);
 }

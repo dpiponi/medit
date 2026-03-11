@@ -54,7 +54,7 @@ Edit [tools/tree_sitter_languages.json](/home/dan/de/tools/tree_sitter_languages
 - `name`
 - `repo`
 - pinned `ref`
-- `extensions`
+- `patterns`
 - `symbol_name`
 - `query_path`
 - optional `source_subdir`

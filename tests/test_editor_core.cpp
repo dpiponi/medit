@@ -781,7 +781,7 @@ void test_config_file_selects_keybindings_and_colors() {
                "      \"name\": \"cpp\",\n"
                "      \"command\": \"clangd --background-index\",\n"
                "      \"language_id\": \"cpp\",\n"
-               "      \"extensions\": [\".cpp\", \".hpp\"],\n"
+               "      \"patterns\": [\"*.cpp\", \"*.hpp\", \"Makefile\"],\n"
                "      \"workspace\": {\n"
                "        \"markers\": [\"compile_commands.json\", \".git\"],\n"
                "        \"fallback\": \"file_directory\"\n"
@@ -796,7 +796,7 @@ void test_config_file_selects_keybindings_and_colors() {
                   "  \"languages\": [\n"
                   "    {\n"
                   "      \"name\": \"python\",\n"
-                  "      \"extensions\": [\".py\", \".pyi\"],\n"
+                  "      \"patterns\": [\"*.py\", \"*.pyi\", \".pythonrc\"],\n"
                   "      \"grammar_path\": \"grammars/libtree-sitter-python.so\",\n"
                   "      \"symbol_name\": \"tree_sitter_python\",\n"
                   "      \"highlights_path\": \"queries/python/highlights.scm\"\n"
@@ -856,7 +856,8 @@ void test_config_file_selects_keybindings_and_colors() {
     expect(config.lsp_servers[0].name == "cpp", "config should parse lsp server name");
     expect(config.lsp_servers[0].command == "clangd --background-index", "config should parse lsp command");
     expect(config.lsp_servers[0].language_id == "cpp", "config should parse lsp language id");
-    expect(config.lsp_servers[0].extensions.size() == 2, "config should parse lsp extensions");
+    expect(config.lsp_servers[0].patterns.size() == 3, "config should parse lsp patterns");
+    expect(config.syntax_languages[0].patterns.size() == 3, "config should parse syntax patterns");
     expect(config.lsp_servers[0].workspace.markers.size() == 2, "config should parse workspace markers");
     expect(
         config.lsp_servers[0].workspace.fallback == "file_directory",
@@ -878,7 +879,7 @@ void test_config_file_selects_keybindings_and_colors() {
     std::filesystem::remove_all(root);
 }
 
-void test_lsp_config_rejects_duplicate_extensions() {
+void test_lsp_config_rejects_duplicate_patterns() {
     char template_path[] = "/tmp/medit-lsp-config-XXXXXX";
     char *dir = mkdtemp(template_path);
     expect(dir != nullptr, "mkdtemp for duplicate lsp config test should succeed");
@@ -896,8 +897,8 @@ void test_lsp_config_rejects_duplicate_extensions() {
         std::ofstream lsp(medit_dir + "/lsp.json");
         lsp << "{\n"
                "  \"servers\": [\n"
-               "    {\"name\": \"cpp\", \"command\": \"clangd\", \"language_id\": \"cpp\", \"extensions\": [\".cpp\"]},\n"
-               "    {\"name\": \"other\", \"command\": \"otherls\", \"language_id\": \"other\", \"extensions\": [\".cpp\"]}\n"
+               "    {\"name\": \"cpp\", \"command\": \"clangd\", \"language_id\": \"cpp\", \"patterns\": [\"*.cpp\"]},\n"
+               "    {\"name\": \"other\", \"command\": \"otherls\", \"language_id\": \"other\", \"patterns\": [\"*.cpp\"]}\n"
                "  ]\n"
                "}\n";
     }
@@ -908,19 +909,20 @@ void test_lsp_config_rejects_duplicate_extensions() {
     } catch (const std::exception &) {
         threw = true;
     }
-    expect(threw, "duplicate lsp extension mappings should be rejected");
+    expect(threw, "duplicate lsp pattern mappings should be rejected");
     std::filesystem::remove_all(root);
 }
 
 void test_infer_language_id() {
     EditorConfig config;
-    config.lsp_servers.push_back({"python", "pyright-langserver --stdio", "python", {".py", ".pyi", ".pyw"}});
-    config.lsp_servers.push_back({"json", "vscode-json-languageserver --stdio", "json", {".json", ".jsonc"}});
+    config.lsp_servers.push_back({"python", "pyright-langserver --stdio", "python", {"*.py", "*.pyi", "*.pyw"}});
+    config.lsp_servers.push_back({"json", "vscode-json-languageserver --stdio", "json", {"*.json", "*.jsonc"}});
 
-    expect(infer_language_id(config, std::optional<std::string>("test.py")) == "python", "python extension should infer python");
-    expect(infer_language_id(config, std::optional<std::string>("settings.json")) == "json", "json extension should infer json");
-    expect(infer_language_id(config, std::optional<std::string>("main.cpp")) == "cpp", "cpp extension should infer cpp");
-    expect(infer_language_id(config, std::optional<std::string>("notes.txt")) == "text", "unknown extension should infer text");
+    expect(infer_language_id(config, std::optional<std::string>("test.py")) == "python", "python pattern should infer python");
+    expect(infer_language_id(config, std::optional<std::string>("settings.json")) == "json", "json pattern should infer json");
+    expect(infer_language_id(config, std::optional<std::string>("main.cpp")) == "cpp", "cpp fallback should infer cpp");
+    expect(infer_language_id(config, std::optional<std::string>("notes.txt")) == "text", "unknown filename should infer text");
+    expect(infer_language_id(config, std::optional<std::string>("dir/.pythonrc")) == "text", "unmatched basename should not infer language");
 
     EditorConfig fallback;
     fallback.syntax_name = "cpp";
@@ -942,7 +944,7 @@ void test_infer_workspace_root() {
     config.name = "python";
     config.command = "pyright-langserver --stdio";
     config.language_id = "python";
-    config.extensions = {".py"};
+    config.patterns = {"*.py", "pyproject.toml"};
     config.workspace.markers = {"pyproject.toml", ".git"};
     config.workspace.fallback = "file_directory";
 
@@ -1004,7 +1006,7 @@ void test_cpp_syntax_highlighting() {
     expect(detected_none.engine == SyntaxEngine::None, "non-code file should not auto-detect syntax");
 
     EditorConfig explicit_python;
-    explicit_python.syntax_languages.push_back({"python", {".py"}, "python.so", "tree_sitter_python", "highlights.scm"});
+    explicit_python.syntax_languages.push_back({"python", {"*.py", ".pythonrc"}, "python.so", "tree_sitter_python", "highlights.scm"});
     explicit_python.syntax_name = "python";
     SyntaxSelection configured = resolve_syntax_selection(explicit_python, std::optional<std::string>("notes.txt"));
     expect(configured.engine == SyntaxEngine::TreeSitter && configured.language_name == "python", "named tree-sitter syntax should resolve");
@@ -1062,7 +1064,7 @@ void test_lsp_service_roundtrip() {
     config.name = "text";
     config.command = std::string("python3 ") + std::filesystem::current_path().string() + "/tests/fake_lsp_server.py";
     config.language_id = "text";
-    config.extensions = {".txt"};
+    config.patterns = {"*.txt"};
 
     EditorRuntime runtime;
     runtime.add_service(std::make_unique<LspService>(config));
@@ -1125,7 +1127,7 @@ void test_lsp_service_reports_startup_failures() {
     config.name = "broken";
     config.command = "echo mac-startup-failure >&2; exit 1";
     config.language_id = "text";
-    config.extensions = {"*"};
+    config.patterns = {"*"};
 
     LspService service(config);
     service.start();
@@ -1402,7 +1404,7 @@ int main() {
         test_compound_edit_undo();
         test_keybinding_dispatch();
         test_config_file_selects_keybindings_and_colors();
-        test_lsp_config_rejects_duplicate_extensions();
+        test_lsp_config_rejects_duplicate_patterns();
         test_infer_language_id();
         test_infer_workspace_root();
         test_process_utils_detect_missing_executables();

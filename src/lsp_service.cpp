@@ -314,18 +314,19 @@ void LspService::queue_stderr_line(const std::string &line) {
 }
 
 bool LspService::matches_document(const std::string &document_uri) const {
-    if (config_.extensions.empty()) {
+    if (config_.patterns.empty()) {
         return false;
     }
-    if (std::ranges::find(config_.extensions, "*") != config_.extensions.end()) {
+    if (std::ranges::find(config_.patterns, "*") != config_.patterns.end()) {
         return true;
     }
     std::string file_path = file_path_from_uri(document_uri);
     if (file_path.empty()) {
         return false;
     }
-    std::string extension = ascii_lowercase(std::filesystem::path(file_path).extension().string());
-    return std::ranges::find(config_.extensions, extension) != config_.extensions.end();
+    return std::ranges::find_if(config_.patterns, [&file_path](const std::string &pattern) {
+        return file_path_matches_glob(file_path, pattern);
+    }) != config_.patterns.end();
 }
 
 void LspService::ensure_initialized_for_event(const EditorEvent &event) {

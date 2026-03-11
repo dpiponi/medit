@@ -260,10 +260,9 @@ std::optional<const SyntaxLanguageConfig *> syntax_language_for_file(
     if (!file_path || file_path->empty()) {
         return std::nullopt;
     }
-    std::string extension = ascii_lowercase(std::filesystem::path(*file_path).extension().string());
     for (const SyntaxLanguageConfig &language : config.syntax_languages) {
-        for (const std::string &configured_extension : language.extensions) {
-            if (configured_extension == extension) {
+        for (const std::string &pattern : language.patterns) {
+            if (file_path_matches_glob(*file_path, pattern)) {
                 return &language;
             }
         }
@@ -275,9 +274,10 @@ bool is_legacy_cpp_extension(const std::optional<std::string> &file_path) {
     if (!file_path || file_path->empty()) {
         return false;
     }
-    std::string extension = ascii_lowercase(std::filesystem::path(*file_path).extension().string());
-    return extension == ".c" || extension == ".cc" || extension == ".cpp" || extension == ".cxx" ||
-        extension == ".h" || extension == ".hh" || extension == ".hpp" || extension == ".hxx";
+    static const std::string patterns[] = {"*.c", "*.cc", "*.cpp", "*.cxx", "*.h", "*.hh", "*.hpp", "*.hxx"};
+    return std::ranges::find_if(patterns, [file_path](const std::string &pattern) {
+        return file_path_matches_glob(*file_path, pattern);
+    }) != std::end(patterns);
 }
 
 TreeSitterApi load_tree_sitter_api() {
