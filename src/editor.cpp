@@ -688,7 +688,9 @@ std::optional<std::string> run_picker_command(EditorState &state, const std::str
     }
     close(fd);
 
-    std::string shell_command = pipeline_command + " > " + shell_single_quote(temp_path);
+    std::string shell_command =
+        "sh -lc " + shell_single_quote("cd " + shell_single_quote(std::filesystem::current_path().string()) + " && " + pipeline_command) +
+        " > " + shell_single_quote(temp_path);
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
     state.pending_motion_repeat_count = 1;
@@ -767,13 +769,16 @@ bool parse_grep_selection(
 
 void handle_find_file_command(EditorState &state) {
     std::string error_message;
-    std::optional<std::string> selection =
-        run_picker_command(state, "sh -lc \"rg --files | fzf\"", error_message);
+    std::optional<std::string> selection = run_picker_command(state, "rg --files | fzf", error_message);
     if (!selection) {
         set_status(state, error_message);
         return;
     }
-    handle_edit_command(state, *selection);
+    std::filesystem::path resolved = *selection;
+    if (resolved.is_relative()) {
+        resolved = std::filesystem::current_path() / resolved;
+    }
+    handle_edit_command(state, resolved.lexically_normal().string());
 }
 
 void handle_grep_command(EditorState &state, const std::string &argument) {
@@ -784,8 +789,8 @@ void handle_grep_command(EditorState &state, const std::string &argument) {
 
     std::string error_message;
     std::string command =
-        "sh -lc \"rg --column --line-number --no-heading --color=never --smart-case " +
-        shell_single_quote(argument) + " | fzf\"";
+        "rg --column --line-number --no-heading --color=never --smart-case " +
+        shell_single_quote(argument) + " | fzf";
     std::optional<std::string> selection = run_picker_command(state, command, error_message);
     if (!selection) {
         set_status(state, error_message);
@@ -799,6 +804,11 @@ void handle_grep_command(EditorState &state, const std::string &argument) {
         set_status(state, "Could not parse grep result");
         return;
     }
+    std::filesystem::path resolved = path;
+    if (resolved.is_relative()) {
+        resolved = std::filesystem::current_path() / resolved;
+    }
+    path = resolved.lexically_normal().string();
 
     EditorBuffer *existing = find_buffer_by_path(state, path);
     if (existing) {
