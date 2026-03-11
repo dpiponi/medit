@@ -111,6 +111,8 @@ colors = forest.json
 - `D` delete from the cursor to the end of the line through the configurable key-sequence alias system
 - `p` paste after the cursor
 - `P` paste before the cursor
+- Numeric prefixes in normal and visual mode repeat repeatable commands, for example `10j` or `3x`
+- Parenthesized command groups execute live and can be repeated as one unit, for example `3(aX<esc>)`
 - `dd` delete current line
 - In visual mode, `d` deletes the selection
 - In visual mode, `c` deletes the selection and enters insert mode to replace it

@@ -41,6 +41,12 @@ enum class PendingMotion {
 };
 
 struct EditorState {
+    struct RecordedInput {
+        std::string token;
+        wint_t key = 0;
+        bool printable = false;
+    };
+
     EditorCore core;
     EditorRuntime runtime;
     EditorConfig config;
@@ -69,6 +75,12 @@ struct EditorState {
     std::size_t syntax_revision = std::numeric_limits<std::size_t>::max();
     std::optional<std::string> syntax_file_path;
     bool syntax_config_error_reported = false;
+    std::string repeat_digits;
+    std::size_t pending_motion_repeat_count = 1;
+    std::size_t replay_depth = 0;
+    std::size_t group_depth = 0;
+    std::size_t group_repeat_count = 1;
+    std::vector<RecordedInput> group_inputs;
 };
 
 struct DiagnosticEntryView {
@@ -188,6 +200,8 @@ void suspend_editor(EditorState &state) {
 #if defined(SIGTSTP)
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
+    state.pending_motion_repeat_count = 1;
+    state.repeat_digits.clear();
     def_prog_mode();
     endwin();
     std::raise(SIGTSTP);
@@ -208,6 +222,8 @@ void enter_normal_mode(EditorState &state) {
     state.command_buffer.clear();
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
+    state.pending_motion_repeat_count = 1;
+    state.repeat_digits.clear();
     state.search_buffer.clear();
     Position cursor = state.core.cursor();
     std::size_t length = state.core.line_length(cursor.row);
@@ -222,6 +238,8 @@ void enter_insert_mode(EditorState &state) {
     state.mode = Mode::Insert;
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
+    state.pending_motion_repeat_count = 1;
+    state.repeat_digits.clear();
     state.search_buffer.clear();
     set_status(state, mode_name(state.mode));
 }
@@ -232,6 +250,8 @@ void enter_command_mode(EditorState &state) {
     state.command_buffer.clear();
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
+    state.pending_motion_repeat_count = 1;
+    state.repeat_digits.clear();
     state.search_buffer.clear();
     set_status(state, ":");
 }
@@ -243,6 +263,8 @@ void enter_search_mode(EditorState &state) {
     state.search_origin = state.core.cursor();
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
+    state.pending_motion_repeat_count = 1;
+    state.repeat_digits.clear();
     set_status(state, "/");
 }
 
@@ -1166,26 +1188,34 @@ bool motion_is_character_based(PendingMotion motion) {
 
 bool execute_pending_motion(EditorState &state, char32_t target) {
     bool moved = false;
-    switch (state.pending_motion) {
-        case PendingMotion::FindForward:
-            moved = state.core.move_to_character_forward(target, true);
+    for (std::size_t attempt = 0; attempt < state.pending_motion_repeat_count; ++attempt) {
+        bool step_moved = false;
+        switch (state.pending_motion) {
+            case PendingMotion::FindForward:
+                step_moved = state.core.move_to_character_forward(target, true);
+                break;
+            case PendingMotion::FindBackward:
+                step_moved = state.core.move_to_character_backward(target, true);
+                break;
+            case PendingMotion::TillForward:
+                step_moved = state.core.move_to_character_forward(target, false);
+                break;
+            case PendingMotion::TillBackward:
+                step_moved = state.core.move_to_character_backward(target, false);
+                break;
+            case PendingMotion::None:
+                return false;
+        }
+        if (!step_moved) {
             break;
-        case PendingMotion::FindBackward:
-            moved = state.core.move_to_character_backward(target, true);
-            break;
-        case PendingMotion::TillForward:
-            moved = state.core.move_to_character_forward(target, false);
-            break;
-        case PendingMotion::TillBackward:
-            moved = state.core.move_to_character_backward(target, false);
-            break;
-        case PendingMotion::None:
-            return false;
+        }
+        moved = true;
     }
     state.pending_motion = PendingMotion::None;
+    state.pending_motion_repeat_count = 1;
     state.pending_tokens.clear();
     set_status(state, moved ? mode_name(state.mode) : "Target not found");
-    return true;
+    return moved;
 }
 
 std::optional<std::string> key_token(wint_t key, bool is_special) {
@@ -1261,6 +1291,48 @@ bool is_printable_input(wint_t key, bool is_special) {
     return key >= 32 || key == '\t';
 }
 
+bool mode_supports_command_language(const EditorState &state) {
+    return state.mode == Mode::Normal || state.mode == Mode::Visual || state.mode == Mode::VisualLine;
+}
+
+bool token_is_digit(const std::string &token) {
+    return token.size() == 1 && token[0] >= '0' && token[0] <= '9';
+}
+
+bool token_starts_repeat(const EditorState &state, const std::string &token) {
+    if (!mode_supports_command_language(state) || !token_is_digit(token)) {
+        return false;
+    }
+    if (!state.repeat_digits.empty()) {
+        return true;
+    }
+    return token != "0";
+}
+
+std::size_t current_repeat_count(const EditorState &state) {
+    if (state.repeat_digits.empty()) {
+        return 1;
+    }
+    std::size_t repeat = 0;
+    for (char ch : state.repeat_digits) {
+        repeat = repeat * 10 + static_cast<std::size_t>(ch - '0');
+    }
+    return repeat == 0 ? 1 : repeat;
+}
+
+std::size_t take_repeat_count(EditorState &state) {
+    std::size_t repeat = current_repeat_count(state);
+    state.repeat_digits.clear();
+    return repeat;
+}
+
+void record_group_input(EditorState &state, const std::string &token, wint_t key, bool printable) {
+    if (state.group_depth == 0) {
+        return;
+    }
+    state.group_inputs.push_back({token, key, printable});
+}
+
 std::optional<wint_t> key_from_token(const std::string &token) {
     if (token == "enter") {
         return '\n';
@@ -1277,32 +1349,95 @@ std::optional<wint_t> key_from_token(const std::string &token) {
             return static_cast<wint_t>(ch - 'a' + 1);
         }
     }
-    if (token.size() == 1) {
-        return static_cast<wint_t>(static_cast<unsigned char>(token[0]));
+    std::u32string text = utf8_to_u32(token);
+    if (text.size() == 1) {
+        return static_cast<wint_t>(text[0]);
     }
     return std::nullopt;
 }
 
+bool token_is_printable_for_replay(const std::string &token) {
+    if (token == "esc" || token == "enter" || token == "backspace" || token == "left" || token == "right" ||
+        token == "up" || token == "down" || token == "pageup" || token == "pagedown") {
+        return false;
+    }
+    if (token.rfind("ctrl-", 0) == 0) {
+        return false;
+    }
+    return true;
+}
+
 void execute_dispatch(EditorState &state, const KeyDispatch &dispatch, wint_t key);
+void process_input_token(EditorState &state, const std::string &token, wint_t key, bool printable);
 
 void execute_expansion(EditorState &state, const std::vector<std::string> &expansion) {
     static constexpr std::size_t kMaxExpansionDepth = 16;
-    if (state.pending_tokens.size() > kMaxExpansionDepth) {
+    if (state.replay_depth >= kMaxExpansionDepth) {
         set_status(state, "Keybinding expansion too deep");
         state.pending_tokens.clear();
         return;
     }
 
+    ++state.replay_depth;
     for (const std::string &token : expansion) {
         std::optional<wint_t> key = key_from_token(token);
-        KeyDispatch nested = dispatch_key_sequence(state.keybindings, mode_key(state), state.pending_tokens, token, false);
-        if (nested.waiting_for_more) {
-            continue;
-        }
-        if (nested.action || !nested.expansion.empty()) {
-            execute_dispatch(state, nested, key.value_or(0));
+        process_input_token(state, token, key.value_or(0), token_is_printable_for_replay(token));
+    }
+    --state.replay_depth;
+}
+
+bool action_accepts_repeat(EditorAction action) {
+    switch (action) {
+        case EditorAction::MoveLeft:
+        case EditorAction::MoveRight:
+        case EditorAction::MoveUp:
+        case EditorAction::MoveDown:
+        case EditorAction::MoveLineStart:
+        case EditorAction::MoveLineEnd:
+        case EditorAction::DeleteChar:
+        case EditorAction::Undo:
+        case EditorAction::Redo:
+        case EditorAction::PasteAfter:
+        case EditorAction::PasteBefore:
+        case EditorAction::GotoTop:
+        case EditorAction::GotoBottom:
+        case EditorAction::DeleteLine:
+        case EditorAction::HalfPageDown:
+        case EditorAction::HalfPageUp:
+        case EditorAction::PageUp:
+        case EditorAction::PageDown:
+        case EditorAction::SearchNext:
+        case EditorAction::SearchPrevious:
+        case EditorAction::NextDiagnostic:
+        case EditorAction::PreviousDiagnostic:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool action_defers_completion(EditorAction action) {
+    return action == EditorAction::FindForward || action == EditorAction::FindBackward ||
+        action == EditorAction::TillForward || action == EditorAction::TillBackward;
+}
+
+void replay_group_inputs(EditorState &state, const std::vector<EditorState::RecordedInput> &inputs, std::size_t repeat) {
+    static constexpr std::size_t kMaxReplayDepth = 16;
+    if (repeat <= 1) {
+        return;
+    }
+    if (state.replay_depth >= kMaxReplayDepth) {
+        set_status(state, "Command group nesting too deep");
+        return;
+    }
+
+    ++state.replay_depth;
+    for (std::size_t iteration = 1; iteration < repeat; ++iteration) {
+        for (const EditorState::RecordedInput &input : inputs) {
+            process_input_token(state, input.token, input.key, input.printable);
         }
     }
+    --state.replay_depth;
 }
 
 void execute_action(EditorState &state, EditorAction action, wint_t key) {
@@ -1326,18 +1461,22 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             state.core.move_line_end();
             break;
         case EditorAction::FindForward:
+            state.pending_motion_repeat_count = take_repeat_count(state);
             state.pending_motion = PendingMotion::FindForward;
             set_status(state, "f");
             break;
         case EditorAction::FindBackward:
+            state.pending_motion_repeat_count = take_repeat_count(state);
             state.pending_motion = PendingMotion::FindBackward;
             set_status(state, "F");
             break;
         case EditorAction::TillForward:
+            state.pending_motion_repeat_count = take_repeat_count(state);
             state.pending_motion = PendingMotion::TillForward;
             set_status(state, "t");
             break;
         case EditorAction::TillBackward:
+            state.pending_motion_repeat_count = take_repeat_count(state);
             state.pending_motion = PendingMotion::TillBackward;
             set_status(state, "T");
             break;
@@ -1564,12 +1703,87 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
 
 void execute_dispatch(EditorState &state, const KeyDispatch &dispatch, wint_t key) {
     if (!dispatch.expansion.empty()) {
-        execute_expansion(state, dispatch.expansion);
+        std::size_t repeat = take_repeat_count(state);
+        for (std::size_t iteration = 0; iteration < repeat; ++iteration) {
+            execute_expansion(state, dispatch.expansion);
+        }
         return;
     }
     if (dispatch.action) {
-        execute_action(state, *dispatch.action, key);
+        std::size_t repeat = take_repeat_count(state);
+        if (action_defers_completion(*dispatch.action)) {
+            execute_action(state, *dispatch.action, key);
+            return;
+        }
+        std::size_t iterations = action_accepts_repeat(*dispatch.action) ? repeat : 1;
+        for (std::size_t iteration = 0; iteration < iterations; ++iteration) {
+            execute_action(state, *dispatch.action, key);
+        }
     }
+}
+
+void handle_group_close(EditorState &state) {
+    if (state.group_depth == 0) {
+        return;
+    }
+    if (state.group_depth > 1) {
+        record_group_input(state, ")", ')', false);
+        --state.group_depth;
+        return;
+    }
+
+    std::vector<EditorState::RecordedInput> inputs = state.group_inputs;
+    std::size_t repeat = state.group_repeat_count;
+    state.group_inputs.clear();
+    state.group_depth = 0;
+    state.group_repeat_count = 1;
+    replay_group_inputs(state, inputs, repeat);
+    set_status(state, mode_name(state.mode));
+}
+
+void handle_group_open(EditorState &state) {
+    if (state.group_depth == 0) {
+        state.group_repeat_count = take_repeat_count(state);
+        state.group_inputs.clear();
+    } else {
+        record_group_input(state, "(", '(', false);
+    }
+    ++state.group_depth;
+    set_status(state, "(");
+}
+
+void process_input_token(EditorState &state, const std::string &token, wint_t key, bool printable) {
+    if (mode_supports_command_language(state) && state.pending_motion != PendingMotion::None && printable) {
+        record_group_input(state, token, key, printable);
+        execute_pending_motion(state, static_cast<char32_t>(key));
+        return;
+    }
+
+    if (mode_supports_command_language(state) && state.pending_motion == PendingMotion::None && state.pending_tokens.empty()) {
+        if (token == "(") {
+            handle_group_open(state);
+            return;
+        }
+        if (token == ")" && state.group_depth > 0) {
+            handle_group_close(state);
+            return;
+        }
+        if (token_starts_repeat(state, token)) {
+            record_group_input(state, token, key, printable);
+            state.repeat_digits += token;
+            set_status(state, state.repeat_digits);
+            return;
+        }
+    }
+
+    record_group_input(state, token, key, printable);
+
+    KeyDispatch dispatch = dispatch_key_sequence(state.keybindings, mode_key(state), state.pending_tokens, token, printable);
+    if (dispatch.waiting_for_more) {
+        set_status(state, u32_to_utf8(utf8_to_u32(token)));
+        return;
+    }
+    execute_dispatch(state, dispatch, key);
 }
 
 void handle_keymap_input(EditorState &state, wint_t key, bool is_special) {
@@ -1577,17 +1791,7 @@ void handle_keymap_input(EditorState &state, wint_t key, bool is_special) {
     if (!token) {
         return;
     }
-    KeyDispatch dispatch = dispatch_key_sequence(
-        state.keybindings,
-        mode_key(state),
-        state.pending_tokens,
-        *token,
-        is_printable_input(key, is_special));
-    if (dispatch.waiting_for_more) {
-        set_status(state, u32_to_utf8(utf8_to_u32(*token)));
-        return;
-    }
-    execute_dispatch(state, dispatch, key);
+    process_input_token(state, *token, key, is_printable_input(key, is_special));
 }
 
 void handle_mouse_input(EditorState &state) {
@@ -1607,6 +1811,8 @@ void handle_mouse_input(EditorState &state) {
 
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
+    state.pending_motion_repeat_count = 1;
+    state.repeat_digits.clear();
     state.core.set_cursor(*clicked);
     if (state.mode == Mode::Command) {
         set_status(state, ":");
@@ -1635,10 +1841,16 @@ void handle_input(EditorState &state) {
     if (motion_is_character_based(state.pending_motion)) {
         if (!is_special && key == 27) {
             state.pending_motion = PendingMotion::None;
+            state.pending_motion_repeat_count = 1;
+            state.repeat_digits.clear();
             set_status(state, mode_name(state.mode));
             return;
         }
         if (!is_special) {
+            std::optional<std::string> token = key_token(key, false);
+            if (token) {
+                record_group_input(state, *token, key, true);
+            }
             execute_pending_motion(state, static_cast<char32_t>(key));
         }
         return;
