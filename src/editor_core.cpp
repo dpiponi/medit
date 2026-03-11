@@ -390,6 +390,19 @@ Position EditorCore::cursor() const {
     return cursor_;
 }
 
+const std::vector<Diagnostic> &EditorCore::diagnostics() const {
+    return document_diagnostics(document_uri_);
+}
+
+const std::vector<Diagnostic> &EditorCore::document_diagnostics(const std::string &document_uri) const {
+    static const std::vector<Diagnostic> kEmptyDiagnostics;
+    auto found = diagnostics_by_uri_.find(document_uri);
+    if (found == diagnostics_by_uri_.end()) {
+        return kEmptyDiagnostics;
+    }
+    return found->second;
+}
+
 bool EditorCore::has_selection() const {
     return selection_anchor_.has_value();
 }
@@ -571,6 +584,10 @@ void EditorCore::emit_cursor_moved(Position previous_cursor) {
         return;
     }
     emit_event({EditorEventType::CursorMoved, document_uri_, document_version_, cursor_, std::nullopt, U""});
+}
+
+void EditorCore::emit_diagnostics_changed(const std::string &document_uri) {
+    emit_event({EditorEventType::DiagnosticsChanged, document_uri, document_version_, cursor_, std::nullopt, U""});
 }
 
 void EditorCore::set_cursor_internal(Position position, bool emit_cursor_event) {
@@ -784,6 +801,28 @@ void EditorCore::reset_history() {
     saved_revision_ = 0;
     document_version_ = 0;
     saved_document_version_ = 0;
+}
+
+void EditorCore::set_diagnostics(std::vector<Diagnostic> diagnostics) {
+    set_document_diagnostics(document_uri_, std::move(diagnostics));
+}
+
+void EditorCore::clear_diagnostics() {
+    clear_document_diagnostics(document_uri_);
+}
+
+void EditorCore::set_document_diagnostics(const std::string &document_uri, std::vector<Diagnostic> diagnostics) {
+    diagnostics_by_uri_[document_uri] = std::move(diagnostics);
+    if (document_uri == document_uri_) {
+        emit_diagnostics_changed(document_uri);
+    }
+}
+
+void EditorCore::clear_document_diagnostics(const std::string &document_uri) {
+    diagnostics_by_uri_.erase(document_uri);
+    if (document_uri == document_uri_) {
+        emit_diagnostics_changed(document_uri);
+    }
 }
 
 bool EditorCore::load_file(const std::string &path) {

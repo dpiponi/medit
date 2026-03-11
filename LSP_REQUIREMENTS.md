@@ -15,6 +15,7 @@ Items are ordered roughly by dependency and architectural leverage. Update this 
 - Done: document identity model in the core
 - Done: structured core events for document lifecycle and cursor movement
 - Done: external service/runtime boundary for background integrations
+- Done: diagnostics data model in the core with renderer highlights
 - In progress: building a reusable editor core API around protocol-facing tests and runtime polling
 - Not started: everything else below
 
@@ -63,6 +64,7 @@ Items are ordered roughly by dependency and architectural leverage. Update this 
    The frontend/runtime needs a non-blocking way to process editor input, background responses, and UI updates together.
 
 9. Diagnostics data model
+   Status: done in [editor_core.hpp](/home/dan/de/src/editor_core.hpp), [editor_core.cpp](/home/dan/de/src/editor_core.cpp), [editor.cpp](/home/dan/de/src/editor.cpp), and [test_editor_core.cpp](/home/dan/de/tests/test_editor_core.cpp)
    Add core-level storage and querying for diagnostics with severity, range, message, and source fields.
 
 10. UI surfaces for LSP results

@@ -454,6 +454,71 @@ void test_unicode_position_conversions() {
     expect(from_utf16_end.row == 1 && from_utf16_end.column == 4, "utf16 line end maps to codepoint end");
 }
 
+void test_diagnostics_storage_and_events() {
+    EditorCore core;
+    Diagnostic error{{{0, 0}, {0, 1}}, DiagnosticSeverity::Error, "test", utf8_to_u32("bad")};
+    Diagnostic warning{{{0, 1}, {0, 2}}, DiagnosticSeverity::Warning, "lint", utf8_to_u32("warn")};
+
+    core.set_diagnostics({error, warning});
+    expect(core.diagnostics().size() == 2, "set_diagnostics should store current document diagnostics");
+
+    std::vector<EditorEvent> events = core.take_events();
+    expect(events.size() == 1, "setting diagnostics should emit one event");
+    expect_event_type(events[0], EditorEventType::DiagnosticsChanged, "diagnostics change should emit diagnostics event");
+    expect(events[0].document_uri == core.document_uri(), "diagnostics event should use current document uri");
+
+    core.clear_diagnostics();
+    expect(core.diagnostics().empty(), "clear_diagnostics should remove current diagnostics");
+    events = core.take_events();
+    expect(events.size() == 1, "clearing diagnostics should emit one event");
+    expect_event_type(events[0], EditorEventType::DiagnosticsChanged, "clearing diagnostics emits diagnostics event");
+}
+
+void test_diagnostics_follow_document_switches() {
+    char path1[] = "/tmp/medit-diagnostics-a-XXXXXX";
+    char path2[] = "/tmp/medit-diagnostics-b-XXXXXX";
+    int fd1 = mkstemp(path1);
+    int fd2 = mkstemp(path2);
+    expect(fd1 >= 0 && fd2 >= 0, "mkstemp for diagnostics switch test should succeed");
+    close(fd1);
+    close(fd2);
+    {
+        std::ofstream file1(path1);
+        file1 << "alpha";
+    }
+    {
+        std::ofstream file2(path2);
+        file2 << "beta";
+    }
+
+    EditorCore core;
+    expect(core.load_file(path1), "load first file for diagnostics switch test");
+    core.take_events();
+    core.set_diagnostics({{{{0, 0}, {0, 5}}, DiagnosticSeverity::Error, "first", utf8_to_u32("alpha error")}});
+    std::string uri1 = core.document_uri();
+    core.take_events();
+
+    expect(core.load_file(path2), "load second file for diagnostics switch test");
+    expect(core.diagnostics().empty(), "newly loaded file should start with no diagnostics");
+    core.take_events();
+    core.set_diagnostics({{{{0, 0}, {0, 4}}, DiagnosticSeverity::Warning, "second", utf8_to_u32("beta warn")}});
+    std::string uri2 = core.document_uri();
+    core.take_events();
+
+    expect(core.load_file(path1), "reload first file for diagnostics switch test");
+    expect(core.document_uri() == uri1, "reloaded first file should restore first uri");
+    expect(core.diagnostics().size() == 1, "reloaded first file should restore stored diagnostics");
+    expect(core.diagnostics()[0].severity == DiagnosticSeverity::Error, "first file should restore first severity");
+
+    expect(core.load_file(path2), "reload second file for diagnostics switch test");
+    expect(core.document_uri() == uri2, "reloaded second file should restore second uri");
+    expect(core.diagnostics().size() == 1, "reloaded second file should restore second diagnostics");
+    expect(core.diagnostics()[0].severity == DiagnosticSeverity::Warning, "second file should restore second severity");
+
+    std::remove(path1);
+    std::remove(path2);
+}
+
 void test_keybinding_dispatch() {
     KeyBindings keybindings = load_embedded_keybindings();
     std::vector<std::string> pending;
@@ -704,6 +769,8 @@ int main() {
         test_document_identity_and_events();
         test_open_save_and_save_as_events();
         test_unicode_position_conversions();
+        test_diagnostics_storage_and_events();
+        test_diagnostics_follow_document_switches();
         test_keybinding_dispatch();
         test_config_file_selects_keybindings_and_colors();
         test_editor_runtime_service_boundary();

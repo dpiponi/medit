@@ -554,6 +554,22 @@ std::vector<HighlightSpan> collect_line_highlights(const EditorState &state, std
         int priority = role == StyleRole::SearchMatchCurrent ? 95 : 90;
         spans.push_back({line_match, role, priority});
     }
+    for (const Diagnostic &diagnostic : state.core.diagnostics()) {
+        Range range = normalized_range(diagnostic.range);
+        if (row < range.start.row || row > range.end.row) {
+            continue;
+        }
+        Range line_diagnostic{
+            {row, row == range.start.row ? range.start.column : 0},
+            {row, row == range.end.row ? range.end.column : state.core.line_length(row)}};
+        if (positions_equal(line_diagnostic.start, line_diagnostic.end)) {
+            continue;
+        }
+        StyleRole role = diagnostic.severity == DiagnosticSeverity::Error
+                             ? StyleRole::DiagnosticError
+                             : StyleRole::DiagnosticWarning;
+        spans.push_back({line_diagnostic, role, 80});
+    }
     return spans;
 }
 

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -64,12 +65,25 @@ struct Utf16Position {
     std::size_t column = 0;
 };
 
+enum class DiagnosticSeverity {
+    Error,
+    Warning,
+};
+
+struct Diagnostic {
+    Range range;
+    DiagnosticSeverity severity = DiagnosticSeverity::Error;
+    std::string source;
+    std::u32string message;
+};
+
 enum class EditorEventType {
     DocumentOpened,
     DocumentChanged,
     DocumentSaved,
     DocumentClosed,
     CursorMoved,
+    DiagnosticsChanged,
 };
 
 struct EditorEvent {
@@ -135,6 +149,8 @@ class EditorCore {
     std::optional<Range> selection_range() const;
     std::u32string yank_buffer() const;
     SelectionMode yank_mode() const;
+    const std::vector<Diagnostic> &diagnostics() const;
+    const std::vector<Diagnostic> &document_diagnostics(const std::string &document_uri) const;
     const std::vector<EditorEvent> &pending_events() const;
     std::vector<EditorEvent> take_events();
 
@@ -184,6 +200,10 @@ class EditorCore {
     bool replace_selection_with_yank();
     bool undo();
     bool redo();
+    void set_diagnostics(std::vector<Diagnostic> diagnostics);
+    void clear_diagnostics();
+    void set_document_diagnostics(const std::string &document_uri, std::vector<Diagnostic> diagnostics);
+    void clear_document_diagnostics(const std::string &document_uri);
 
   private:
     friend struct EditorCommandAccess;
@@ -204,6 +224,7 @@ class EditorCore {
     SelectionMode yank_mode_ = SelectionMode::Character;
     std::string document_uri_;
     std::uint64_t untitled_id_ = 0;
+    std::map<std::string, std::vector<Diagnostic>> diagnostics_by_uri_;
     std::vector<EditorEvent> pending_events_;
     bool suppress_cursor_events_ = false;
 
@@ -216,6 +237,7 @@ class EditorCore {
     void emit_document_saved();
     void emit_document_changed(const std::vector<std::u32string> &before_lines);
     void emit_cursor_moved(Position previous_cursor);
+    void emit_diagnostics_changed(const std::string &document_uri);
     void set_cursor_internal(Position position, bool emit_event);
     void update_preferred_column();
     Position position_after_character(Position position) const;
