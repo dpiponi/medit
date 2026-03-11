@@ -13,6 +13,7 @@
 #include <clocale>
 #include <csignal>
 #include <cstdlib>
+#include <cstdio>
 #include <fstream>
 #include <filesystem>
 #include <limits>
@@ -234,8 +235,11 @@ void apply_theme_to_terminal(const Theme &theme) {
     }
 }
 
+bool g_terminal_active = false;
+
 void setup_terminal(const Theme &theme) {
     initscr();
+    def_shell_mode();
     raw();
     noecho();
     keypad(stdscr, TRUE);
@@ -244,10 +248,26 @@ void setup_terminal(const Theme &theme) {
     mousemask(BUTTON1_CLICKED | BUTTON1_DOUBLE_CLICKED | BUTTON1_TRIPLE_CLICKED, nullptr);
     apply_theme_to_terminal(theme);
     curs_set(1);
+    def_prog_mode();
+    g_terminal_active = true;
 }
 
 void teardown_terminal() {
+    if (!g_terminal_active) {
+        return;
+    }
+    mousemask(0, nullptr);
+    keypad(stdscr, FALSE);
+    timeout(-1);
+    curs_set(1);
+    noraw();
+    nocbreak();
+    echo();
+    clear();
+    refresh();
     endwin();
+    reset_shell_mode();
+    g_terminal_active = false;
 }
 
 bool suspend_supported() {
@@ -2520,15 +2540,22 @@ int main(int argc, char **argv) {
         set_status(state, "Keybindings: " + state.keybindings.source_path);
     }
 
-    setup_terminal(state.theme);
-    if (!state.config.lsp_servers.empty()) {
-        for (const LspServerConfig &server : state.config.lsp_servers) {
-            state.runtime.add_service(std::make_unique<LspService>(server));
+    try {
+        setup_terminal(state.theme);
+        if (!state.config.lsp_servers.empty()) {
+            for (const LspServerConfig &server : state.config.lsp_servers) {
+                state.runtime.add_service(std::make_unique<LspService>(server));
+            }
         }
+        state.runtime.start_services();
+        run_editor(state);
+        state.runtime.stop_services();
+        teardown_terminal();
+        return 0;
+    } catch (const std::exception &error) {
+        state.runtime.stop_services();
+        teardown_terminal();
+        std::fprintf(stderr, "medit: %s\n", error.what());
+        return 1;
     }
-    state.runtime.start_services();
-    run_editor(state);
-    state.runtime.stop_services();
-    teardown_terminal();
-    return 0;
 }
