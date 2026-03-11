@@ -1,4 +1,5 @@
 CXX := c++
+PYTHON ?= python3
 UNAME_S := $(shell uname -s)
 HAVE_PKGCONFIG := $(shell command -v pkg-config >/dev/null 2>&1 && echo yes)
 
@@ -70,9 +71,18 @@ $(BUILD_DIR)/%.o: %.cpp
 test: test_editor_core
 	./test_editor_core
 
+bootstrap-tree-sitter:
+	$(PYTHON) tools/bootstrap_tree_sitter.py --manifest tools/tree_sitter_languages.json --config-root .config/medit --build-root $(BUILD_DIR)/tree-sitter
+
+bootstrap-tree-sitter-%:
+	$(PYTHON) tools/bootstrap_tree_sitter.py --manifest tools/tree_sitter_languages.json --config-root .config/medit --build-root $(BUILD_DIR)/tree-sitter --languages $*
+
+tree-sitter-clean:
+	rm -rf $(BUILD_DIR)/tree-sitter .config/medit/grammars .config/medit/queries .config/medit/libtree-sitter.so .config/medit/libtree-sitter.dylib .config/medit/syntax.json
+
 clean:
 	rm -rf $(BUILD_DIR) medit test_editor_core
 
-.PHONY: all clean test
+.PHONY: all clean test bootstrap-tree-sitter tree-sitter-clean bootstrap-tree-sitter-%
 
 -include $(DEPFILES)

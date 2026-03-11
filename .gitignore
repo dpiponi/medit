@@ -1,5 +1,13 @@
 /medit
 /test_editor_core
+/build/
+
+/.config/medit/debug.log
+/.config/medit/grammars/
+/.config/medit/queries/
+/.config/medit/libtree-sitter.so
+/.config/medit/libtree-sitter.dylib
+/.config/medit/syntax.json
 
 *.o
 *.swp

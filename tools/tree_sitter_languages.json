@@ -1,0 +1,34 @@
+{
+  "runtime": {
+    "repo": "https://github.com/tree-sitter/tree-sitter.git",
+    "ref": "cf302b07d1cae984068b7eb44a6e44529566a8c9"
+  },
+  "languages": [
+    {
+      "name": "cpp",
+      "repo": "https://github.com/tree-sitter/tree-sitter-cpp.git",
+      "ref": "8b5b49eb196bec7040441bee33b2c9a4838d6967",
+      "extensions": [".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"],
+      "symbol_name": "tree_sitter_cpp",
+      "query_path": "queries/highlights.scm",
+      "scanner_path": "src/scanner.c"
+    },
+    {
+      "name": "python",
+      "repo": "https://github.com/tree-sitter/tree-sitter-python.git",
+      "ref": "26855eabccb19c6abf499fbc5b8dc7cc9ab8bc64",
+      "extensions": [".py", ".pyi", ".pyw"],
+      "symbol_name": "tree_sitter_python",
+      "query_path": "queries/highlights.scm",
+      "scanner_path": "src/scanner.c"
+    },
+    {
+      "name": "json",
+      "repo": "https://github.com/tree-sitter/tree-sitter-json.git",
+      "ref": "001c28d7a29832b06b0e831ec77845553c89b56d",
+      "extensions": [".json", ".jsonc"],
+      "symbol_name": "tree_sitter_json",
+      "query_path": "queries/highlights.scm"
+    }
+  ]
+}

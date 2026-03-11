@@ -24,6 +24,18 @@
 make
 ```
 
+To provision the pinned local tree-sitter runtime and bundled grammars for a fresh checkout:
+
+```sh
+make bootstrap-tree-sitter
+```
+
+That builds local assets under `.config/medit/` and regenerates `.config/medit/syntax.json`. To build only one bundled language, use a target like:
+
+```sh
+make bootstrap-tree-sitter-python
+```
+
 ## Test
 
 ```sh
@@ -116,6 +128,17 @@ Tree-sitter syntax can be configured per language through a syntax rules file:
 ```
 
 `syntax_config = syntax.json` points `medit` at that file. `syntax = python` forces a specific configured syntax language by name. If `syntax` is omitted, `medit` picks the first configured tree-sitter language whose extension matches the file. If no configured tree-sitter language matches, `medit` falls back to the built-in lightweight C++ highlighter for C/C++ files and otherwise leaves syntax coloring off.
+
+For reproducible fresh-checkout setup, the repo now ships a pinned tree-sitter manifest at [tools/tree_sitter_languages.json](/home/dan/de/tools/tree_sitter_languages.json) plus a bootstrap script at [tools/bootstrap_tree_sitter.py](/home/dan/de/tools/bootstrap_tree_sitter.py). Adding a bundled language means adding one manifest entry with:
+
+- repo URL
+- pinned commit
+- file extensions
+- symbol name
+- query path
+- optional scanner path
+
+Then run `make bootstrap-tree-sitter` to rebuild local grammar libraries, queries, and `syntax.json`.
 
 `right_justify_diagnostics = true` makes inline diagnostic annotations render against the right edge of the text area instead of starting from the left.
 
