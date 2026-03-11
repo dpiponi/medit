@@ -32,6 +32,7 @@ class EditorService {
     virtual void stop() = 0;
     virtual void handle_editor_event(const EditorEvent &event) = 0;
     virtual std::vector<ServiceEvent> poll() = 0;
+    virtual std::optional<int> poll_interval_ms() const;
 };
 
 class EditorRuntime {
@@ -42,8 +43,10 @@ class EditorRuntime {
 
     void start_services();
     void stop_services();
+    void process(EditorCore &core);
     void dispatch_editor_events(EditorCore &core);
     void poll_services();
+    std::optional<int> idle_wait_timeout_ms() const;
 
     const std::vector<ServiceEvent> &pending_service_events() const;
     std::vector<ServiceEvent> take_service_events();

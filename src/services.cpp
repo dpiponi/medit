@@ -1,6 +1,11 @@
 #include "services.hpp"
 
+#include <algorithm>
 #include <utility>
+
+std::optional<int> EditorService::poll_interval_ms() const {
+    return std::nullopt;
+}
 
 void EditorRuntime::add_service(std::unique_ptr<EditorService> service) {
     if (!service) {
@@ -49,6 +54,11 @@ void EditorRuntime::stop_services() {
     started_ = false;
 }
 
+void EditorRuntime::process(EditorCore &core) {
+    dispatch_editor_events(core);
+    poll_services();
+}
+
 void EditorRuntime::dispatch_editor_events(EditorCore &core) {
     std::vector<EditorEvent> events = core.take_events();
     if (events.empty()) {
@@ -66,6 +76,26 @@ void EditorRuntime::poll_services() {
     for (const std::unique_ptr<EditorService> &service : services_) {
         append_events(service->poll());
     }
+}
+
+std::optional<int> EditorRuntime::idle_wait_timeout_ms() const {
+    if (!started_) {
+        return std::nullopt;
+    }
+
+    std::optional<int> timeout_ms;
+    for (const std::unique_ptr<EditorService> &service : services_) {
+        std::optional<int> service_timeout = service->poll_interval_ms();
+        if (!service_timeout.has_value()) {
+            continue;
+        }
+
+        int clamped_timeout = std::max(0, *service_timeout);
+        if (!timeout_ms.has_value() || clamped_timeout < *timeout_ms) {
+            timeout_ms = clamped_timeout;
+        }
+    }
+    return timeout_ms;
 }
 
 const std::vector<ServiceEvent> &EditorRuntime::pending_service_events() const {

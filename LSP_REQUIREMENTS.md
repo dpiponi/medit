@@ -59,7 +59,7 @@ Items are ordered roughly by dependency and architectural leverage. Update this 
    Introduce a clean interface for long-lived background services so an LSP client can be attached without coupling protocol code to the editor core.
 
 8. Asynchronous event loop
-   Status: in progress in [editor.cpp](/home/dan/de/src/editor.cpp) and [services.cpp](/home/dan/de/src/services.cpp)
+   Status: in progress in [editor.cpp](/home/dan/de/src/editor.cpp), [services.cpp](/home/dan/de/src/services.cpp), and [test_editor_core.cpp](/home/dan/de/tests/test_editor_core.cpp)
    The frontend/runtime needs a non-blocking way to process editor input, background responses, and UI updates together.
 
 9. Diagnostics data model

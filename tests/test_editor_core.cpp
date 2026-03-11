@@ -578,6 +578,8 @@ void test_config_file_selects_keybindings_and_colors() {
 
 class RecordingService : public EditorService {
   public:
+    explicit RecordingService(std::optional<int> interval_ms = std::nullopt) : interval_ms_(interval_ms) {}
+
     std::string name() const override {
         return "recording";
     }
@@ -608,10 +610,17 @@ class RecordingService : public EditorService {
         return events;
     }
 
+    std::optional<int> poll_interval_ms() const override {
+        return interval_ms_;
+    }
+
     bool started = false;
     bool stopped = false;
     std::vector<EditorEvent> received_events;
     std::vector<ServiceEvent> queued_events;
+
+  private:
+    std::optional<int> interval_ms_;
 };
 
 void test_editor_runtime_service_boundary() {
@@ -652,6 +661,23 @@ void test_editor_runtime_service_boundary() {
     expect(stopped_events[0].type == ServiceEventType::ServiceStopped, "runtime should emit service stopped");
 }
 
+void test_editor_runtime_idle_timeout() {
+    EditorRuntime runtime;
+    runtime.add_service(std::make_unique<RecordingService>(150));
+    runtime.add_service(std::make_unique<RecordingService>(25));
+    runtime.add_service(std::make_unique<RecordingService>());
+
+    expect(!runtime.idle_wait_timeout_ms().has_value(), "stopped runtime should not request idle wakeups");
+
+    runtime.start_services();
+    std::optional<int> timeout_ms = runtime.idle_wait_timeout_ms();
+    expect(timeout_ms.has_value(), "started runtime with polling services should request idle wakeups");
+    expect(*timeout_ms == 25, "runtime should choose the shortest requested poll interval");
+
+    runtime.stop_services();
+    expect(!runtime.idle_wait_timeout_ms().has_value(), "stopped runtime should clear idle wakeups");
+}
+
 }  // namespace
 
 int main() {
@@ -678,6 +704,7 @@ int main() {
         test_keybinding_dispatch();
         test_config_file_selects_keybindings_and_colors();
         test_editor_runtime_service_boundary();
+        test_editor_runtime_idle_timeout();
     } catch (const std::exception &error) {
         std::cerr << "test failure: " << error.what() << '\n';
         return 1;

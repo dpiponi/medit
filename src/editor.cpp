@@ -1201,10 +1201,14 @@ void handle_input(EditorState &state) {
     handle_keymap_input(state, key, is_special);
 }
 
+void update_input_timeout(const EditorState &state) {
+    std::optional<int> timeout_ms = state.runtime.idle_wait_timeout_ms();
+    timeout(timeout_ms.has_value() ? *timeout_ms : -1);
+}
+
 void run_editor(EditorState &state) {
     while (!state.should_quit) {
-        state.runtime.dispatch_editor_events(state.core);
-        state.runtime.poll_services();
+        state.runtime.process(state.core);
         state.runtime.take_service_events();
         int screen_rows = 0;
         int screen_cols = 0;
@@ -1213,6 +1217,7 @@ void run_editor(EditorState &state) {
         int buffer_cols = screen_cols - line_number_width(state) - 1;
         ensure_cursor_visible(state, buffer_rows, buffer_cols);
         draw_editor(state);
+        update_input_timeout(state);
         handle_input(state);
     }
 }
