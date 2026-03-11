@@ -478,55 +478,55 @@ std::size_t codepoint_column_for_utf8_byte(const std::u32string &line, std::size
 }
 
 StyleRole capture_name_to_style_role(const std::string &capture_name) {
-    if (capture_name.find("comment") != std::string::npos) {
+    if (capture_name.contains("comment")) {
         return StyleRole::SyntaxComment;
     }
-    if (capture_name.find("string") != std::string::npos ||
-        capture_name.find("character") != std::string::npos ||
-        capture_name.find("escape") != std::string::npos ||
-        capture_name.find("embedded") != std::string::npos) {
+    if (capture_name.contains("string") ||
+        capture_name.contains("character") ||
+        capture_name.contains("escape") ||
+        capture_name.contains("embedded")) {
         return StyleRole::SyntaxString;
     }
-    if (capture_name.find("function.builtin") != std::string::npos ||
-        capture_name.find("constructor") != std::string::npos ||
-        capture_name.find("variable.builtin") != std::string::npos ||
-        capture_name.find("constant.builtin") != std::string::npos) {
+    if (capture_name.contains("function.builtin") ||
+        capture_name.contains("constructor") ||
+        capture_name.contains("variable.builtin") ||
+        capture_name.contains("constant.builtin")) {
         return StyleRole::SyntaxBuiltin;
     }
-    if (capture_name.find("function") != std::string::npos ||
-        capture_name.find("method") != std::string::npos) {
+    if (capture_name.contains("function") ||
+        capture_name.contains("method")) {
         return StyleRole::SyntaxFunction;
     }
-    if (capture_name.find("property") != std::string::npos ||
-        capture_name.find("field") != std::string::npos ||
-        capture_name.find("attribute") != std::string::npos) {
+    if (capture_name.contains("property") ||
+        capture_name.contains("field") ||
+        capture_name.contains("attribute")) {
         return StyleRole::SyntaxProperty;
     }
-    if (capture_name.find("number") != std::string::npos ||
-        capture_name.find("float") != std::string::npos ||
-        capture_name.find("integer") != std::string::npos) {
+    if (capture_name.contains("number") ||
+        capture_name.contains("float") ||
+        capture_name.contains("integer")) {
         return StyleRole::SyntaxNumber;
     }
-    if (capture_name.find("operator") != std::string::npos ||
-        capture_name.find("punctuation") != std::string::npos) {
+    if (capture_name.contains("operator") ||
+        capture_name.contains("punctuation")) {
         return StyleRole::SyntaxOperator;
     }
-    if (capture_name.find("type") != std::string::npos ||
-        capture_name.find("module") != std::string::npos ||
-        capture_name.find("namespace") != std::string::npos) {
+    if (capture_name.contains("type") ||
+        capture_name.contains("module") ||
+        capture_name.contains("namespace")) {
         return StyleRole::SyntaxType;
     }
-    if (capture_name.find("constant") != std::string::npos ||
-        capture_name.find("boolean") != std::string::npos) {
+    if (capture_name.contains("constant") ||
+        capture_name.contains("boolean")) {
         return StyleRole::SyntaxConstant;
     }
-    if (capture_name.find("keyword") != std::string::npos ||
-        capture_name.find("conditional") != std::string::npos ||
-        capture_name.find("repeat") != std::string::npos ||
-        capture_name.find("exception") != std::string::npos ||
-        capture_name.find("include") != std::string::npos ||
-        capture_name.find("define") != std::string::npos ||
-        capture_name.find("preproc") != std::string::npos) {
+    if (capture_name.contains("keyword") ||
+        capture_name.contains("conditional") ||
+        capture_name.contains("repeat") ||
+        capture_name.contains("exception") ||
+        capture_name.contains("include") ||
+        capture_name.contains("define") ||
+        capture_name.contains("preproc")) {
         return StyleRole::SyntaxKeyword;
     }
     return StyleRole::DefaultText;

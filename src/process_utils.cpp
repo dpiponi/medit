@@ -53,7 +53,7 @@ bool executable_exists(const std::string &executable) {
         return false;
     }
     std::filesystem::path path = executable;
-    if (path.is_absolute() || executable.find('/') != std::string::npos) {
+    if (path.is_absolute() || executable.contains('/')) {
 #if defined(__unix__) || defined(__APPLE__)
         return access(executable.c_str(), X_OK) == 0;
 #else

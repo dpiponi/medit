@@ -330,14 +330,14 @@ std::string file_uri_for_path(const std::string &path) {
 }
 
 std::string file_path_from_uri(const std::string &uri) {
-    if (uri.rfind("file://", 0) != 0) {
+    if (!uri.starts_with("file://")) {
         return "";
     }
     return percent_decode_path(uri.substr(7));
 }
 
 std::string normalize_document_uri(const std::string &uri) {
-    if (uri.rfind("file://", 0) != 0) {
+    if (!uri.starts_with("file://")) {
         return uri;
     }
     std::string path = file_path_from_uri(uri);

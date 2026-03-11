@@ -4,7 +4,7 @@ UNAME_S := $(shell uname -s)
 HAVE_PKGCONFIG := $(shell command -v pkg-config >/dev/null 2>&1 && echo yes)
 
 BASE_CPPFLAGS := -Isrc -D_XOPEN_SOURCE_EXTENDED=1
-BASE_CXXFLAGS := -std=c++17 -Wall -Wextra -pedantic
+BASE_CXXFLAGS := -std=c++23 -Wall -Wextra -pedantic
 BASE_LDFLAGS :=
 BASE_LDLIBS :=
 

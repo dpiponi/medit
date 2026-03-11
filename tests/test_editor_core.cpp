@@ -398,7 +398,7 @@ void test_document_version_is_monotonic() {
 
 void test_document_identity_and_events() {
     EditorCore core;
-    expect(core.document_uri().rfind("untitled://medit/", 0) == 0, "new buffer has untitled document uri");
+    expect(core.document_uri().starts_with("untitled://medit/"), "new buffer has untitled document uri");
     expect(core.pending_events().empty(), "new buffer starts with no queued events");
 
     core.insert_codepoint(U'a');
@@ -1013,13 +1013,13 @@ void test_cpp_syntax_highlighting() {
 
 void test_file_uri_normalization() {
     std::string uri = file_uri_for_path("tmp dir/file name.cpp");
-    expect(uri.find("%20") != std::string::npos, "file uri should percent-encode spaces");
+    expect(uri.contains("%20"), "file uri should percent-encode spaces");
 
     std::string normalized = normalize_document_uri("file:///tmp%20dir/file%20name.cpp");
     expect(normalized == "file:///tmp%20dir/file%20name.cpp", "normalized file uri should preserve encoded absolute path");
 
     std::string roundtrip_path = file_path_from_uri(uri);
-    expect(roundtrip_path.find("tmp dir/file name.cpp") != std::string::npos, "file uri should decode back to path");
+    expect(roundtrip_path.contains("tmp dir/file name.cpp"), "file uri should decode back to path");
 }
 
 void test_string_utilities() {
@@ -1132,10 +1132,10 @@ void test_lsp_service_reports_startup_failures() {
             if (!event.command || event.command->type != EditorCommandType::SetStatusMessage) {
                 continue;
             }
-            if (event.command->message.find("mac-startup-failure") != std::string::npos) {
+            if (event.command->message.contains("mac-startup-failure")) {
                 saw_stderr = true;
             }
-            if (event.command->message.find("LSP exited before initialize") != std::string::npos) {
+            if (event.command->message.contains("LSP exited before initialize")) {
                 saw_exit = true;
             }
         }

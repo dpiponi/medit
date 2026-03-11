@@ -2136,7 +2136,7 @@ std::optional<wint_t> key_from_token(const std::string &token) {
     if (token == "esc") {
         return 27;
     }
-    if (token.rfind("ctrl-", 0) == 0 && token.size() == 6) {
+    if (token.starts_with("ctrl-") && token.size() == 6) {
         char ch = token[5];
         if (ch >= 'a' && ch <= 'z') {
             return static_cast<wint_t>(ch - 'a' + 1);
@@ -2155,7 +2155,7 @@ bool token_is_printable_for_replay(const std::string &token) {
         token == "shift-tab") {
         return false;
     }
-    if (token.rfind("ctrl-", 0) == 0) {
+    if (token.starts_with("ctrl-")) {
         return false;
     }
     return true;

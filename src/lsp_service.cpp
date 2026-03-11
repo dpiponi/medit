@@ -154,7 +154,7 @@ std::vector<std::string> extract_lsp_messages(std::string &buffer) {
             if (!line.empty() && line.back() == '\r') {
                 line.pop_back();
             }
-            if (line.rfind("Content-Length:", 0) == 0) {
+            if (line.starts_with("Content-Length:")) {
                 content_length = static_cast<std::size_t>(std::stoul(line.substr(std::strlen("Content-Length:"))));
             }
         }
