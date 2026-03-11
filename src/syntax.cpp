@@ -1,5 +1,7 @@
 #include "syntax.hpp"
 
+#include "logger.hpp"
+
 #include <cctype>
 #include <cstdint>
 #include <filesystem>
@@ -288,6 +290,8 @@ TreeSitterApi load_tree_sitter_api() {
     TreeSitterApi api;
 #if defined(__unix__) || defined(__APPLE__)
     const char *candidates[] = {
+        ".config/medit/libtree-sitter.so",
+        ".config/medit/libtree-sitter.dylib",
         "libtree-sitter.so.0",
         "libtree-sitter.so",
         "libtree-sitter.dylib",
@@ -295,13 +299,16 @@ TreeSitterApi load_tree_sitter_api() {
         "/opt/homebrew/lib/libtree-sitter.dylib",
     };
     for (const char *candidate : candidates) {
+        log_debug(std::string("syntax runtime probe path=") + candidate);
         api.handle = dlopen(candidate, RTLD_NOW | RTLD_GLOBAL);
         if (api.handle) {
+            log_debug(std::string("syntax runtime loaded path=") + candidate);
             break;
         }
     }
     if (!api.handle) {
         api.error = "tree-sitter runtime library not found";
+        log_debug("syntax runtime load failed: " + api.error);
         return api;
     }
 
@@ -328,11 +335,13 @@ TreeSitterApi load_tree_sitter_api() {
         !load(api.query_cursor_exec, "ts_query_cursor_exec") ||
         !load(api.query_cursor_next_capture, "ts_query_cursor_next_capture")) {
         api.error = "tree-sitter runtime is missing required symbols";
+        log_debug("syntax runtime load failed: " + api.error);
         dlclose(api.handle);
         api.handle = nullptr;
     }
 #else
     api.error = "tree-sitter runtime loading unsupported on this platform";
+    log_debug("syntax runtime load failed: " + api.error);
 #endif
     return api;
 }
@@ -365,6 +374,7 @@ LoadedTreeSitterLanguage *load_tree_sitter_language(
     TreeSitterApi &api = tree_sitter_api();
     if (!api.loaded()) {
         error_message = api.error;
+        log_debug("syntax language load failed name=" + language.name + " error=" + *error_message);
         return nullptr;
     }
 
@@ -378,6 +388,7 @@ LoadedTreeSitterLanguage *load_tree_sitter_language(
     void *grammar_handle = dlopen(language.grammar_path.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!grammar_handle) {
         error_message = "could not load grammar library: " + language.grammar_path.string();
+        log_debug("syntax language load failed name=" + language.name + " error=" + *error_message);
         return nullptr;
     }
 
@@ -386,6 +397,7 @@ LoadedTreeSitterLanguage *load_tree_sitter_language(
     if (!factory) {
         dlclose(grammar_handle);
         error_message = "could not load grammar symbol: " + language.symbol_name;
+        log_debug("syntax language load failed name=" + language.name + " error=" + *error_message);
         return nullptr;
     }
 
@@ -393,6 +405,7 @@ LoadedTreeSitterLanguage *load_tree_sitter_language(
     if (!parser) {
         dlclose(grammar_handle);
         error_message = "could not create tree-sitter parser";
+        log_debug("syntax language load failed name=" + language.name + " error=" + *error_message);
         return nullptr;
     }
 
@@ -401,6 +414,7 @@ LoadedTreeSitterLanguage *load_tree_sitter_language(
         api.parser_delete(parser);
         dlclose(grammar_handle);
         error_message = "could not attach grammar language";
+        log_debug("syntax language load failed name=" + language.name + " error=" + *error_message);
         return nullptr;
     }
 
@@ -411,6 +425,7 @@ LoadedTreeSitterLanguage *load_tree_sitter_language(
         api.parser_delete(parser);
         dlclose(grammar_handle);
         error_message = error.what();
+        log_debug("syntax language load failed name=" + language.name + " error=" + *error_message);
         return nullptr;
     }
 
@@ -426,6 +441,7 @@ LoadedTreeSitterLanguage *load_tree_sitter_language(
         api.parser_delete(parser);
         dlclose(grammar_handle);
         error_message = "could not compile highlights query: " + language.highlights_path.string();
+        log_debug("syntax language load failed name=" + language.name + " error=" + *error_message);
         return nullptr;
     }
 
@@ -443,10 +459,12 @@ LoadedTreeSitterLanguage *load_tree_sitter_language(
     }
 
     auto inserted = language_cache().emplace(key, std::move(loaded));
+    log_debug("syntax language loaded name=" + language.name);
     return &inserted.first->second;
 #else
     (void)language;
     error_message = "tree-sitter runtime loading unsupported on this platform";
+    log_debug("syntax language load failed error=" + *error_message);
     return nullptr;
 #endif
 }
@@ -517,6 +535,7 @@ std::vector<std::vector<HighlightSpan>> highlight_tree_sitter_document(
         static_cast<uint32_t>(source.size()));
     if (!tree) {
         error_message = "tree-sitter parse failed for " + language.name;
+        log_debug("syntax highlight failed name=" + language.name + " error=" + *error_message);
         return spans_by_line;
     }
 
@@ -524,6 +543,7 @@ std::vector<std::vector<HighlightSpan>> highlight_tree_sitter_document(
     if (!cursor) {
         api.tree_delete(tree);
         error_message = "could not create tree-sitter query cursor";
+        log_debug("syntax highlight failed name=" + language.name + " error=" + *error_message);
         return spans_by_line;
     }
 
