@@ -1,5 +1,6 @@
 #include "editor_session.hpp"
 
+#include <filesystem>
 #include <utility>
 
 EditorSession::EditorSession() {
@@ -69,14 +70,17 @@ EditorBuffer &EditorSession::new_buffer(bool activate) {
 EditorBuffer *EditorSession::open_file(const std::string &path, bool activate) {
     EditorBuffer &buffer = create_buffer(activate);
     if (!buffer.core.load_file(path)) {
-        std::size_t opened_index = buffers_.size() - 1;
-        buffers_.erase(buffers_.begin() + static_cast<std::ptrdiff_t>(opened_index));
-        if (buffers_.empty()) {
-            new_buffer(true);
-        } else if (active_buffer_index_ >= buffers_.size()) {
-            active_buffer_index_ = buffers_.size() - 1;
+        if (std::filesystem::exists(path)) {
+            std::size_t opened_index = buffers_.size() - 1;
+            buffers_.erase(buffers_.begin() + static_cast<std::ptrdiff_t>(opened_index));
+            if (buffers_.empty()) {
+                new_buffer(true);
+            } else if (active_buffer_index_ >= buffers_.size()) {
+                active_buffer_index_ = buffers_.size() - 1;
+            }
+            return nullptr;
         }
-        return nullptr;
+        buffer.core.open_empty_file(path);
     }
     sync_clipboard_into(buffer);
     return &buffer;

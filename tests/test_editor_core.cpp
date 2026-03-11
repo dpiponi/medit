@@ -222,6 +222,29 @@ void test_file_io_and_dirty_tracking() {
     std::remove(path);
 }
 
+void test_open_empty_missing_file_and_save() {
+    std::filesystem::path root = std::filesystem::temp_directory_path() / "medit_missing_file_core";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    std::filesystem::path path = root / "new-file.txt";
+
+    EditorCore core;
+    core.open_empty_file(path.string());
+    expect(core.file_path().has_value() && *core.file_path() == path.string(), "empty file should keep requested path");
+    expect(core.document_uri() == file_uri_for_path(path.string()), "empty file should use requested document uri");
+    expect_text(core, "", "empty file should start empty");
+    expect(!core.is_dirty(), "new empty named buffer should start clean");
+
+    core.insert_codepoint(U'x');
+    expect(core.save_current_file(), "save_current_file should create missing file");
+
+    EditorCore reopened;
+    expect(reopened.load_file(path.string()), "reopened created file should load");
+    expect_text(reopened, "x", "created file should contain saved text");
+
+    std::filesystem::remove_all(root);
+}
+
 void test_navigation() {
     EditorCore core;
     for (char ch : std::string("a")) {
@@ -1284,6 +1307,28 @@ void test_editor_session_open_and_close_rules() {
     expect_event_type(close_events.back(), EditorEventType::DocumentClosed, "close should emit document closed");
 }
 
+void test_editor_session_open_missing_file_creates_named_buffer() {
+    std::filesystem::path temp_dir = std::filesystem::temp_directory_path() / "medit_session_missing_file";
+    std::filesystem::remove_all(temp_dir);
+    std::filesystem::create_directories(temp_dir);
+    std::filesystem::path path = temp_dir / "missing.txt";
+
+    EditorSession session;
+    EditorBuffer *buffer = session.open_file(path.string(), true);
+    expect(buffer != nullptr, "opening missing file should create a buffer");
+    expect(buffer->core.file_path().has_value() && *buffer->core.file_path() == path.string(), "missing-file buffer should keep requested path");
+    expect_text(buffer->core, "", "missing-file buffer should start empty");
+
+    buffer->core.insert_codepoint(U'a');
+    expect(buffer->core.save_current_file(), "saving missing-file buffer should create file");
+
+    EditorCore reopened;
+    expect(reopened.load_file(path.string()), "created file should load");
+    expect_text(reopened, "a", "created file should contain saved text");
+
+    std::filesystem::remove_all(temp_dir);
+}
+
 void test_editor_session_open_multiple_files() {
     EditorSession session;
     std::filesystem::path temp_dir = std::filesystem::temp_directory_path() / "medit_multi_open_test";
@@ -1325,6 +1370,7 @@ int main() {
         test_yank_and_paste();
         test_replace_selection_with_yank();
         test_file_io_and_dirty_tracking();
+        test_open_empty_missing_file_and_save();
         test_navigation();
         test_find_and_till_character_motions();
         test_word_object_ranges();
@@ -1356,6 +1402,7 @@ int main() {
         test_editor_runtime_idle_timeout();
         test_editor_session_buffers_and_clipboard();
         test_editor_session_open_and_close_rules();
+        test_editor_session_open_missing_file_creates_named_buffer();
         test_editor_session_open_multiple_files();
     } catch (const std::exception &error) {
         std::cerr << "test failure: " << error.what() << '\n';

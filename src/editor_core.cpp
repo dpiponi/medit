@@ -1017,6 +1017,22 @@ bool EditorCore::load_file(const std::string &path) {
     return true;
 }
 
+void EditorCore::open_empty_file(const std::string &path) {
+    std::string previous_uri = document_uri_;
+    std::size_t previous_version = document_version_;
+
+    lines_ = {U""};
+    file_path_ = path;
+    document_uri_ = file_uri_for_path(path);
+    cursor_ = {0, 0};
+    selection_anchor_.reset();
+    selection_mode_ = SelectionMode::Character;
+    preferred_column_ = 0;
+    reset_history();
+    emit_document_closed(previous_uri, previous_version);
+    emit_document_opened();
+}
+
 bool EditorCore::save_file(const std::string &path) const {
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
     if (!output) {

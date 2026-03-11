@@ -206,6 +206,7 @@ class EditorCore {
     bool extend_selection_to_range(Range range);
 
     bool load_file(const std::string &path);
+    void open_empty_file(const std::string &path);
     bool save_current_file();
     bool save_current_file_as(const std::string &path);
     void close_document();
