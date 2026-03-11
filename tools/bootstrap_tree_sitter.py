@@ -73,11 +73,12 @@ def compile_source(compiler: str, source_path: Path, output_path: Path, include_
 
 
 def build_language(language, repo_dir: Path, config_root: Path, build_root: Path, cc: str, cxx: str):
-    parser_path = repo_dir / "src" / "parser.c"
+    source_root = repo_dir / language.get("source_subdir", "")
+    parser_path = source_root / "src" / "parser.c"
     if not parser_path.exists():
         raise FileNotFoundError(f"missing parser source: {parser_path}")
 
-    include_dir = repo_dir / "src"
+    include_dir = source_root / "src"
     grammar_dir = config_root / "grammars"
     query_dir = config_root / "queries" / language["name"]
     grammar_dir.mkdir(parents=True, exist_ok=True)
@@ -92,11 +93,11 @@ def build_language(language, repo_dir: Path, config_root: Path, build_root: Path
     scanner_path = language.get("scanner_path")
     if scanner_path is None:
         for candidate in ("src/scanner.c", "src/scanner.cc", "src/scanner.cpp", "src/scanner.cxx"):
-            if (repo_dir / candidate).exists():
+            if (source_root / candidate).exists():
                 scanner_path = candidate
                 break
     if scanner_path:
-        scanner_source = repo_dir / scanner_path
+        scanner_source = source_root / scanner_path
         if not scanner_source.exists():
             raise FileNotFoundError(f"missing scanner source: {scanner_source}")
         scanner_obj = build_root / "objects" / language["name"] / "scanner.o"
@@ -110,7 +111,7 @@ def build_language(language, repo_dir: Path, config_root: Path, build_root: Path
     output_path = grammar_dir / output_name
     run(shared_link_command(linker, objects, output_path))
 
-    query_source = repo_dir / language["query_path"]
+    query_source = source_root / language["query_path"]
     if not query_source.exists():
         raise FileNotFoundError(f"missing highlights query: {query_source}")
     shutil.copyfile(query_source, query_dir / "highlights.scm")

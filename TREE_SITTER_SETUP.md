@@ -51,7 +51,23 @@ Edit [tools/tree_sitter_languages.json](/home/dan/de/tools/tree_sitter_languages
 - `extensions`
 - `symbol_name`
 - `query_path`
+- optional `source_subdir`
 - optional `scanner_path`
+
+`ref` is the exact git commit hash to build from. It keeps fresh-checkout setup reproducible by avoiding whatever the grammar repo happens to have on its default branch later.
+
+To get a `ref` for a new language:
+
+```sh
+git clone https://github.com/tree-sitter/tree-sitter-rust.git /tmp/tree-sitter-rust
+git -C /tmp/tree-sitter-rust rev-parse HEAD
+```
+
+That prints the full commit SHA you should copy into the manifest. If you want a different revision than the current `HEAD`, inspect the history first:
+
+```sh
+git -C /tmp/tree-sitter-rust log --oneline
+```
 
 Then rerun:
 
@@ -60,6 +76,13 @@ make bootstrap-tree-sitter
 ```
 
 No C++ changes should be required for a normal tree-sitter language addition.
+
+If a grammar repo contains the actual parser in a nested subdirectory, set `source_subdir`. For example, a repo layout like:
+
+- `tree-sitter-markdown/tree-sitter-markdown/`
+- `tree-sitter-markdown/tree-sitter-markdown-inline/`
+
+would need entries that point at one of those subdirectories explicitly.
 
 ## Activate
 

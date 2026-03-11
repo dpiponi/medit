@@ -29,6 +29,15 @@
       "extensions": [".json", ".jsonc"],
       "symbol_name": "tree_sitter_json",
       "query_path": "queries/highlights.scm"
+    },
+    {
+      "name": "markdown",
+      "repo": "https://github.com/tree-sitter-grammars/tree-sitter-markdown.git",
+      "ref": "v0.5.3",
+      "source_subdir": "tree-sitter-markdown",
+      "extensions": [".md", ".markdown"],
+      "symbol_name": "tree_sitter_markdown",
+      "query_path": "queries/highlights.scm"
     }
   ]
 }
