@@ -101,6 +101,39 @@ const JsonValue &required_object_member(const JsonValue &object, const char *key
     return found->second;
 }
 
+LspServerConfig::WorkspaceConfig parse_workspace_config(const JsonValue &value) {
+    if (value.type != JsonValue::Type::Object) {
+        throw std::runtime_error("lsp workspace config must be an object");
+    }
+
+    LspServerConfig::WorkspaceConfig workspace;
+    auto markers = value.object_value.find("markers");
+    if (markers != value.object_value.end()) {
+        if (markers->second.type != JsonValue::Type::Array) {
+            throw std::runtime_error("lsp workspace markers must be an array");
+        }
+        for (const JsonValue &marker_value : markers->second.array_value) {
+            if (marker_value.type != JsonValue::Type::String) {
+                throw std::runtime_error("lsp workspace markers must be strings");
+            }
+            workspace.markers.push_back(marker_value.string_value);
+        }
+    }
+
+    auto fallback = value.object_value.find("fallback");
+    if (fallback != value.object_value.end()) {
+        if (fallback->second.type != JsonValue::Type::String) {
+            throw std::runtime_error("lsp workspace fallback must be a string");
+        }
+        workspace.fallback = fallback->second.string_value;
+    }
+
+    if (workspace.fallback != "file_directory" && workspace.fallback != "current_working_directory") {
+        throw std::runtime_error("unsupported lsp workspace fallback: " + workspace.fallback);
+    }
+    return workspace;
+}
+
 std::vector<LspServerConfig> load_lsp_servers_from_path(const std::filesystem::path &path) {
     std::string source = read_text_file(path);
     if (source.empty()) {
@@ -152,6 +185,10 @@ std::vector<LspServerConfig> load_lsp_servers_from_path(const std::filesystem::p
         }
         if (server.name.empty() || server.command.empty() || server.language_id.empty() || server.extensions.empty()) {
             throw std::runtime_error("lsp server entries must not be empty");
+        }
+        auto workspace = server_value.object_value.find("workspace");
+        if (workspace != server_value.object_value.end()) {
+            server.workspace = parse_workspace_config(workspace->second);
         }
         parsed_servers.push_back(std::move(server));
     }
@@ -239,6 +276,7 @@ EditorConfig load_editor_config_from_path(const std::filesystem::path &path) {
         fallback.command = *config.lsp_command;
         fallback.language_id = *config.lsp_language_id;
         fallback.extensions.push_back("*");
+        fallback.workspace.fallback = "current_working_directory";
         config.lsp_servers.push_back(std::move(fallback));
     }
 
@@ -285,4 +323,29 @@ std::string infer_language_id(const EditorConfig &config, const std::optional<st
         return *wildcard;
     }
     return "text";
+}
+
+std::filesystem::path infer_workspace_root(const LspServerConfig &config, const std::optional<std::string> &file_path) {
+    if (file_path && !file_path->empty()) {
+        std::filesystem::path current = std::filesystem::path(*file_path).parent_path();
+        if (!current.empty()) {
+            while (true) {
+                for (const std::string &marker : config.workspace.markers) {
+                    if (std::filesystem::exists(current / marker)) {
+                        return current;
+                    }
+                }
+                std::filesystem::path parent = current.parent_path();
+                if (parent.empty() || parent == current) {
+                    break;
+                }
+                current = parent;
+            }
+            if (config.workspace.fallback == "file_directory") {
+                return std::filesystem::path(*file_path).parent_path();
+            }
+        }
+    }
+
+    return std::filesystem::current_path();
 }

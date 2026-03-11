@@ -64,25 +64,38 @@ Example [lsp.json](/home/dan/de/.config/medit/lsp.json):
       "name": "cpp",
       "command": "clangd --background-index",
       "language_id": "cpp",
-      "extensions": [".cpp", ".hpp"]
+      "extensions": [".cpp", ".hpp"],
+      "workspace": {
+        "markers": ["compile_commands.json", ".clangd", "CMakeLists.txt", ".git"],
+        "fallback": "file_directory"
+      }
     },
     {
       "name": "json",
       "command": "vscode-json-languageserver --stdio",
       "language_id": "json",
-      "extensions": [".json", ".jsonc"]
+      "extensions": [".json", ".jsonc"],
+      "workspace": {
+        "markers": ["package.json", ".git"],
+        "fallback": "file_directory"
+      }
     },
     {
       "name": "python",
       "command": "pyright-langserver --stdio",
       "language_id": "python",
-      "extensions": [".py", ".pyi", ".pyw"]
+      "extensions": [".py", ".pyi", ".pyw"],
+      "workspace": {
+        "markers": ["pyrightconfig.json", "pyproject.toml", "setup.py", "setup.cfg", ".git"],
+        "fallback": "file_directory"
+      }
     }
   ]
 }
 ```
 
 Each open buffer picks the first matching server by file extension and sends that server the configured language id. The old `lsp_command` and `lsp_language_id` keys still work as a single catch-all fallback.
+The workspace root for each server is found by walking upward from the opened file and looking for the configured `workspace.markers`, then falling back according to `workspace.fallback`.
 
 `syntax = cpp` forces the lightweight C++ syntax highlighter. If `syntax` is omitted, `medit` auto-detects C/C++ files by extension and otherwise leaves syntax coloring off.
 

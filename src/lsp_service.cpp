@@ -137,7 +137,6 @@ void LspService::start() {
     running_ = true;
     reader_thread_ = std::thread(&LspService::reader_loop, this);
     stderr_thread_ = std::thread(&LspService::stderr_loop, this);
-    send_initialize();
 #else
     queue_status("LSP transport unsupported on this platform");
 #endif
@@ -153,6 +152,8 @@ void LspService::stop() {
     shutdown_process();
     running_ = false;
     initialized_ = false;
+    initialize_request_id_ = -1;
+    workspace_root_.reset();
     open_documents_.clear();
 }
 
@@ -169,6 +170,7 @@ void LspService::handle_editor_event(const EditorEvent &event) {
         case EditorEventType::DocumentSaved:
         case EditorEventType::DocumentClosed:
             if (!initialized_) {
+                ensure_initialized_for_event(event);
                 pending_editor_events_.push_back(event);
                 return;
             }
@@ -249,6 +251,17 @@ bool LspService::matches_document(const std::string &document_uri) const {
     }
     std::string extension = lowercase(std::filesystem::path(file_path).extension().string());
     return std::find(config_.extensions.begin(), config_.extensions.end(), extension) != config_.extensions.end();
+}
+
+void LspService::ensure_initialized_for_event(const EditorEvent &event) {
+    if (initialize_request_id_ >= 0) {
+        return;
+    }
+    std::string file_path = file_path_from_uri(event.document_uri);
+    workspace_root_ = infer_workspace_root(
+        config_,
+        file_path.empty() ? std::optional<std::string>() : std::optional<std::string>(file_path));
+    send_initialize(*workspace_root_);
 }
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -378,9 +391,9 @@ void LspService::reader_loop() {}
 bool LspService::write_payload(const std::string &) { return false; }
 #endif
 
-void LspService::send_initialize() {
+void LspService::send_initialize(const std::filesystem::path &workspace_root) {
     initialize_request_id_ = next_request_id_++;
-    std::string root = std::filesystem::current_path().string();
+    std::string root = workspace_root.string();
     std::ostringstream payload;
     payload << "{"
             << "\"jsonrpc\":\"2.0\","

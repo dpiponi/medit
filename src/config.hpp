@@ -7,10 +7,16 @@
 #include <vector>
 
 struct LspServerConfig {
+    struct WorkspaceConfig {
+        std::vector<std::string> markers;
+        std::string fallback = "file_directory";
+    };
+
     std::string name;
     std::string command;
     std::string language_id;
     std::vector<std::string> extensions;
+    WorkspaceConfig workspace;
 };
 
 struct EditorConfig {
@@ -28,3 +34,4 @@ struct EditorConfig {
 EditorConfig load_editor_config();
 EditorConfig load_editor_config_from_path(const std::filesystem::path &path);
 std::string infer_language_id(const EditorConfig &config, const std::optional<std::string> &file_path);
+std::filesystem::path infer_workspace_root(const LspServerConfig &config, const std::optional<std::string> &file_path);

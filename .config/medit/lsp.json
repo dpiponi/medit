@@ -4,19 +4,31 @@
       "name": "cpp",
       "command": "clangd --background-index",
       "language_id": "cpp",
-      "extensions": [".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"]
+      "extensions": [".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"],
+      "workspace": {
+        "markers": ["compile_commands.json", ".clangd", "CMakeLists.txt", "meson.build", ".git"],
+        "fallback": "file_directory"
+      }
     },
     {
       "name": "json",
       "command": "vscode-json-languageserver --stdio",
       "language_id": "json",
-      "extensions": [".json", ".jsonc"]
+      "extensions": [".json", ".jsonc"],
+      "workspace": {
+        "markers": ["package.json", ".git"],
+        "fallback": "file_directory"
+      }
     },
     {
       "name": "python",
       "command": "pyright-langserver --stdio",
       "language_id": "python",
-      "extensions": [".py", ".pyi", ".pyw"]
+      "extensions": [".py", ".pyi", ".pyw"],
+      "workspace": {
+        "markers": ["pyrightconfig.json", "pyproject.toml", "setup.py", "setup.cfg", ".git"],
+        "fallback": "file_directory"
+      }
     }
   ]
 }

@@ -726,7 +726,11 @@ void test_config_file_selects_keybindings_and_colors() {
                "      \"name\": \"cpp\",\n"
                "      \"command\": \"clangd --background-index\",\n"
                "      \"language_id\": \"cpp\",\n"
-               "      \"extensions\": [\".cpp\", \".hpp\"]\n"
+               "      \"extensions\": [\".cpp\", \".hpp\"],\n"
+               "      \"workspace\": {\n"
+               "        \"markers\": [\"compile_commands.json\", \".git\"],\n"
+               "        \"fallback\": \"file_directory\"\n"
+               "      }\n"
                "    }\n"
                "  ]\n"
                "}\n";
@@ -775,6 +779,10 @@ void test_config_file_selects_keybindings_and_colors() {
     expect(config.lsp_servers[0].command == "clangd --background-index", "config should parse lsp command");
     expect(config.lsp_servers[0].language_id == "cpp", "config should parse lsp language id");
     expect(config.lsp_servers[0].extensions.size() == 2, "config should parse lsp extensions");
+    expect(config.lsp_servers[0].workspace.markers.size() == 2, "config should parse workspace markers");
+    expect(
+        config.lsp_servers[0].workspace.fallback == "file_directory",
+        "config should parse workspace fallback");
     expect(config.syntax_name.has_value() && *config.syntax_name == "cpp", "config should parse syntax name");
     expect(config.right_justify_diagnostics, "config should parse right-justify diagnostics");
 
@@ -839,6 +847,34 @@ void test_infer_language_id() {
     EditorConfig fallback;
     fallback.syntax_name = "cpp";
     expect(infer_language_id(fallback, std::nullopt) == "cpp", "syntax fallback should be used when no file path exists");
+}
+
+void test_infer_workspace_root() {
+    std::filesystem::path root = std::filesystem::temp_directory_path() / "medit-workspace-root";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "project" / "src");
+    std::filesystem::create_directories(root / "plain");
+
+    {
+        std::ofstream marker(root / "project" / "pyproject.toml");
+        marker << "[project]\nname = \"demo\"\n";
+    }
+
+    LspServerConfig config;
+    config.name = "python";
+    config.command = "pyright-langserver --stdio";
+    config.language_id = "python";
+    config.extensions = {".py"};
+    config.workspace.markers = {"pyproject.toml", ".git"};
+    config.workspace.fallback = "file_directory";
+
+    std::filesystem::path workspace = infer_workspace_root(config, std::optional<std::string>((root / "project" / "src" / "main.py").string()));
+    expect(workspace == root / "project", "workspace root should use nearest configured marker");
+
+    std::filesystem::path fallback = infer_workspace_root(config, std::optional<std::string>((root / "plain" / "loose.py").string()));
+    expect(fallback == root / "plain", "workspace root should fall back to file directory");
+
+    std::filesystem::remove_all(root);
 }
 
 void test_cpp_syntax_highlighting() {
@@ -1201,6 +1237,7 @@ int main() {
         test_config_file_selects_keybindings_and_colors();
         test_lsp_config_rejects_duplicate_extensions();
         test_infer_language_id();
+        test_infer_workspace_root();
         test_cpp_syntax_highlighting();
         test_file_uri_normalization();
         test_lsp_message_framing();

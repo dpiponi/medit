@@ -37,6 +37,7 @@ class LspService : public EditorService {
     int stderr_fd_ = -1;
     int next_request_id_ = 1;
     int initialize_request_id_ = -1;
+    std::optional<std::filesystem::path> workspace_root_;
     std::thread reader_thread_;
     std::thread stderr_thread_;
     std::mutex mutex_;
@@ -50,6 +51,7 @@ class LspService : public EditorService {
     void queue_status(const std::string &message);
     void queue_stderr_line(const std::string &line);
     bool matches_document(const std::string &document_uri) const;
+    void ensure_initialized_for_event(const EditorEvent &event);
     void send_editor_event(const EditorEvent &event);
     void flush_pending_editor_events();
     bool spawn_process();
@@ -57,7 +59,7 @@ class LspService : public EditorService {
     void reader_loop();
     void stderr_loop();
     bool write_payload(const std::string &payload);
-    void send_initialize();
+    void send_initialize(const std::filesystem::path &workspace_root);
     void send_initialized();
     void send_shutdown();
     void send_exit();
