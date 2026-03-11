@@ -477,7 +477,7 @@ std::size_t codepoint_column_for_utf8_byte(const std::u32string &line, std::size
     return line.size();
 }
 
-StyleRole capture_name_to_style_role(const std::string &capture_name) {
+StyleRole capture_name_to_style_role(std::string_view capture_name) {
     if (capture_name.contains("comment")) {
         return StyleRole::SyntaxComment;
     }

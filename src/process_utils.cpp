@@ -5,13 +5,14 @@
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <unistd.h>
 #endif
 
-std::vector<std::string> split_shell_pipeline(const std::string &pipeline) {
+std::vector<std::string> split_shell_pipeline(std::string_view pipeline) {
     std::vector<std::string> segments;
     std::string current;
     bool in_single_quote = false;
@@ -48,14 +49,15 @@ std::vector<std::string> split_shell_pipeline(const std::string &pipeline) {
     return segments;
 }
 
-bool executable_exists(const std::string &executable) {
+bool executable_exists(std::string_view executable) {
     if (executable.empty()) {
         return false;
     }
-    std::filesystem::path path = executable;
+    std::string executable_text(executable);
+    std::filesystem::path path = executable_text;
     if (path.is_absolute() || executable.contains('/')) {
 #if defined(__unix__) || defined(__APPLE__)
-        return access(executable.c_str(), X_OK) == 0;
+        return access(executable_text.c_str(), X_OK) == 0;
 #else
         return std::filesystem::exists(path);
 #endif
@@ -70,7 +72,8 @@ bool executable_exists(const std::string &executable) {
     while (start <= search_path.size()) {
         std::size_t end = search_path.find(':', start);
         std::string directory = end == std::string::npos ? search_path.substr(start) : search_path.substr(start, end - start);
-        std::filesystem::path candidate = directory.empty() ? std::filesystem::path(executable) : std::filesystem::path(directory) / executable;
+        std::filesystem::path candidate =
+            directory.empty() ? std::filesystem::path(executable_text) : std::filesystem::path(directory) / executable_text;
 #if defined(__unix__) || defined(__APPLE__)
         if (access(candidate.c_str(), X_OK) == 0) {
             return true;
@@ -88,7 +91,7 @@ bool executable_exists(const std::string &executable) {
     return false;
 }
 
-std::optional<std::string> first_command_word(const std::string &command) {
+std::optional<std::string> first_command_word(std::string_view command) {
     std::string trimmed = trim_ascii_whitespace(command);
     if (trimmed.empty()) {
         return std::nullopt;
@@ -128,7 +131,7 @@ std::optional<std::string> first_command_word(const std::string &command) {
     return word;
 }
 
-std::optional<std::string> missing_executable_in_command(const std::string &command) {
+std::optional<std::string> missing_executable_in_command(std::string_view command) {
     std::optional<std::string> word = first_command_word(command);
     if (!word) {
         return std::nullopt;
@@ -148,7 +151,7 @@ std::optional<std::string> first_available_executable(const std::vector<std::str
     return std::nullopt;
 }
 
-std::optional<std::string> missing_executable_in_pipeline(const std::string &pipeline) {
+std::optional<std::string> missing_executable_in_pipeline(std::string_view pipeline) {
     for (const std::string &segment : split_shell_pipeline(pipeline)) {
         if (std::optional<std::string> missing = missing_executable_in_command(segment)) {
             return missing;
