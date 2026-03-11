@@ -40,6 +40,8 @@ enum class EditorAction {
     HalfPageUp,
     PageUp,
     PageDown,
+    NextBuffer,
+    PreviousBuffer,
     Suspend,
     EnterNormalMode,
     InsertNewline,

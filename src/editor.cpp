@@ -1378,6 +1378,8 @@ std::optional<std::string> key_token(wint_t key, bool is_special) {
                 return "pageup";
             case KEY_NPAGE:
                 return "pagedown";
+            case KEY_BTAB:
+                return "shift-tab";
             case KEY_BACKSPACE:
                 return "backspace";
             default:
@@ -1387,6 +1389,9 @@ std::optional<std::string> key_token(wint_t key, bool is_special) {
 
     if (key == 27) {
         return "esc";
+    }
+    if (key == '\t') {
+        return "tab";
     }
     if (key == '\n' || key == '\r' || key == KEY_ENTER) {
         return "enter";
@@ -1503,7 +1508,8 @@ std::optional<wint_t> key_from_token(const std::string &token) {
 
 bool token_is_printable_for_replay(const std::string &token) {
     if (token == "esc" || token == "enter" || token == "backspace" || token == "left" || token == "right" ||
-        token == "up" || token == "down" || token == "pageup" || token == "pagedown") {
+        token == "up" || token == "down" || token == "pageup" || token == "pagedown" || token == "tab" ||
+        token == "shift-tab") {
         return false;
     }
     if (token.rfind("ctrl-", 0) == 0) {
@@ -1712,6 +1718,14 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             break;
         case EditorAction::PageDown:
             page_down(state);
+            break;
+        case EditorAction::NextBuffer:
+            state.session.next_buffer();
+            set_status(state, "Switched to " + active_core(state).display_file_name());
+            break;
+        case EditorAction::PreviousBuffer:
+            state.session.previous_buffer();
+            set_status(state, "Switched to " + active_core(state).display_file_name());
             break;
         case EditorAction::Suspend:
             suspend_editor(state);

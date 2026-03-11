@@ -41,6 +41,8 @@
     "ctrl-d": "half_page_down",
     "ctrl-u": "half_page_up",
     "ctrl-z": "suspend",
+    "tab": "next_buffer",
+    "shift-tab": "previous_buffer",
     "pageup": "page_up",
     "pagedown": "page_down"
   },
@@ -78,6 +80,8 @@
     "ctrl-d": "half_page_down",
     "ctrl-u": "half_page_up",
     "ctrl-z": "suspend",
+    "tab": "next_buffer",
+    "shift-tab": "previous_buffer",
     "pageup": "page_up",
     "pagedown": "page_down"
   },

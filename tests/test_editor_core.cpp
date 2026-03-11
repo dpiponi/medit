@@ -626,6 +626,14 @@ void test_keybinding_dispatch() {
     KeyDispatch special = dispatch_key_sequence(keybindings, "normal", pending, "pagedown", false);
     expect(special.action.has_value() && *special.action == EditorAction::PageDown, "pagedown binding");
 
+    KeyDispatch next_buffer = dispatch_key_sequence(keybindings, "normal", pending, "tab", false);
+    expect(next_buffer.action.has_value() && *next_buffer.action == EditorAction::NextBuffer, "tab binding");
+
+    KeyDispatch previous_buffer = dispatch_key_sequence(keybindings, "normal", pending, "shift-tab", false);
+    expect(
+        previous_buffer.action.has_value() && *previous_buffer.action == EditorAction::PreviousBuffer,
+        "shift-tab binding");
+
     KeyDispatch suspend = dispatch_key_sequence(keybindings, "normal", pending, "ctrl-z", false);
     expect(suspend.action.has_value() && *suspend.action == EditorAction::Suspend, "ctrl-z binding");
 

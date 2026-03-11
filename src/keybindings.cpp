@@ -57,6 +57,8 @@ constexpr const char *kEmbeddedDefaultKeybindings = R"json(
     "ctrl-d": "half_page_down",
     "ctrl-u": "half_page_up",
     "ctrl-z": "suspend",
+    "tab": "next_buffer",
+    "shift-tab": "previous_buffer",
     "pageup": "page_up",
     "pagedown": "page_down"
   },
@@ -94,6 +96,8 @@ constexpr const char *kEmbeddedDefaultKeybindings = R"json(
     "ctrl-d": "half_page_down",
     "ctrl-u": "half_page_up",
     "ctrl-z": "suspend",
+    "tab": "next_buffer",
+    "shift-tab": "previous_buffer",
     "pageup": "page_up",
     "pagedown": "page_down"
   },
@@ -169,6 +173,8 @@ std::optional<EditorAction> action_from_name(const std::string &name) {
         {"half_page_up", EditorAction::HalfPageUp},
         {"page_up", EditorAction::PageUp},
         {"page_down", EditorAction::PageDown},
+        {"next_buffer", EditorAction::NextBuffer},
+        {"previous_buffer", EditorAction::PreviousBuffer},
         {"suspend", EditorAction::Suspend},
         {"enter_normal_mode", EditorAction::EnterNormalMode},
         {"insert_newline", EditorAction::InsertNewline},
