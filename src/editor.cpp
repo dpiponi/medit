@@ -703,6 +703,9 @@ std::optional<std::string> run_picker_command(EditorState &state, const std::str
     std::ifstream input(temp_path);
     std::string selection;
     std::getline(input, selection);
+    if (!selection.empty() && selection.back() == '\r') {
+        selection.pop_back();
+    }
     std::filesystem::remove(temp_path);
 
     if (result != 0) {
