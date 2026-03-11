@@ -824,6 +824,40 @@ void test_lsp_service_roundtrip() {
 #endif
 }
 
+void test_lsp_service_reports_startup_failures() {
+#if defined(__unix__) || defined(__APPLE__)
+    EditorConfig config;
+    config.lsp_command = "echo mac-startup-failure >&2; exit 1";
+
+    LspService service(config);
+    service.start();
+
+    bool saw_stderr = false;
+    bool saw_exit = false;
+    for (int i = 0; i < 30; ++i) {
+        for (const ServiceEvent &event : service.poll()) {
+            if (!event.command || event.command->type != EditorCommandType::SetStatusMessage) {
+                continue;
+            }
+            if (event.command->message.find("mac-startup-failure") != std::string::npos) {
+                saw_stderr = true;
+            }
+            if (event.command->message.find("LSP exited before initialize") != std::string::npos) {
+                saw_exit = true;
+            }
+        }
+        if (saw_stderr && saw_exit) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
+    service.stop();
+    expect(saw_stderr, "lsp service should surface server stderr");
+    expect(saw_exit, "lsp service should report exit before initialize");
+#endif
+}
+
 class RecordingService : public EditorService {
   public:
     explicit RecordingService(std::optional<int> interval_ms = std::nullopt) : interval_ms_(interval_ms) {}
@@ -961,6 +995,7 @@ int main() {
         test_cpp_syntax_highlighting();
         test_lsp_message_framing();
         test_lsp_service_roundtrip();
+        test_lsp_service_reports_startup_failures();
         test_editor_runtime_service_boundary();
         test_editor_runtime_idle_timeout();
     } catch (const std::exception &error) {

@@ -3,6 +3,7 @@
 #include "config.hpp"
 #include "services.hpp"
 
+#include <atomic>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -26,26 +27,32 @@ class LspService : public EditorService {
 
   private:
     EditorConfig config_;
-    bool running_ = false;
-    bool initialized_ = false;
+    std::atomic<bool> running_{false};
+    std::atomic<bool> initialized_{false};
+    std::atomic<bool> stopping_{false};
     int child_pid_ = -1;
     int stdin_fd_ = -1;
     int stdout_fd_ = -1;
+    int stderr_fd_ = -1;
     int next_request_id_ = 1;
     int initialize_request_id_ = -1;
     std::thread reader_thread_;
+    std::thread stderr_thread_;
     std::mutex mutex_;
     std::vector<ServiceEvent> pending_events_;
     std::vector<EditorEvent> pending_editor_events_;
     std::string read_buffer_;
+    std::string stderr_buffer_;
 
     void queue_event(ServiceEvent event);
     void queue_status(const std::string &message);
+    void queue_stderr_line(const std::string &line);
     void send_editor_event(const EditorEvent &event);
     void flush_pending_editor_events();
     bool spawn_process();
     void shutdown_process();
     void reader_loop();
+    void stderr_loop();
     bool write_payload(const std::string &payload);
     void send_initialize();
     void send_initialized();

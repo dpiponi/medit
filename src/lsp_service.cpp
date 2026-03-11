@@ -133,8 +133,10 @@ void LspService::start() {
         queue_status("LSP start failed");
         return;
     }
+    stopping_ = false;
     running_ = true;
     reader_thread_ = std::thread(&LspService::reader_loop, this);
+    stderr_thread_ = std::thread(&LspService::stderr_loop, this);
     send_initialize();
 #else
     queue_status("LSP transport unsupported on this platform");
@@ -145,6 +147,7 @@ void LspService::stop() {
     if (!running_) {
         return;
     }
+    stopping_ = true;
     send_shutdown();
     send_exit();
     shutdown_process();
@@ -222,11 +225,19 @@ void LspService::queue_status(const std::string &message) {
     queue_event({ServiceEventType::Notification, name(), "status", command, std::nullopt, 0, std::nullopt, U""});
 }
 
+void LspService::queue_stderr_line(const std::string &line) {
+    if (line.empty()) {
+        return;
+    }
+    queue_status("LSP stderr: " + line);
+}
+
 #if defined(__unix__) || defined(__APPLE__)
 bool LspService::spawn_process() {
     int stdin_pipe[2];
     int stdout_pipe[2];
-    if (pipe(stdin_pipe) != 0 || pipe(stdout_pipe) != 0) {
+    int stderr_pipe[2];
+    if (pipe(stdin_pipe) != 0 || pipe(stdout_pipe) != 0 || pipe(stderr_pipe) != 0) {
         return false;
     }
 
@@ -237,18 +248,21 @@ bool LspService::spawn_process() {
     if (pid == 0) {
         dup2(stdin_pipe[0], STDIN_FILENO);
         dup2(stdout_pipe[1], STDOUT_FILENO);
-        dup2(stdout_pipe[1], STDERR_FILENO);
+        dup2(stderr_pipe[1], STDERR_FILENO);
         close(stdin_pipe[1]);
         close(stdout_pipe[0]);
+        close(stderr_pipe[0]);
         execl("/bin/sh", "sh", "-lc", config_.lsp_command->c_str(), nullptr);
         _exit(127);
     }
 
     close(stdin_pipe[0]);
     close(stdout_pipe[1]);
+    close(stderr_pipe[1]);
     child_pid_ = pid;
     stdin_fd_ = stdin_pipe[1];
     stdout_fd_ = stdout_pipe[0];
+    stderr_fd_ = stderr_pipe[0];
     return true;
 }
 
@@ -261,8 +275,15 @@ void LspService::shutdown_process() {
         close(stdout_fd_);
         stdout_fd_ = -1;
     }
+    if (stderr_fd_ >= 0) {
+        close(stderr_fd_);
+        stderr_fd_ = -1;
+    }
     if (reader_thread_.joinable()) {
         reader_thread_.join();
+    }
+    if (stderr_thread_.joinable()) {
+        stderr_thread_.join();
     }
     if (child_pid_ > 0) {
         kill(child_pid_, SIGTERM);
@@ -283,10 +304,38 @@ void LspService::reader_loop() {
             handle_message(payload);
         }
     }
+    if (!stopping_ && !initialized_) {
+        queue_status("LSP exited before initialize");
+    }
+}
+
+void LspService::stderr_loop() {
+    char chunk[4096];
+    while (stderr_fd_ >= 0) {
+        ssize_t read_count = read(stderr_fd_, chunk, sizeof(chunk));
+        if (read_count <= 0) {
+            break;
+        }
+        stderr_buffer_.append(chunk, static_cast<std::size_t>(read_count));
+        std::size_t line_end = 0;
+        while ((line_end = stderr_buffer_.find('\n')) != std::string::npos) {
+            std::string line = stderr_buffer_.substr(0, line_end);
+            if (!line.empty() && line.back() == '\r') {
+                line.pop_back();
+            }
+            stderr_buffer_.erase(0, line_end + 1);
+            queue_stderr_line(line);
+        }
+    }
+    if (!stderr_buffer_.empty()) {
+        queue_stderr_line(stderr_buffer_);
+        stderr_buffer_.clear();
+    }
 }
 
 bool LspService::write_payload(const std::string &payload) {
     if (stdin_fd_ < 0) {
+        queue_status("LSP write failed");
         return false;
     }
     std::string framed = encode_lsp_message(payload);
@@ -295,6 +344,7 @@ bool LspService::write_payload(const std::string &payload) {
     while (remaining > 0) {
         ssize_t wrote = write(stdin_fd_, data, remaining);
         if (wrote <= 0) {
+            queue_status("LSP write failed");
             return false;
         }
         data += wrote;
@@ -324,7 +374,9 @@ void LspService::send_initialize() {
             << "\"clientInfo\":{\"name\":\"medit\"}"
             << "}"
             << "}";
-    write_payload(payload.str());
+    if (!write_payload(payload.str())) {
+        queue_status("LSP initialize failed");
+    }
 }
 
 void LspService::send_initialized() {
@@ -409,6 +461,16 @@ void LspService::handle_message(const std::string &payload) {
     auto id = root.object_value.find("id");
     if (id != root.object_value.end() && id->second.type == JsonValue::Type::Number &&
         static_cast<int>(id->second.number_value) == initialize_request_id_) {
+        auto error = root.object_value.find("error");
+        if (error != root.object_value.end() && error->second.type == JsonValue::Type::Object) {
+            auto message = error->second.object_value.find("message");
+            if (message != error->second.object_value.end() && message->second.type == JsonValue::Type::String) {
+                queue_status("LSP initialize error: " + message->second.string_value);
+            } else {
+                queue_status("LSP initialize error");
+            }
+            return;
+        }
         initialized_ = true;
         send_initialized();
         flush_pending_editor_events();
