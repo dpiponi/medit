@@ -1,9 +1,11 @@
 #include "process_utils.hpp"
 #include "string_utils.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdlib>
 #include <filesystem>
+#include <ranges>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -143,10 +145,11 @@ std::optional<std::string> missing_executable_in_command(std::string_view comman
 }
 
 std::optional<std::string> first_available_executable(const std::vector<std::string> &executables) {
-    for (const std::string &executable : executables) {
-        if (executable_exists(executable)) {
-            return executable;
-        }
+    auto found = std::ranges::find_if(executables, [](std::string_view executable) {
+        return executable_exists(executable);
+    });
+    if (found != executables.end()) {
+        return *found;
     }
     return std::nullopt;
 }

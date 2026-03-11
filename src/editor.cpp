@@ -23,6 +23,7 @@
 #include <map>
 #include <curses.h>
 #include <optional>
+#include <ranges>
 #include <regex>
 #include <sstream>
 #include <string>
@@ -1076,14 +1077,18 @@ std::vector<std::filesystem::path> search_workspace_for_file(
     log_debug("file-under-cursor search root=" + workspace_root.string() + " token=" + token + " pattern=" + pattern);
     std::vector<std::string> lines = run_capture_command(command, std::filesystem::current_path());
     std::vector<std::filesystem::path> matches;
-    for (const std::string &line : lines) {
-        std::filesystem::path path = line;
-        if (std::filesystem::exists(path) && std::filesystem::is_regular_file(path)) {
-            matches.push_back(path.lexically_normal());
-        }
+    auto candidate_paths = lines
+        | std::views::transform([](const std::string &line) {
+              return std::filesystem::path(line).lexically_normal();
+          })
+        | std::views::filter([](const std::filesystem::path &path) {
+              return std::filesystem::exists(path) && std::filesystem::is_regular_file(path);
+          });
+    for (const std::filesystem::path &path : candidate_paths) {
+        matches.push_back(path);
     }
-    std::sort(matches.begin(), matches.end());
-    matches.erase(std::unique(matches.begin(), matches.end()), matches.end());
+    std::ranges::sort(matches);
+    matches.erase(std::ranges::unique(matches).begin(), matches.end());
     return matches;
 }
 

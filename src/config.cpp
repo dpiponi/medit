@@ -2,10 +2,12 @@
 #include "json.hpp"
 #include "string_utils.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <optional>
+#include <ranges>
 
 namespace {
 
@@ -396,10 +398,10 @@ std::filesystem::path infer_workspace_root(const LspServerConfig &config, const 
         std::filesystem::path current = std::filesystem::path(*file_path).parent_path();
         if (!current.empty()) {
             while (true) {
-                for (const std::string &marker : config.workspace.markers) {
-                    if (std::filesystem::exists(current / marker)) {
-                        return current;
-                    }
+                if (std::ranges::find_if(config.workspace.markers, [&current](const std::string &marker) {
+                        return std::filesystem::exists(current / marker);
+                    }) != config.workspace.markers.end()) {
+                    return current;
                 }
                 std::filesystem::path parent = current.parent_path();
                 if (parent.empty() || parent == current) {
