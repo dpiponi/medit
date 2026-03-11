@@ -673,6 +673,11 @@ void test_keybinding_dispatch() {
         filter.action.has_value() && *filter.action == EditorAction::FilterSelection,
         "| should map to filter selection in visual mode");
 
+    KeyDispatch sed = dispatch_key_sequence(keybindings, "visual", pending, "S", false);
+    expect(
+        sed.action.has_value() && *sed.action == EditorAction::SedSelection,
+        "S should map to sed selection in visual mode");
+
     KeyDispatch find = dispatch_key_sequence(keybindings, "normal", pending, "f", false);
     expect(find.action.has_value() && *find.action == EditorAction::FindForward, "f should map to find forward");
 

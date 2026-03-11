@@ -64,6 +64,7 @@ enum class EditorAction {
     ToggleDiagnosticsPanel,
     DeleteSelection,
     FilterSelection,
+    SedSelection,
     ChangeSelection,
     YankSelection,
     ReplaceSelectionWithYank,

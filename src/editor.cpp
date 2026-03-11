@@ -57,6 +57,7 @@ enum class PendingMotion {
 enum class CommandPromptKind {
     EditorCommand,
     FilterSelection,
+    SedSelection,
 };
 
 struct EditorState {
@@ -392,6 +393,22 @@ void enter_filter_command_mode(EditorState &state) {
     state.repeat_digits.clear();
     state.search_buffer.clear();
     set_status(state, "|");
+}
+
+void enter_sed_command_mode(EditorState &state) {
+    if (!active_core(state).has_selection()) {
+        set_status(state, "No selection");
+        return;
+    }
+    state.mode = Mode::Command;
+    state.command_prompt_kind = CommandPromptKind::SedSelection;
+    state.command_buffer.clear();
+    state.pending_tokens.clear();
+    state.pending_motion = PendingMotion::None;
+    state.pending_motion_repeat_count = 1;
+    state.repeat_digits.clear();
+    state.search_buffer.clear();
+    set_status(state, "S");
 }
 
 void enter_search_mode(EditorState &state) {
@@ -1400,9 +1417,51 @@ void execute_filter_command(EditorState &state) {
     set_status(state, "Selection filtered");
 }
 
+void execute_sed_command(EditorState &state) {
+    EditorCore &core = active_core(state);
+    std::optional<Range> selection = core.selection_range();
+    if (!selection) {
+        set_status(state, "No selection");
+        enter_normal_mode(state);
+        return;
+    }
+
+    std::string script = u32_to_utf8(state.command_buffer);
+    if (script.empty()) {
+        set_status(state, "No sed command");
+        enter_normal_mode(state);
+        return;
+    }
+
+    std::u32string output_text;
+    std::string error_message;
+    if (!run_selection_filter_command(
+            state,
+            "sed " + script,
+            core.read_text(*selection),
+            output_text,
+            error_message)) {
+        set_status(state, error_message);
+        enter_normal_mode(state);
+        return;
+    }
+
+    if (core.selection_mode() == SelectionMode::Line && !output_text.empty() && output_text.back() != U'\n') {
+        output_text.push_back(U'\n');
+    }
+
+    core.replace_range(*selection, output_text);
+    enter_normal_mode(state);
+    set_status(state, "Selection filtered with sed");
+}
+
 void execute_command(EditorState &state) {
     if (state.command_prompt_kind == CommandPromptKind::FilterSelection) {
         execute_filter_command(state);
+        return;
+    }
+    if (state.command_prompt_kind == CommandPromptKind::SedSelection) {
+        execute_sed_command(state);
         return;
     }
 
@@ -1969,9 +2028,13 @@ void draw_message_bar(const EditorState &state, int screen_rows, int screen_cols
     if (state.mode == Mode::Command) {
         TextStyle style = theme_style(state.theme, StyleRole::CommandLine);
         attron(curses_attributes(style, StyleRole::CommandLine));
-        std::string command =
-            std::string(state.command_prompt_kind == CommandPromptKind::FilterSelection ? "|" : ":") +
-            u32_to_utf8(state.command_buffer);
+        std::string prompt = ":";
+        if (state.command_prompt_kind == CommandPromptKind::FilterSelection) {
+            prompt = "|";
+        } else if (state.command_prompt_kind == CommandPromptKind::SedSelection) {
+            prompt = "S";
+        }
+        std::string command = prompt + u32_to_utf8(state.command_buffer);
         mvaddnstr(screen_rows - 1, 0, command.c_str(), screen_cols);
         attroff(curses_attributes(style, StyleRole::CommandLine));
         return;
@@ -2685,6 +2748,9 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             }
         case EditorAction::FilterSelection:
             enter_filter_command_mode(state);
+            break;
+        case EditorAction::SedSelection:
+            enter_sed_command_mode(state);
             break;
         case EditorAction::YankSelection:
             if (core.yank_selection()) {

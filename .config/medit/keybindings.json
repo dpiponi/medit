@@ -79,6 +79,7 @@
     "] d": "next_diagnostic",
     "[ d": "previous_diagnostic",
     "|": "filter_selection",
+    "S": "sed_selection",
     "c": "change_selection",
     "d": "delete_selection",
     "y": "yank_selection",
