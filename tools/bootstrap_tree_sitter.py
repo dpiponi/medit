@@ -27,6 +27,30 @@ def ensure_repo(repo_url: str, ref: str, checkout_dir: Path):
     run(["git", "checkout", "--force", ref], cwd=checkout_dir)
 
 
+def fail_language(language, message: str):
+    hint = language.get("setup_hint")
+    if hint:
+        raise RuntimeError(f"{message}\nHint for {language['name']}: {hint}")
+    raise RuntimeError(message)
+
+
+def ensure_generated_parser(language, source_root: Path):
+    parser_path = source_root / "src" / "parser.c"
+    if parser_path.exists():
+        return
+    generate_command = language.get("generate_command")
+    if not generate_command:
+        fail_language(language, f"missing parser source: {parser_path}")
+    try:
+        run(generate_command, cwd=source_root)
+    except FileNotFoundError as error:
+        fail_language(language, f"missing executable while generating parser: {error}")
+    except subprocess.CalledProcessError as error:
+        fail_language(language, f"parser generation failed with exit status {error.returncode}")
+    if not parser_path.exists():
+        fail_language(language, f"missing parser source after generation: {parser_path}")
+
+
 def shared_library_suffix():
     if sys.platform == "darwin":
         return ".dylib"
@@ -74,9 +98,8 @@ def compile_source(compiler: str, source_path: Path, output_path: Path, include_
 
 def build_language(language, repo_dir: Path, config_root: Path, build_root: Path, cc: str, cxx: str):
     source_root = repo_dir / language.get("source_subdir", "")
+    ensure_generated_parser(language, source_root)
     parser_path = source_root / "src" / "parser.c"
-    if not parser_path.exists():
-        raise FileNotFoundError(f"missing parser source: {parser_path}")
 
     include_dir = source_root / "src"
     grammar_dir = config_root / "grammars"
@@ -111,10 +134,15 @@ def build_language(language, repo_dir: Path, config_root: Path, build_root: Path
     output_path = grammar_dir / output_name
     run(shared_link_command(linker, objects, output_path))
 
-    query_source = source_root / language["query_path"]
-    if not query_source.exists():
-        raise FileNotFoundError(f"missing highlights query: {query_source}")
-    shutil.copyfile(query_source, query_dir / "highlights.scm")
+    query_source = source_root / language.get("query_path", "")
+    query_output = query_dir / "highlights.scm"
+    if query_source.exists():
+        shutil.copyfile(query_source, query_output)
+    elif language.get("allow_missing_query", False):
+        print(f"! missing highlights query for {language['name']}, writing empty query file")
+        query_output.write_text("", encoding="utf-8")
+    else:
+        fail_language(language, f"missing highlights query: {query_source}")
 
     return {
         "name": language["name"],
@@ -181,7 +209,12 @@ def main():
             continue
         repo_dir = build_root / "sources" / f"tree-sitter-{language['name']}"
         ensure_repo(language["repo"], language["ref"], repo_dir)
-        generated_languages.append(build_language(language, repo_dir, config_root, build_root, cc, cxx))
+        try:
+            generated_languages.append(build_language(language, repo_dir, config_root, build_root, cc, cxx))
+        except RuntimeError:
+            raise
+        except Exception as error:
+            fail_language(language, str(error))
 
     if requested:
         selected_names = {language["name"] for language in generated_languages}

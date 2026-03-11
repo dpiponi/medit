@@ -53,6 +53,8 @@ Edit [tools/tree_sitter_languages.json](/home/dan/de/tools/tree_sitter_languages
 - `query_path`
 - optional `source_subdir`
 - optional `scanner_path`
+- optional `generate_command`
+- optional `setup_hint`
 
 `ref` is the exact git commit hash to build from. It keeps fresh-checkout setup reproducible by avoiding whatever the grammar repo happens to have on its default branch later.
 
@@ -83,6 +85,8 @@ If a grammar repo contains the actual parser in a nested subdirectory, set `sour
 - `tree-sitter-markdown/tree-sitter-markdown-inline/`
 
 would need entries that point at one of those subdirectories explicitly.
+
+If a grammar does not check in `src/parser.c`, set `generate_command` so the bootstrapper can generate parser sources before building. `setup_hint` is shown if that generation step fails, so languages with extra prerequisites can explain what is missing.
 
 ## Activate
 

@@ -33,11 +33,73 @@
     {
       "name": "markdown",
       "repo": "https://github.com/tree-sitter-grammars/tree-sitter-markdown.git",
-      "ref": "v0.5.3",
+      "ref": "f969cd3ae3f9fbd4e43205431d0ae286014c05b5",
       "source_subdir": "tree-sitter-markdown",
       "extensions": [".md", ".markdown"],
       "symbol_name": "tree_sitter_markdown",
       "query_path": "queries/highlights.scm"
+    },
+    {
+      "name": "make",
+      "repo": "https://github.com/alemuller/tree-sitter-make.git",
+      "ref": "a4b9187417d6be349ee5fd4b6e77b4172c6827dd",
+      "extensions": [".mk", ".mak", ".make"],
+      "symbol_name": "tree_sitter_make",
+      "query_path": "queries/highlights.scm"
+    },
+    {
+      "name": "bash",
+      "repo": "https://github.com/tree-sitter/tree-sitter-bash.git",
+      "ref": "a06c2e4415e9bc0346c6b86d401879ffb44058f7",
+      "extensions": [".sh", ".bash"],
+      "symbol_name": "tree_sitter_bash",
+      "query_path": "queries/highlights.scm",
+      "scanner_path": "src/scanner.c"
+    },
+    {
+      "name": "zsh",
+      "repo": "https://github.com/tree-sitter-grammars/tree-sitter-zsh.git",
+      "ref": "47e2caf4ed7e466f51cfbb13a860a192c300506f",
+      "extensions": [".zsh"],
+      "symbol_name": "tree_sitter_zsh",
+      "query_path": "queries/highlights.scm",
+      "allow_missing_query": true
+    },
+    {
+      "name": "haskell",
+      "repo": "https://github.com/tree-sitter/tree-sitter-haskell.git",
+      "ref": "c30d812bc90827f1a54106a25bc9a6307f5cdcec",
+      "extensions": [".hs", ".lhs"],
+      "symbol_name": "tree_sitter_haskell",
+      "query_path": "queries/highlights.scm",
+      "scanner_path": "src/scanner.c"
+    },
+    {
+      "name": "toml",
+      "repo": "https://github.com/tree-sitter/tree-sitter-toml.git",
+      "ref": "474fbbec27e27d76b45aeaf9191e8acb13a699e2",
+      "extensions": [".toml"],
+      "symbol_name": "tree_sitter_toml",
+      "query_path": "queries/highlights.scm"
+    },
+    {
+      "name": "tmux",
+      "repo": "https://github.com/Freed-Wu/tree-sitter-tmux.git",
+      "ref": "0252ecd080016e45e6305ef1a943388f5ae2f4b4",
+      "extensions": [".tmux"],
+      "symbol_name": "tree_sitter_tmux",
+      "query_path": "queries/highlights.scm",
+      "allow_missing_query": true
+    },
+    {
+      "name": "swift",
+      "repo": "https://github.com/alex-pinkus/tree-sitter-swift.git",
+      "ref": "7c2f26b5dce12e82ef2bd932a883ef514ae566b8",
+      "extensions": [".swift"],
+      "symbol_name": "tree_sitter_swift",
+      "query_path": "queries/highlights.scm",
+      "generate_command": ["npx", "tree-sitter-cli", "generate"],
+      "setup_hint": "Swift needs generated parser sources. Install Node.js plus the `tree-sitter-cli` package so `npx tree-sitter-cli generate` works, or exclude Swift from the bootstrap target."
     }
   ]
 }
