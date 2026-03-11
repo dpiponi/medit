@@ -733,6 +733,7 @@ std::optional<std::string> run_picker_command(EditorState &state, const std::str
         "sh -c " + shell_single_quote("cd " + shell_single_quote(current_directory) + " && " + pipeline_command) +
         " > " + shell_single_quote(temp_path);
     log_debug("picker start cwd=" + current_directory + " pipeline=" + pipeline_command + " output=" + temp_path);
+    log_debug("external command kind=picker spawn command=" + shell_command);
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
     state.pending_motion_repeat_count = 1;
@@ -744,6 +745,7 @@ std::optional<std::string> run_picker_command(EditorState &state, const std::str
     refresh();
     clearok(stdscr, TRUE);
     log_debug("picker exit code=" + std::to_string(result));
+    log_debug("external command kind=picker exit command=" + shell_command + " status=" + std::to_string(result));
 
     std::ifstream input(temp_path);
     std::string selection;

@@ -2,6 +2,7 @@
 
 #include "editor_commands.hpp"
 #include "json.hpp"
+#include "logger.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -343,11 +344,14 @@ bool LspService::spawn_process() {
     int stdout_pipe[2];
     int stderr_pipe[2];
     if (pipe(stdin_pipe) != 0 || pipe(stdout_pipe) != 0 || pipe(stderr_pipe) != 0) {
+        log_debug("external command kind=lsp-server pipe-setup failed command=" + config_.command);
         return false;
     }
 
+    log_debug("external command kind=lsp-server spawn command=" + config_.command);
     int pid = fork();
     if (pid < 0) {
+        log_debug("external command kind=lsp-server fork failed command=" + config_.command);
         return false;
     }
     if (pid == 0) {
@@ -365,6 +369,7 @@ bool LspService::spawn_process() {
     close(stdout_pipe[1]);
     close(stderr_pipe[1]);
     child_pid_ = pid;
+    log_debug("external command kind=lsp-server started pid=" + std::to_string(child_pid_) + " command=" + config_.command);
     stdin_fd_ = stdin_pipe[1];
     stdout_fd_ = stdout_pipe[0];
     stderr_fd_ = stderr_pipe[0];
