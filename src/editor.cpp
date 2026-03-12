@@ -272,6 +272,19 @@ int codepoint_width(char32_t codepoint) {
     return width > 0 ? width : 1;
 }
 
+std::size_t tab_display_width(std::size_t visual_column, std::size_t tabstop) {
+    std::size_t width = tabstop == 0 ? 1 : tabstop;
+    std::size_t remainder = visual_column % width;
+    return remainder == 0 ? width : width - remainder;
+}
+
+std::size_t codepoint_display_width(char32_t codepoint, std::size_t visual_column, std::size_t tabstop) {
+    if (codepoint == U'\t') {
+        return tab_display_width(visual_column, tabstop);
+    }
+    return static_cast<std::size_t>(codepoint_width(codepoint));
+}
+
 std::string mode_name(Mode mode) {
     switch (mode) {
         case Mode::Normal:
@@ -552,6 +565,11 @@ std::vector<DiagnosticEntryView> sorted_diagnostics(const EditorState &state) {
     return diagnostics;
 }
 
+bool should_render_diagnostics(const EditorState &state) {
+    return state.mode != Mode::Insert ||
+        effective_show_diagnostics_in_insert_mode(state.config, active_core(state).file_path());
+}
+
 void normalize_selected_diagnostic(EditorState &state) {
     EditorState::BufferUiState &buffer_ui = active_buffer_ui(state);
     if (active_core(state).diagnostics().empty()) {
@@ -655,6 +673,9 @@ std::vector<AnnotationEntryView> sorted_annotations(const EditorState &state) {
 
     std::vector<DiagnosticEntryView> diagnostics = sorted_diagnostics(state);
     for (const InlineAnnotation &annotation : projected) {
+        if (annotation.kind == AnnotationKind::Diagnostic && !should_render_diagnostics(state)) {
+            continue;
+        }
         std::optional<std::size_t> diagnostic_index;
         if (annotation.kind == AnnotationKind::Diagnostic) {
             for (const DiagnosticEntryView &diagnostic : diagnostics) {
@@ -869,6 +890,13 @@ std::string shell_single_quote(const std::string &text) {
     }
     quoted.push_back('\'');
     return quoted;
+}
+
+std::string project_file_list_command() {
+    if (std::optional<std::string> fd = first_available_executable({"fd", "fdfind"})) {
+        return *fd + " -t f -H -I -E .git";
+    }
+    return "rg --files --hidden --no-ignore -g '!.git'";
 }
 
 std::optional<std::string> run_picker_command(EditorState &state, const std::string &pipeline_command, std::string &error_message) {
@@ -1105,7 +1133,8 @@ bool parse_grep_selection(
 
 void handle_find_file_command(EditorState &state) {
     std::string error_message;
-    std::optional<std::string> selection = run_picker_command(state, "rg --files | fzf", error_message);
+    std::optional<std::string> selection =
+        run_picker_command(state, project_file_list_command() + " | fzf", error_message);
     if (!selection) {
         log_debug("find-file canceled/error: " + error_message);
         set_status(state, error_message);
@@ -1122,7 +1151,8 @@ void handle_find_file_command(EditorState &state) {
 
 void open_startup_file_picker(EditorState &state) {
     std::string error_message;
-    std::optional<std::string> selection = run_picker_command(state, "rg --files | fzf", error_message);
+    std::optional<std::string> selection =
+        run_picker_command(state, project_file_list_command() + " | fzf", error_message);
     if (!selection) {
         log_debug("startup picker canceled/error: " + error_message);
         if (!error_message.empty()) {
@@ -1712,17 +1742,17 @@ void navigate_search_match(EditorState &state, bool forward) {
     set_status(state, forward ? "Next match" : "Previous match");
 }
 
-std::size_t display_width_until(const std::u32string &line, std::size_t limit) {
+std::size_t display_width_until(const std::u32string &line, std::size_t limit, std::size_t tabstop) {
     std::size_t width = 0;
     std::size_t capped = limit > line.size() ? line.size() : limit;
     for (std::size_t i = 0; i < capped; ++i) {
-        width += static_cast<std::size_t>(codepoint_width(line[i]));
+        width += codepoint_display_width(line[i], width, tabstop);
     }
     return width;
 }
 
-std::size_t display_width(const std::u32string &line) {
-    return display_width_until(line, line.size());
+std::size_t display_width(const std::u32string &line, std::size_t tabstop) {
+    return display_width_until(line, line.size(), tabstop);
 }
 
 void ensure_horizontal_visibility(EditorState &state, int screen_cols) {
@@ -1730,7 +1760,7 @@ void ensure_horizontal_visibility(EditorState &state, int screen_cols) {
     const EditorCore &core = active_core(state);
     Position cursor = core.cursor();
     const std::u32string &line = core.lines()[cursor.row];
-    std::size_t cursor_x = display_width_until(line, cursor.column);
+    std::size_t cursor_x = display_width_until(line, cursor.column, effective_tabstop(state.config, core.file_path()));
     std::size_t usable_cols = screen_cols > 0 ? static_cast<std::size_t>(screen_cols) : 1;
 
     while (buffer_ui.col_offset > cursor_x) {
@@ -1882,7 +1912,8 @@ std::vector<HighlightSpan> collect_line_highlights(const EditorState &state, std
         int priority = role == StyleRole::SearchMatchCurrent ? 95 : 90;
         spans.push_back({line_match, role, priority});
     }
-    for (const Diagnostic &diagnostic : core.diagnostics()) {
+    if (should_render_diagnostics(state)) {
+        for (const Diagnostic &diagnostic : core.diagnostics()) {
         Range range = normalized_range(diagnostic.range);
         if (row < range.start.row || row > range.end.row) {
             continue;
@@ -1898,6 +1929,7 @@ std::vector<HighlightSpan> collect_line_highlights(const EditorState &state, std
                              : StyleRole::DiagnosticWarning;
         spans.push_back({line_diagnostic, role, 80});
     }
+    }
     return spans;
 }
 
@@ -1909,8 +1941,16 @@ void render_styled_glyph(const Theme &theme, int screen_row, int screen_col, cha
     mvchgat(screen_row, screen_col, codepoint_width(codepoint), attrs, static_cast<short>(theme_slot(role)), nullptr);
 }
 
+void render_styled_tab(const Theme &theme, int screen_row, int screen_col, int width, StyleRole role) {
+    std::string filler(static_cast<std::size_t>(width), ' ');
+    TextStyle style = theme_style(theme, role);
+    attr_t attrs = static_cast<attr_t>(curses_attributes(style, role));
+    mvaddnstr(screen_row, screen_col, filler.c_str(), width);
+    mvchgat(screen_row, screen_col, width, attrs, static_cast<short>(theme_slot(role)), nullptr);
+}
+
 void draw_styled_line(
-    const Theme &theme,
+    const EditorState &state,
     int screen_row,
     int start_col,
     const std::u32string &line,
@@ -1919,21 +1959,29 @@ void draw_styled_line(
     std::size_t col_offset,
     int max_cols) {
     std::size_t skipped_width = 0;
+    std::size_t visual_width = 0;
     int screen_col = start_col;
+    std::size_t tabstop = effective_tabstop(state.config, active_core(state).file_path());
 
     for (std::size_t column = 0; column < line.size(); ++column) {
         char32_t codepoint = line[column];
-        int width = codepoint_width(codepoint);
+        int width = static_cast<int>(codepoint_display_width(codepoint, visual_width, tabstop));
         if (skipped_width + static_cast<std::size_t>(width) <= col_offset) {
             skipped_width += static_cast<std::size_t>(width);
+            visual_width += static_cast<std::size_t>(width);
             continue;
         }
         if (screen_col + width > start_col + max_cols) {
             break;
         }
         StyleRole role = resolve_style_role({row, column}, spans, StyleRole::DefaultText);
-        render_styled_glyph(theme, screen_row, screen_col, codepoint, role);
+        if (codepoint == U'\t') {
+            render_styled_tab(state.theme, screen_row, screen_col, width, role);
+        } else {
+            render_styled_glyph(state.theme, screen_row, screen_col, codepoint, role);
+        }
         screen_col += width;
+        visual_width += static_cast<std::size_t>(width);
     }
 }
 
@@ -1989,7 +2037,7 @@ void draw_buffer_rows(const EditorState &state, int buffer_rows, int buffer_cols
             draw_line_number(state.theme, screen_row, visual_row.buffer_row + 1, line_number_width, line_number_role);
             std::vector<HighlightSpan> spans = collect_line_highlights(state, visual_row.buffer_row);
             draw_styled_line(
-                state.theme,
+                state,
                 screen_row,
                 line_number_width + 1,
                 core.lines()[visual_row.buffer_row],
@@ -2014,7 +2062,7 @@ void draw_buffer_rows(const EditorState &state, int buffer_rows, int buffer_cols
         std::u32string text = visual_row.wrap_offset < wrapped.size() ? wrapped[visual_row.wrap_offset] : U"";
         int annotation_col = line_number_width + 1;
         if (state.config.right_justify_diagnostics && annotation.annotation.kind == AnnotationKind::Diagnostic) {
-            int rendered_width = static_cast<int>(display_width(text));
+            int rendered_width = static_cast<int>(display_width(text, effective_tabstop(state.config, core.file_path())));
             annotation_col += std::max(0, buffer_cols - rendered_width);
         }
         mvaddnwstr(screen_row, annotation_col, u32_to_wstring(text).c_str(), buffer_cols);
@@ -2145,16 +2193,16 @@ std::pair<int, int> cursor_screen_position(const EditorState &state, int line_nu
     std::size_t visual_row_index = visual_row_for_buffer_row(visual_rows, core.cursor().row);
     Position cursor = core.cursor();
     const std::u32string &line = core.lines()[cursor.row];
-    std::size_t width = display_width_until(line, cursor.column);
+    std::size_t width = display_width_until(line, cursor.column, effective_tabstop(state.config, core.file_path()));
     int screen_row = static_cast<int>(visual_row_index - buffer_ui.row_offset);
     int screen_col = static_cast<int>(width - buffer_ui.col_offset) + line_number_cols + 1;
     return {screen_row, screen_col};
 }
 
-std::size_t column_for_display_width(const std::u32string &line, std::size_t target_width) {
+std::size_t column_for_display_width(const std::u32string &line, std::size_t target_width, std::size_t tabstop) {
     std::size_t width = 0;
     for (std::size_t column = 0; column < line.size(); ++column) {
-        std::size_t next_width = width + static_cast<std::size_t>(codepoint_width(line[column]));
+        std::size_t next_width = width + codepoint_display_width(line[column], width, tabstop);
         if (target_width < next_width) {
             return column;
         }
@@ -2191,7 +2239,7 @@ std::optional<Position> buffer_position_from_screen_point(const EditorState &sta
     }
 
     const std::u32string &line = core.lines()[row];
-    return Position{row, column_for_display_width(line, visual_column)};
+    return Position{row, column_for_display_width(line, visual_column, effective_tabstop(state.config, core.file_path()))};
 }
 
 void draw_editor(const EditorState &state) {
@@ -2334,11 +2382,16 @@ std::pair<std::size_t, std::size_t> selected_line_span(const EditorCore &core) {
 bool indent_selection_or_line(EditorState &state, bool indent) {
     EditorCore &core = active_core(state);
     auto [start_row, end_row] = selected_line_span(core);
+    std::size_t shiftwidth = effective_shiftwidth(state.config, core.file_path());
+    std::size_t tabstop = effective_tabstop(state.config, core.file_path());
+    bool expandtab = effective_expandtab(state.config, core.file_path());
+    std::optional<Range> selection = core.selection_range();
+    SelectionMode selection_mode = core.selection_mode();
     bool changed = indent
-        ? core.indent_lines(start_row, end_row, state.config.shiftwidth)
-        : core.outdent_lines(start_row, end_row, state.config.shiftwidth);
-    if (changed && (state.mode == Mode::Visual || state.mode == Mode::VisualLine)) {
-        state.mode = Mode::Normal;
+        ? core.indent_lines(start_row, end_row, shiftwidth, expandtab, tabstop)
+        : core.outdent_lines(start_row, end_row, shiftwidth, tabstop);
+    if (changed && selection && (state.mode == Mode::Visual || state.mode == Mode::VisualLine)) {
+        core.set_selection_range(*selection, selection_mode);
     }
     return changed;
 }
@@ -2677,7 +2730,7 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             break;
         }
         case EditorAction::OpenLineBelow:
-            if (state.config.autoindent) {
+            if (effective_autoindent(state.config, core.file_path())) {
                 core.open_line_below_with_autoindent();
             } else {
                 core.open_line_below();
@@ -2763,17 +2816,22 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             enter_normal_mode(state);
             break;
         case EditorAction::InsertNewline:
-            if (state.config.autoindent) {
+            if (effective_autoindent(state.config, core.file_path())) {
                 core.insert_newline_with_autoindent();
             } else {
                 core.insert_newline();
             }
             break;
         case EditorAction::InsertSoftTab:
-            core.insert_soft_tab(state.config.shiftwidth);
+            core.insert_soft_tab(
+                effective_tabstop(state.config, core.file_path()),
+                effective_softtabstop(state.config, core.file_path()),
+                effective_expandtab(state.config, core.file_path()));
             break;
         case EditorAction::InsertOutdent:
-            core.outdent_before_cursor(state.config.shiftwidth);
+            core.outdent_before_cursor(
+                effective_tabstop(state.config, core.file_path()),
+                effective_softtabstop(state.config, core.file_path()));
             break;
         case EditorAction::Backspace:
             core.backspace_character();

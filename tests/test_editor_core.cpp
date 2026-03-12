@@ -98,16 +98,20 @@ void test_newline_backspace_and_join() {
 
 void test_insert_mode_soft_tab_and_shift_tab() {
     EditorCore core;
-    expect(core.insert_soft_tab(4), "soft tab at line start should succeed");
+    expect(core.insert_soft_tab(8, 4, false), "soft tab at line start should succeed");
     expect_text(core, "    ", "soft tab inserts spaces to next shiftwidth stop");
-    expect(core.insert_soft_tab(4), "second soft tab should succeed");
+    expect(core.insert_soft_tab(8, 4, false), "second soft tab should succeed");
     expect_text(core, "        ", "soft tab advances to the next shiftwidth stop");
-    expect(core.outdent_before_cursor(4), "shift-tab style outdent should succeed");
+    expect(core.outdent_before_cursor(8, 4), "shift-tab style outdent should succeed");
     expect_text(core, "    ", "shift-tab outdents to previous shiftwidth stop");
     expect(core.insert_text({0, 4}, utf8_to_u32("x")), "insert non-whitespace text");
     core.set_cursor({0, 5});
-    expect(core.insert_soft_tab(4), "soft tab outside indentation should insert a tab");
+    expect(core.insert_soft_tab(8, 4, false), "soft tab outside indentation should insert a tab");
     expect_text(core, "    x\t", "soft tab outside leading whitespace inserts a tab");
+
+    EditorCore spaces;
+    expect(spaces.insert_soft_tab(8, 2, true), "expandtab should insert spaces");
+    expect_text(spaces, "  ", "expandtab inserts spaces outside indentation too");
 }
 
 void test_autoindent_newline() {
@@ -208,15 +212,18 @@ void test_yank_and_paste() {
 void test_indent_and_outdent_lines() {
     EditorCore core;
     expect(core.insert_text({0, 0}, utf8_to_u32("one\ntwo\n\tthree")), "seed indent buffer");
-    expect(core.indent_lines(0, 1, 2), "indent first two lines");
+    expect(core.indent_lines(0, 1, 2, true, 8), "indent first two lines");
     expect_text(core, "  one\n  two\n\tthree", "indent adds spaces to selected lines");
     expect(core.undo(), "undo indent");
     expect_text(core, "one\ntwo\n\tthree", "undo indent restores text");
 
-    expect(core.outdent_lines(2, 2, 2), "outdent tab-indented line");
+    expect(core.outdent_lines(2, 2, 2, 8), "outdent tab-indented line");
     expect_text(core, "one\ntwo\nthree", "outdent removes a leading tab");
     expect(core.undo(), "undo outdent");
     expect_text(core, "one\ntwo\n\tthree", "undo outdent restores text");
+
+    expect(core.indent_lines(0, 0, 8, false, 8), "noexpandtab indent should use tabs");
+    expect_text(core, "\tone\ntwo\n\tthree", "noexpandtab indent uses a tab when possible");
 }
 
 void test_replace_selection_with_yank() {
@@ -861,6 +868,12 @@ void test_config_file_selects_keybindings_and_colors() {
         rc << "syntax_config = syntax.json\n";
         rc << "syntax = cpp\n";
         rc << "right_justify_diagnostics = true\n";
+        rc << "show_diagnostics_in_insert_mode = false\n";
+        rc << "tabstop = 8\n";
+        rc << "softtabstop = 0\n";
+        rc << "expandtab = false\n";
+        rc << "shiftwidth = 4\n";
+        rc << "autoindent = false\n";
         rc << "clipboard = shared-file\n";
         rc << "clipboard_file = clipboard.json\n";
         rc << "clipboard_osc52 = false\n";
@@ -891,7 +904,15 @@ void test_config_file_selects_keybindings_and_colors() {
                   "      \"patterns\": [\"*.py\", \"*.pyi\", \".pythonrc\"],\n"
                   "      \"grammar_path\": \"grammars/libtree-sitter-python.so\",\n"
                   "      \"symbol_name\": \"tree_sitter_python\",\n"
-                  "      \"highlights_path\": \"queries/python/highlights.scm\"\n"
+                  "      \"highlights_path\": \"queries/python/highlights.scm\",\n"
+                  "      \"editor\": {\n"
+                  "        \"shiftwidth\": 2,\n"
+                  "        \"tabstop\": 8,\n"
+                  "        \"softtabstop\": 2,\n"
+                  "        \"expandtab\": true,\n"
+                  "        \"autoindent\": true,\n"
+                  "        \"show_diagnostics_in_insert_mode\": false\n"
+                  "      }\n"
                   "    }\n"
                   "  ]\n"
                   "}\n";
@@ -948,6 +969,14 @@ void test_config_file_selects_keybindings_and_colors() {
     expect(config.syntax_languages[0].grammar_path.filename() == "libtree-sitter-python.so", "config should parse syntax grammar path");
     expect(config.syntax_languages[0].symbol_name == "tree_sitter_python", "config should parse syntax symbol");
     expect(config.syntax_languages[0].highlights_path.filename() == "highlights.scm", "config should parse syntax query path");
+    expect(config.syntax_languages[0].editor.shiftwidth == 2, "config should parse syntax editor shiftwidth");
+    expect(config.syntax_languages[0].editor.tabstop == 8, "config should parse syntax editor tabstop");
+    expect(config.syntax_languages[0].editor.softtabstop == 2, "config should parse syntax editor softtabstop");
+    expect(config.syntax_languages[0].editor.expandtab == true, "config should parse syntax editor expandtab");
+    expect(config.syntax_languages[0].editor.autoindent == true, "config should parse syntax editor autoindent");
+    expect(
+        config.syntax_languages[0].editor.show_diagnostics_in_insert_mode == false,
+        "config should parse syntax editor diagnostic visibility");
     expect(config.lsp_servers[0].name == "cpp", "config should parse lsp server name");
     expect(config.lsp_servers[0].command == "clangd --background-index", "config should parse lsp command");
     expect(config.lsp_servers[0].language_id == "cpp", "config should parse lsp language id");
@@ -959,6 +988,20 @@ void test_config_file_selects_keybindings_and_colors() {
         "config should parse workspace fallback");
     expect(config.syntax_name.has_value() && *config.syntax_name == "cpp", "config should parse syntax name");
     expect(config.right_justify_diagnostics, "config should parse right-justify diagnostics");
+    expect(!config.show_diagnostics_in_insert_mode, "config should parse insert-mode diagnostic visibility");
+    expect(config.tabstop == 8, "config should parse tabstop");
+    expect(config.softtabstop == 0, "config should parse softtabstop");
+    expect(!config.expandtab, "config should parse expandtab");
+    expect(config.shiftwidth == 4, "config should parse shiftwidth");
+    expect(!config.autoindent, "config should parse autoindent");
+    expect(effective_shiftwidth(config, std::optional<std::string>("demo.py")) == 2, "syntax settings should override shiftwidth");
+    expect(effective_tabstop(config, std::optional<std::string>("demo.py")) == 8, "syntax settings should override tabstop");
+    expect(effective_softtabstop(config, std::optional<std::string>("demo.py")) == 2, "syntax settings should override softtabstop");
+    expect(effective_expandtab(config, std::optional<std::string>("demo.py")), "syntax settings should override expandtab");
+    expect(effective_autoindent(config, std::optional<std::string>("demo.py")), "syntax settings should override autoindent");
+    expect(
+        !effective_show_diagnostics_in_insert_mode(config, std::optional<std::string>("demo.py")),
+        "syntax settings should override insert-mode diagnostic visibility");
 
     KeyBindings keybindings = load_keybindings(config);
     std::vector<std::string> pending;
@@ -1101,7 +1144,7 @@ void test_cpp_syntax_highlighting() {
     expect(detected_none.engine == SyntaxEngine::None, "non-code file should not auto-detect syntax");
 
     EditorConfig explicit_python;
-    explicit_python.syntax_languages.push_back({"python", {"*.py", ".pythonrc"}, "python.so", "tree_sitter_python", "highlights.scm"});
+    explicit_python.syntax_languages.push_back({"python", {"*.py", ".pythonrc"}, "python.so", "tree_sitter_python", "highlights.scm", {}});
     explicit_python.syntax_name = "python";
     SyntaxSelection configured = resolve_syntax_selection(explicit_python, std::optional<std::string>("notes.txt"));
     expect(configured.engine == SyntaxEngine::TreeSitter && configured.language_name == "python", "named tree-sitter syntax should resolve");

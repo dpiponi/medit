@@ -31,6 +31,15 @@ std::size_t parse_positive_size_value(const std::string &value, const std::strin
     return parsed;
 }
 
+std::size_t parse_non_negative_size_value(const std::string &value, const std::string &key) {
+    std::size_t parsed = 0;
+    auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
+    if (error != std::errc{} || end != value.data() + value.size()) {
+        throw std::runtime_error("invalid " + key + " value: " + value);
+    }
+    return parsed;
+}
+
 ClipboardMode parse_clipboard_mode(const std::string &value) {
     if (value == "auto") {
         return ClipboardMode::Auto;
@@ -151,6 +160,62 @@ LspServerConfig::WorkspaceConfig parse_workspace_config(const JsonValue &value) 
     return workspace;
 }
 
+SyntaxLanguageConfig::EditorSettings parse_syntax_editor_settings(const JsonValue &value) {
+    if (value.type != JsonValue::Type::Object) {
+        throw std::runtime_error("syntax language editor settings must be an object");
+    }
+
+    SyntaxLanguageConfig::EditorSettings settings;
+    for (const auto &[key, setting_value] : value.object_value) {
+        if (key == "shiftwidth") {
+            if (setting_value.type != JsonValue::Type::Number) {
+                throw std::runtime_error("syntax language shiftwidth must be a number");
+            }
+            if (setting_value.number_value <= 0 ||
+                setting_value.number_value != static_cast<double>(static_cast<std::size_t>(setting_value.number_value))) {
+                throw std::runtime_error("syntax language shiftwidth must be a positive integer");
+            }
+            settings.shiftwidth = static_cast<std::size_t>(setting_value.number_value);
+        } else if (key == "tabstop") {
+            if (setting_value.type != JsonValue::Type::Number) {
+                throw std::runtime_error("syntax language tabstop must be a number");
+            }
+            if (setting_value.number_value <= 0 ||
+                setting_value.number_value != static_cast<double>(static_cast<std::size_t>(setting_value.number_value))) {
+                throw std::runtime_error("syntax language tabstop must be a positive integer");
+            }
+            settings.tabstop = static_cast<std::size_t>(setting_value.number_value);
+        } else if (key == "softtabstop") {
+            if (setting_value.type != JsonValue::Type::Number) {
+                throw std::runtime_error("syntax language softtabstop must be a number");
+            }
+            if (setting_value.number_value < 0 ||
+                setting_value.number_value != static_cast<double>(static_cast<std::size_t>(setting_value.number_value))) {
+                throw std::runtime_error("syntax language softtabstop must be a non-negative integer");
+            }
+            settings.softtabstop = static_cast<std::size_t>(setting_value.number_value);
+        } else if (key == "expandtab") {
+            if (setting_value.type != JsonValue::Type::Bool) {
+                throw std::runtime_error("syntax language expandtab must be a boolean");
+            }
+            settings.expandtab = setting_value.bool_value;
+        } else if (key == "autoindent") {
+            if (setting_value.type != JsonValue::Type::Bool) {
+                throw std::runtime_error("syntax language autoindent must be a boolean");
+            }
+            settings.autoindent = setting_value.bool_value;
+        } else if (key == "show_diagnostics_in_insert_mode") {
+            if (setting_value.type != JsonValue::Type::Bool) {
+                throw std::runtime_error("syntax language show_diagnostics_in_insert_mode must be a boolean");
+            }
+            settings.show_diagnostics_in_insert_mode = setting_value.bool_value;
+        } else {
+            throw std::runtime_error("unknown syntax language editor setting: " + key);
+        }
+    }
+    return settings;
+}
+
 std::vector<LspServerConfig> load_lsp_servers_from_path(const std::filesystem::path &path) {
     std::string source = read_text_file(path);
     if (source.empty()) {
@@ -261,6 +326,10 @@ std::vector<SyntaxLanguageConfig> load_syntax_languages_from_path(const std::fil
         if (!language.highlights_path.is_absolute()) {
             language.highlights_path = path.parent_path() / language.highlights_path;
         }
+        auto editor = language_value.object_value.find("editor");
+        if (editor != language_value.object_value.end()) {
+            language.editor = parse_syntax_editor_settings(editor->second);
+        }
         bool using_legacy_extensions = language_value.object_value.find("patterns") == language_value.object_value.end();
         for (const JsonValue &pattern_value : patterns.array_value) {
             if (pattern_value.type != JsonValue::Type::String) {
@@ -355,6 +424,8 @@ EditorConfig load_editor_config_from_path(const std::filesystem::path &path) {
             config.syntax_name = value;
         } else if (key == "right_justify_diagnostics") {
             config.right_justify_diagnostics = parse_bool_value(value);
+        } else if (key == "show_diagnostics_in_insert_mode") {
+            config.show_diagnostics_in_insert_mode = parse_bool_value(value);
         } else if (key == "clipboard") {
             config.clipboard.mode = parse_clipboard_mode(value);
         } else if (key == "clipboard_file") {
@@ -366,6 +437,12 @@ EditorConfig load_editor_config_from_path(const std::filesystem::path &path) {
             config.clipboard.osc52 = parse_bool_value(value);
         } else if (key == "shiftwidth") {
             config.shiftwidth = parse_positive_size_value(value, key);
+        } else if (key == "tabstop") {
+            config.tabstop = parse_positive_size_value(value, key);
+        } else if (key == "softtabstop") {
+            config.softtabstop = parse_non_negative_size_value(value, key);
+        } else if (key == "expandtab") {
+            config.expandtab = parse_bool_value(value);
         } else if (key == "autoindent") {
             config.autoindent = parse_bool_value(value);
         } else {
@@ -430,6 +507,28 @@ const LspServerConfig *matching_lsp_server(const EditorConfig &config, const std
     return nullptr;
 }
 
+const SyntaxLanguageConfig *matching_syntax_language(const EditorConfig &config, const std::optional<std::string> &file_path) {
+    if (config.syntax_name && !config.syntax_name->empty()) {
+        for (const SyntaxLanguageConfig &language : config.syntax_languages) {
+            if (language.name == *config.syntax_name) {
+                return &language;
+            }
+        }
+    }
+
+    if (file_path && !file_path->empty()) {
+        for (const SyntaxLanguageConfig &language : config.syntax_languages) {
+            for (const std::string &pattern : language.patterns) {
+                if (file_path_matches_glob(*file_path, pattern)) {
+                    return &language;
+                }
+            }
+        }
+    }
+
+    return nullptr;
+}
+
 std::string infer_language_id(const EditorConfig &config, const std::optional<std::string> &file_path) {
     if (const LspServerConfig *matched = matching_lsp_server(config, file_path)) {
         return matched->language_id;
@@ -481,4 +580,58 @@ std::filesystem::path infer_workspace_root(const LspServerConfig &config, const 
     }
 
     return std::filesystem::current_path();
+}
+
+std::size_t effective_shiftwidth(const EditorConfig &config, const std::optional<std::string> &file_path) {
+    if (const SyntaxLanguageConfig *language = matching_syntax_language(config, file_path)) {
+        if (language->editor.shiftwidth) {
+            return *language->editor.shiftwidth;
+        }
+    }
+    return config.shiftwidth;
+}
+
+std::size_t effective_tabstop(const EditorConfig &config, const std::optional<std::string> &file_path) {
+    if (const SyntaxLanguageConfig *language = matching_syntax_language(config, file_path)) {
+        if (language->editor.tabstop) {
+            return *language->editor.tabstop;
+        }
+    }
+    return config.tabstop;
+}
+
+std::size_t effective_softtabstop(const EditorConfig &config, const std::optional<std::string> &file_path) {
+    if (const SyntaxLanguageConfig *language = matching_syntax_language(config, file_path)) {
+        if (language->editor.softtabstop) {
+            return *language->editor.softtabstop == 0 ? effective_shiftwidth(config, file_path) : *language->editor.softtabstop;
+        }
+    }
+    return config.softtabstop == 0 ? effective_shiftwidth(config, file_path) : config.softtabstop;
+}
+
+bool effective_expandtab(const EditorConfig &config, const std::optional<std::string> &file_path) {
+    if (const SyntaxLanguageConfig *language = matching_syntax_language(config, file_path)) {
+        if (language->editor.expandtab) {
+            return *language->editor.expandtab;
+        }
+    }
+    return config.expandtab;
+}
+
+bool effective_autoindent(const EditorConfig &config, const std::optional<std::string> &file_path) {
+    if (const SyntaxLanguageConfig *language = matching_syntax_language(config, file_path)) {
+        if (language->editor.autoindent) {
+            return *language->editor.autoindent;
+        }
+    }
+    return config.autoindent;
+}
+
+bool effective_show_diagnostics_in_insert_mode(const EditorConfig &config, const std::optional<std::string> &file_path) {
+    if (const SyntaxLanguageConfig *language = matching_syntax_language(config, file_path)) {
+        if (language->editor.show_diagnostics_in_insert_mode) {
+            return *language->editor.show_diagnostics_in_insert_mode;
+        }
+    }
+    return config.show_diagnostics_in_insert_mode;
 }

@@ -1113,25 +1113,51 @@ bool EditorCore::insert_text(Position position, const std::u32string &text) {
     return replace_range({position, position}, text);
 }
 
-std::u32string indent_prefix(std::size_t width) {
-    return std::u32string(width, U' ');
+std::size_t tab_advance(std::size_t column, std::size_t tabstop) {
+    std::size_t width = tabstop == 0 ? 1 : tabstop;
+    std::size_t remainder = column % width;
+    return remainder == 0 ? width : width - remainder;
 }
 
-std::size_t outdent_column_width(char32_t codepoint, std::size_t shiftwidth) {
+std::u32string indentation_text(std::size_t columns, bool expandtab, std::size_t tabstop) {
+    if (columns == 0) {
+        return U"";
+    }
+    if (expandtab || tabstop == 0) {
+        return std::u32string(columns, U' ');
+    }
+
+    std::u32string text;
+    std::size_t current_column = 0;
+    while (current_column < columns) {
+        std::size_t advance = tab_advance(current_column, tabstop);
+        if (current_column + advance <= columns) {
+            text.push_back(U'\t');
+            current_column += advance;
+        } else {
+            text.push_back(U' ');
+            ++current_column;
+        }
+    }
+    return text;
+}
+
+std::size_t outdent_column_width(char32_t codepoint, std::size_t current_column, std::size_t tabstop) {
     if (codepoint == U' ') {
         return 1;
     }
     if (codepoint == U'\t') {
-        return shiftwidth;
+        return tab_advance(current_column, tabstop);
     }
     return 0;
 }
 
-std::size_t outdent_char_count(const std::u32string &line, std::size_t shiftwidth) {
+std::size_t outdent_char_count(const std::u32string &line, std::size_t shiftwidth, std::size_t tabstop) {
     std::size_t removed_width = 0;
     std::size_t removed_chars = 0;
+    std::size_t current_column = 0;
     for (char32_t codepoint : line) {
-        std::size_t width = outdent_column_width(codepoint, shiftwidth);
+        std::size_t width = outdent_column_width(codepoint, current_column, tabstop);
         if (width == 0) {
             break;
         }
@@ -1142,6 +1168,7 @@ std::size_t outdent_char_count(const std::u32string &line, std::size_t shiftwidt
             break;
         }
         removed_width += width;
+        current_column += width;
         ++removed_chars;
         if (removed_width == shiftwidth) {
             break;
@@ -1183,29 +1210,34 @@ bool EditorCore::apply_text_edits(const std::vector<TextEdit> &edits) {
     return true;
 }
 
-bool EditorCore::indent_lines(std::size_t start_row, std::size_t end_row, std::size_t width) {
-    if (width == 0 || start_row >= lines_.size() || end_row >= lines_.size() || start_row > end_row) {
+bool EditorCore::indent_lines(
+    std::size_t start_row,
+    std::size_t end_row,
+    std::size_t shiftwidth,
+    bool expandtab,
+    std::size_t tabstop) {
+    if (shiftwidth == 0 || start_row >= lines_.size() || end_row >= lines_.size() || start_row > end_row) {
         return false;
     }
 
     std::vector<TextEdit> edits;
     edits.reserve(end_row - start_row + 1);
-    std::u32string prefix = indent_prefix(width);
+    std::u32string prefix = indentation_text(shiftwidth, expandtab, tabstop);
     for (std::size_t row = start_row; row <= end_row; ++row) {
         edits.push_back({{{row, 0}, {row, 0}}, prefix});
     }
     return apply_text_edits(edits);
 }
 
-bool EditorCore::outdent_lines(std::size_t start_row, std::size_t end_row, std::size_t width) {
-    if (width == 0 || start_row >= lines_.size() || end_row >= lines_.size() || start_row > end_row) {
+bool EditorCore::outdent_lines(std::size_t start_row, std::size_t end_row, std::size_t shiftwidth, std::size_t tabstop) {
+    if (shiftwidth == 0 || start_row >= lines_.size() || end_row >= lines_.size() || start_row > end_row) {
         return false;
     }
 
     std::vector<TextEdit> edits;
     edits.reserve(end_row - start_row + 1);
     for (std::size_t row = start_row; row <= end_row; ++row) {
-        std::size_t remove_count = outdent_char_count(lines_[row], width);
+        std::size_t remove_count = outdent_char_count(lines_[row], shiftwidth, tabstop);
         if (remove_count == 0) {
             continue;
         }
@@ -1561,12 +1593,11 @@ bool leading_whitespace_only(const std::u32string &line, std::size_t column) {
     return true;
 }
 
-std::size_t indentation_columns(const std::u32string &line, std::size_t column, std::size_t width) {
+std::size_t indentation_columns(const std::u32string &line, std::size_t column, std::size_t tabstop) {
     std::size_t columns = 0;
     for (std::size_t index = 0; index < column; ++index) {
         if (line[index] == U'\t') {
-            std::size_t remainder = columns % width;
-            columns += remainder == 0 ? width : width - remainder;
+            columns += tab_advance(columns, tabstop);
         } else {
             ++columns;
         }
@@ -1586,19 +1617,29 @@ void EditorCore::insert_codepoint(char32_t codepoint) {
     apply_command(std::make_unique<InsertCodepointCommand>(cursor_, codepoint));
 }
 
-bool EditorCore::insert_soft_tab(std::size_t width) {
-    if (width == 0) {
+bool EditorCore::insert_soft_tab(std::size_t tabstop, std::size_t softtabstop, bool expandtab) {
+    if (softtabstop == 0) {
         return false;
     }
     Position insert_at = cursor_;
     const std::u32string &line = lines_[cursor_.row];
     if (!leading_whitespace_only(line, cursor_.column)) {
+        if (expandtab) {
+            std::size_t columns = indentation_columns(line, cursor_.column, tabstop);
+            std::size_t remainder = columns % softtabstop;
+            std::size_t spaces = remainder == 0 ? softtabstop : softtabstop - remainder;
+            if (!insert_text(insert_at, std::u32string(spaces, U' '))) {
+                return false;
+            }
+            set_cursor({insert_at.row, insert_at.column + spaces});
+            return true;
+        }
         insert_codepoint(U'\t');
         return true;
     }
-    std::size_t columns = indentation_columns(line, cursor_.column, width);
-    std::size_t remainder = columns % width;
-    std::size_t spaces = remainder == 0 ? width : width - remainder;
+    std::size_t columns = indentation_columns(line, cursor_.column, tabstop);
+    std::size_t remainder = columns % softtabstop;
+    std::size_t spaces = remainder == 0 ? softtabstop : softtabstop - remainder;
     if (!insert_text(insert_at, std::u32string(spaces, U' '))) {
         return false;
     }
@@ -1634,8 +1675,8 @@ void EditorCore::backspace_character() {
     }
 }
 
-bool EditorCore::outdent_before_cursor(std::size_t width) {
-    if (width == 0 || cursor_.column == 0) {
+bool EditorCore::outdent_before_cursor(std::size_t tabstop, std::size_t softtabstop) {
+    if (softtabstop == 0 || cursor_.column == 0) {
         return false;
     }
     const std::u32string &line = lines_[cursor_.row];
@@ -1643,13 +1684,13 @@ bool EditorCore::outdent_before_cursor(std::size_t width) {
         return false;
     }
 
-    std::size_t current_columns = indentation_columns(line, cursor_.column, width);
+    std::size_t current_columns = indentation_columns(line, cursor_.column, tabstop);
     if (current_columns == 0) {
         return false;
     }
-    std::size_t target_columns = ((current_columns - 1) / width) * width;
+    std::size_t target_columns = ((current_columns - 1) / softtabstop) * softtabstop;
     std::size_t target_index = 0;
-    while (target_index < cursor_.column && indentation_columns(line, target_index + 1, width) <= target_columns) {
+    while (target_index < cursor_.column && indentation_columns(line, target_index + 1, tabstop) <= target_columns) {
         ++target_index;
     }
     if (target_index >= cursor_.column) {

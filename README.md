@@ -56,7 +56,7 @@ make test
 ```
 
 Passing multiple files opens each one in its own buffer and leaves the first file active.
-Starting `./medit` with no file arguments opens an `rg --files | fzf` picker first; if the picker is canceled or unsupported, `medit` falls back to an empty buffer.
+Starting `./medit` with no file arguments opens a project file picker first. `medit` prefers `fd`/`fdfind` when available and otherwise falls back to `rg`, then pipes the results through `fzf`. If the picker is canceled or unsupported, `medit` falls back to an empty buffer.
 
 ## Config
 
@@ -154,9 +154,39 @@ Then run `make bootstrap-tree-sitter` to rebuild local grammar libraries, querie
 
 `right_justify_diagnostics = true` makes inline diagnostic annotations render against the right edge of the text area instead of starting from the left.
 
+`show_diagnostics_in_insert_mode = false` hides diagnostic underlines and inline diagnostic annotations while you are in insert mode.
+
 `shiftwidth = 4` sets how many spaces `>` and `<` add or remove when indenting and outdenting lines.
 
+`tabstop = 8` sets the displayed width of tab characters.
+
+`softtabstop = 0` makes insert-mode `Tab` and `Shift-Tab` use `shiftwidth`; set it to a positive number to use a different indentation step.
+
+`expandtab = false` keeps literal tabs available; when true, insert-mode tabbing and indentation use spaces.
+
 `autoindent = true` makes Enter and `o` copy the leading whitespace from the line above onto the new line.
+
+Syntax language entries in `syntax.json` can also override editor behavior per filename pattern:
+
+```json
+{
+  "name": "python",
+  "patterns": ["*.py", "*.pyi", "*.pyw"],
+  "grammar_path": "grammars/libtree-sitter-python.so",
+  "symbol_name": "tree_sitter_python",
+  "highlights_path": "queries/python/highlights.scm",
+  "editor": {
+    "shiftwidth": 4,
+    "tabstop": 8,
+    "softtabstop": 4,
+    "expandtab": true,
+    "autoindent": true,
+    "show_diagnostics_in_insert_mode": false
+  }
+}
+```
+
+Those per-language editor settings override the global `meditrc` values for matching buffers.
 
 `log = debug.log` enables append-only debug logging to `.config/medit/debug.log` relative to the loaded `meditrc` unless you use an absolute path. This is useful for debugging picker, file-open, and config reload issues without copying transient status messages.
 
@@ -221,8 +251,9 @@ colors = forest.json
 - `G` jump to the bottom of the file
 - `0`, `$` move to line start/end
 - `>`, `<` indent or outdent the current line, or all selected lines in visual mode, by `shiftwidth`
-- In insert mode, `Tab` in leading indentation inserts spaces to the next `shiftwidth` stop
-- In insert mode, `Shift-Tab` in leading indentation outdents to the previous `shiftwidth` stop
+- In insert or visual mode, `>` and `<` keep the visual selection active so you can repeat them
+- In insert mode, `Tab` in leading indentation advances to the next `softtabstop` column
+- In insert mode, `Shift-Tab` in leading indentation outdents to the previous `softtabstop` column
 - `x` delete character under cursor
 - `D` delete from the cursor to the end of the line through the configurable key-sequence alias system
 - `p` paste after the cursor
@@ -256,7 +287,7 @@ colors = forest.json
 - `:bnext` / `:bprev` switch buffers
 - `:bd` close the current buffer if clean
 - `:bd!` force close the current buffer
-- `:find-file` open a project file via `rg --files | fzf`
+- `:find-file` open a project file via the external file picker (`fd`/`fdfind` or `rg`, then `fzf`)
 - `:grep pattern` search with `rg` and jump via `fzf`
 - `:reload-config` reload `meditrc`, keybindings, colors, and logging
 - `:diagnostics` show a diagnostics summary

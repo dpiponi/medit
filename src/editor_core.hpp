@@ -223,18 +223,18 @@ class EditorCore {
     std::optional<Range> a_word_range() const;
 
     void insert_codepoint(char32_t codepoint);
-    bool insert_soft_tab(std::size_t width);
+    bool insert_soft_tab(std::size_t tabstop, std::size_t softtabstop, bool expandtab);
     void insert_newline();
     void insert_newline_with_autoindent();
     void backspace_character();
-    bool outdent_before_cursor(std::size_t width);
+    bool outdent_before_cursor(std::size_t tabstop, std::size_t softtabstop);
     void delete_character_under_cursor();
     void delete_current_line();
     void open_line_below();
     void open_line_below_with_autoindent();
     void open_line_above();
-    bool indent_lines(std::size_t start_row, std::size_t end_row, std::size_t width);
-    bool outdent_lines(std::size_t start_row, std::size_t end_row, std::size_t width);
+    bool indent_lines(std::size_t start_row, std::size_t end_row, std::size_t shiftwidth, bool expandtab, std::size_t tabstop);
+    bool outdent_lines(std::size_t start_row, std::size_t end_row, std::size_t shiftwidth, std::size_t tabstop);
     bool yank_selection();
     bool delete_selection();
     bool paste_before_cursor();
