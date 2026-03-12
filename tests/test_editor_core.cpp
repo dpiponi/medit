@@ -740,6 +740,11 @@ void test_keybinding_dispatch() {
         insert_shift_tab.action.has_value() && *insert_shift_tab.action == EditorAction::InsertOutdent,
         "insert shift-tab binding");
 
+    KeyDispatch insert_completion = dispatch_key_sequence(keybindings, "insert", pending, "ctrl-p", false);
+    expect(
+        insert_completion.action.has_value() && *insert_completion.action == EditorAction::ShowCompletion,
+        "insert ctrl-p should map to completion");
+
     KeyDispatch special = dispatch_key_sequence(keybindings, "normal", pending, "pagedown", false);
     expect(special.action.has_value() && *special.action == EditorAction::PageDown, "pagedown binding");
 
@@ -916,6 +921,18 @@ void test_keybinding_dispatch() {
     expect(
         search_insert.action.has_value() && *search_insert.action == EditorAction::SearchInsert,
         "search printable binding");
+
+    KeyDispatch search_history_previous = dispatch_key_sequence(keybindings, "search", pending, "up", false);
+    expect(
+        search_history_previous.action.has_value() &&
+            *search_history_previous.action == EditorAction::SearchHistoryPrevious,
+        "search up should browse previous history");
+
+    KeyDispatch search_history_next = dispatch_key_sequence(keybindings, "search", pending, "down", false);
+    expect(
+        search_history_next.action.has_value() &&
+            *search_history_next.action == EditorAction::SearchHistoryNext,
+        "search down should browse next history");
 }
 
 void test_config_file_selects_keybindings_and_colors() {
@@ -1346,6 +1363,30 @@ void test_lsp_service_roundtrip() {
     }
     expect(saw_hover, "lsp roundtrip should produce hover popup content");
 
+    request.type = ServiceRequestType::Completion;
+    request.document_version = core.document_version();
+    runtime.dispatch_service_request(request);
+
+    bool saw_completion = false;
+    for (int i = 0; i < 30 && !saw_completion; ++i) {
+        runtime.poll_services();
+        for (const ServiceEvent &event : runtime.take_service_events()) {
+            if (!event.command || event.command->type != EditorCommandType::ShowPopup) {
+                continue;
+            }
+            if (event.command->popup_kind != PopupKind::Menu) {
+                continue;
+            }
+            expect(event.command->title == "Completion", "completion should use popup title");
+            expect(event.command->popup_items.size() == 2, "completion should include fake completion items");
+            expect(event.command->popup_items[0].label == "completeOne", "completion should preserve first label");
+            expect(event.command->popup_items[0].insert_text == "completeOne", "completion should preserve insert text");
+            saw_completion = true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    expect(saw_completion, "lsp roundtrip should produce completion popup content");
+
     runtime.stop_services();
     std::filesystem::remove_all(dir);
 #endif
@@ -1427,6 +1468,10 @@ class RecordingService : public EditorService {
         return interval_ms_;
     }
 
+    std::string status_summary() const override {
+        return "recording\nstate: ready";
+    }
+
     bool started = false;
     bool stopped = false;
     std::vector<EditorEvent> received_events;
@@ -1467,6 +1512,8 @@ void test_editor_runtime_service_boundary() {
     expect(service_events[0].command->type == EditorCommandType::SetStatusMessage, "service command should preserve type");
     expect(service_events[0].document_uri.has_value(), "service event should carry document identity");
     expect(service_events[0].document_version == core.document_version(), "service event should carry document version");
+    expect(runtime.status_summary().contains("recording"), "runtime status should include service name");
+    expect(runtime.status_summary().contains("state: ready"), "runtime status should include service summary");
 
     runtime.stop_services();
     expect(!runtime.started(), "runtime stop should clear started state");

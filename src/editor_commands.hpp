@@ -18,6 +18,18 @@ enum class EditorCommandType {
     SetStatusMessage,
 };
 
+enum class PopupKind {
+    Text,
+    Menu,
+};
+
+struct PopupMenuItem {
+    std::string label;
+    std::string detail;
+    std::string insert_text;
+    std::optional<Range> replace_range;
+};
+
 struct EditorCommand {
     EditorCommandType type = EditorCommandType::SetStatusMessage;
     std::optional<std::string> document_uri;
@@ -26,6 +38,8 @@ struct EditorCommand {
     std::optional<Position> position;
     std::string title;
     std::string message;
+    PopupKind popup_kind = PopupKind::Text;
+    std::vector<PopupMenuItem> popup_items;
 };
 
 struct EditorCommandResult {

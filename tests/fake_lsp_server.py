@@ -102,6 +102,27 @@ while True:
                 },
             }
         )
+    elif method == "textDocument/completion":
+        send_message(
+            {
+                "jsonrpc": "2.0",
+                "id": message["id"],
+                "result": {
+                    "isIncomplete": False,
+                    "items": [
+                        {
+                            "label": "completeOne",
+                            "detail": "fake detail",
+                            "insertText": "completeOne",
+                        },
+                        {
+                            "label": "completeTwo",
+                            "insertText": "completeTwo",
+                        },
+                    ],
+                },
+            }
+        )
     elif method == "shutdown":
         send_message({"jsonrpc": "2.0", "id": message["id"], "result": None})
     elif method == "exit":

@@ -147,8 +147,15 @@ struct EditorState {
 
     struct PopupState {
         bool visible = false;
+        PopupKind kind = PopupKind::Text;
         std::string title;
         std::u32string text;
+        std::vector<PopupMenuItem> items;
+        std::u32string filter;
+        std::vector<std::size_t> filtered_indices;
+        std::size_t selected_index = 0;
+        std::size_t scroll_offset = 0;
+        Mode originating_mode = Mode::Normal;
     };
 
     EditorSession session;
@@ -167,6 +174,7 @@ struct EditorState {
     PromptHistory editor_command_history;
     PromptHistory filter_command_history;
     PromptHistory sed_command_history;
+    PromptHistory search_history;
     std::u32string search_buffer;
     std::string status_message = "NORMAL";
     PopupState popup;
@@ -328,6 +336,9 @@ void sync_core_view_from_window(EditorState &state, std::size_t window_id) {
 }
 
 EditorState::PromptHistory &active_prompt_history(EditorState &state) {
+    if (state.mode == Mode::Search) {
+        return state.search_history;
+    }
     switch (state.command_prompt_kind) {
         case CommandPromptKind::EditorCommand:
             return state.editor_command_history;
@@ -360,11 +371,12 @@ void browse_prompt_history(EditorState &state, bool previous) {
     if (history.entries.empty()) {
         return;
     }
+    std::u32string &buffer = state.mode == Mode::Search ? state.search_buffer : state.command_buffer;
     if (!history.browse_index) {
         if (!previous) {
             return;
         }
-        history.draft = state.command_buffer;
+        history.draft = buffer;
         history.browse_index = history.entries.size() - 1;
     } else if (previous) {
         if (*history.browse_index == 0) {
@@ -373,13 +385,13 @@ void browse_prompt_history(EditorState &state, bool previous) {
         --*history.browse_index;
     } else {
         if (*history.browse_index + 1 >= history.entries.size()) {
-            state.command_buffer = history.draft;
+            buffer = history.draft;
             reset_prompt_history_navigation(history);
             return;
         }
         ++*history.browse_index;
     }
-    state.command_buffer = history.entries[*history.browse_index];
+    buffer = history.entries[*history.browse_index];
 }
 
 std::wstring u32_to_wstring(const std::u32string &text) {
@@ -461,17 +473,197 @@ void set_status(EditorState &state, const std::string &message) {
 
 bool reload_editor_configuration(EditorState &state, std::string &error_message);
 void handle_service_events(EditorState &state);
+void begin_insert_session(EditorState &state);
+void rebuild_popup_filter(EditorState &state);
 
 void show_popup(EditorState &state, std::string title, std::u32string text) {
     state.popup.visible = true;
+    state.popup.kind = PopupKind::Text;
     state.popup.title = std::move(title);
     state.popup.text = std::move(text);
+    state.popup.items.clear();
+    state.popup.filter.clear();
+    state.popup.filtered_indices.clear();
+    state.popup.selected_index = 0;
+    state.popup.scroll_offset = 0;
+    state.popup.originating_mode = state.mode;
+}
+
+void show_menu_popup(EditorState &state, std::string title, std::vector<PopupMenuItem> items) {
+    state.popup.visible = true;
+    state.popup.kind = PopupKind::Menu;
+    state.popup.title = std::move(title);
+    state.popup.text.clear();
+    state.popup.items = std::move(items);
+    state.popup.filter.clear();
+    state.popup.filtered_indices.clear();
+    state.popup.selected_index = 0;
+    state.popup.scroll_offset = 0;
+    state.popup.originating_mode = state.mode;
+    rebuild_popup_filter(state);
 }
 
 void dismiss_popup(EditorState &state) {
     state.popup.visible = false;
+    state.popup.kind = PopupKind::Text;
     state.popup.title.clear();
     state.popup.text.clear();
+    state.popup.items.clear();
+    state.popup.filter.clear();
+    state.popup.filtered_indices.clear();
+    state.popup.selected_index = 0;
+    state.popup.scroll_offset = 0;
+}
+
+bool popup_accepts_input(const EditorState &state) {
+    return state.popup.visible && state.popup.kind == PopupKind::Menu;
+}
+
+void rebuild_popup_filter(EditorState &state) {
+    state.popup.filtered_indices.clear();
+    if (state.popup.kind != PopupKind::Menu) {
+        return;
+    }
+    std::string filter = u32_to_utf8(state.popup.filter);
+    std::string lowered_filter = ascii_lowercase(filter);
+    for (std::size_t index = 0; index < state.popup.items.size(); ++index) {
+        const PopupMenuItem &item = state.popup.items[index];
+        std::string haystack = item.label;
+        if (!item.detail.empty()) {
+            haystack += " " + item.detail;
+        }
+        if (lowered_filter.empty() || ascii_lowercase(haystack).contains(lowered_filter)) {
+            state.popup.filtered_indices.push_back(index);
+        }
+    }
+    if (state.popup.filtered_indices.empty()) {
+        state.popup.selected_index = 0;
+        state.popup.scroll_offset = 0;
+        return;
+    }
+    if (state.popup.selected_index >= state.popup.filtered_indices.size()) {
+        state.popup.selected_index = 0;
+    }
+    state.popup.scroll_offset = 0;
+}
+
+void ensure_popup_selection_visible(EditorState &state, std::size_t visible_rows) {
+    if (!popup_accepts_input(state) || state.popup.filtered_indices.empty()) {
+        return;
+    }
+    std::size_t clamped_visible_rows = std::max<std::size_t>(visible_rows, 1);
+    if (state.popup.selected_index < state.popup.scroll_offset) {
+        state.popup.scroll_offset = state.popup.selected_index;
+    } else if (state.popup.selected_index >= state.popup.scroll_offset + clamped_visible_rows) {
+        state.popup.scroll_offset = state.popup.selected_index - clamped_visible_rows + 1;
+    }
+    std::size_t max_offset = state.popup.filtered_indices.size() > clamped_visible_rows
+        ? state.popup.filtered_indices.size() - clamped_visible_rows
+        : 0;
+    state.popup.scroll_offset = std::min(state.popup.scroll_offset, max_offset);
+}
+
+void move_popup_selection(EditorState &state, bool forward) {
+    if (!popup_accepts_input(state) || state.popup.filtered_indices.empty()) {
+        return;
+    }
+    if (forward) {
+        state.popup.selected_index = (state.popup.selected_index + 1) % state.popup.filtered_indices.size();
+    } else if (state.popup.selected_index == 0) {
+        state.popup.selected_index = state.popup.filtered_indices.size() - 1;
+    } else {
+        --state.popup.selected_index;
+    }
+}
+
+void apply_popup_selection(EditorState &state) {
+    if (!popup_accepts_input(state) || state.popup.filtered_indices.empty()) {
+        return;
+    }
+    PopupMenuItem item = state.popup.items[state.popup.filtered_indices[state.popup.selected_index]];
+    Mode originating_mode = state.popup.originating_mode;
+    EditorCore &core = active_core(state);
+    std::u32string text = utf8_to_u32(item.insert_text);
+    Position start = item.replace_range ? item.replace_range->start : core.cursor();
+    bool applied = false;
+    if (item.replace_range) {
+        applied = core.replace_range(*item.replace_range, text);
+    } else {
+        applied = core.insert_text(core.cursor(), text);
+    }
+    if (applied) {
+        core.set_cursor(EditorCommandAccess::position_after_text(core, start, text));
+        sync_window_view_from_core(state, state.windows.active_window_id());
+        set_status(state, "Completion applied");
+    } else {
+        set_status(state, "Completion failed");
+    }
+    dismiss_popup(state);
+    if (originating_mode == Mode::Insert) {
+        begin_insert_session(state);
+    }
+}
+
+bool handle_popup_input(EditorState &state, const std::string &token) {
+    if (!popup_accepts_input(state)) {
+        return false;
+    }
+    int screen_rows = 0;
+    int screen_cols = 0;
+    getmaxyx(stdscr, screen_rows, screen_cols);
+    std::size_t visible_rows = static_cast<std::size_t>(std::max(1, screen_rows - 4));
+    if (token == "up") {
+        move_popup_selection(state, false);
+        ensure_popup_selection_visible(state, visible_rows);
+        return true;
+    }
+    if (token == "down") {
+        move_popup_selection(state, true);
+        ensure_popup_selection_visible(state, visible_rows);
+        return true;
+    }
+    if (token == "tab") {
+        move_popup_selection(state, true);
+        ensure_popup_selection_visible(state, visible_rows);
+        return true;
+    }
+    if (token == "shift-tab") {
+        move_popup_selection(state, false);
+        ensure_popup_selection_visible(state, visible_rows);
+        return true;
+    }
+    if (token == "backspace") {
+        if (!state.popup.filter.empty()) {
+            state.popup.filter.pop_back();
+            rebuild_popup_filter(state);
+            ensure_popup_selection_visible(state, visible_rows);
+        }
+        return true;
+    }
+    if (token == "enter") {
+        apply_popup_selection(state);
+        return true;
+    }
+    if (token == "esc") {
+        Mode originating_mode = state.popup.originating_mode;
+        dismiss_popup(state);
+        if (originating_mode == Mode::Insert) {
+            begin_insert_session(state);
+        }
+        set_status(state, mode_name(state.mode));
+        return true;
+    }
+    if (token == "printable") {
+        return true;
+    }
+    if (!token.empty() && utf8_to_u32(token).size() == 1) {
+        state.popup.filter += utf8_to_u32(token);
+        rebuild_popup_filter(state);
+        ensure_popup_selection_visible(state, visible_rows);
+        return true;
+    }
+    dismiss_popup(state);
+    return false;
 }
 
 void sync_active_window_buffer(EditorState &state) {
@@ -632,6 +824,7 @@ void setup_terminal(const Theme &theme) {
     g_shell_termios_valid = tcgetattr(STDIN_FILENO, &g_shell_termios) == 0;
 #endif
     initscr();
+    set_escdelay(25);
     def_shell_mode();
     raw();
     noecho();
@@ -802,7 +995,8 @@ void enter_search_mode(EditorState &state) {
     EditorState::WindowUiState &window_state = active_buffer_ui(state);
     core.clear_selection();
     state.mode = Mode::Search;
-    state.search_buffer = active_buffer_cache(state).active_search_pattern;
+    state.search_buffer.clear();
+    reset_prompt_history_navigation(state.search_history);
     window_state.search_origin = core.cursor();
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
@@ -933,6 +1127,11 @@ void show_diagnostics_summary(EditorState &state) {
             errors == 1 ? "" : "s",
             warnings,
             warnings == 1 ? "" : "s"));
+}
+
+void show_lsp_status(EditorState &state) {
+    show_popup(state, "LSP Status", utf8_to_u32(state.runtime.status_summary()));
+    set_status(state, "LSP status");
 }
 
 void navigate_diagnostic(EditorState &state, bool forward) {
@@ -1715,6 +1914,7 @@ void handle_grep_command(EditorState &state, const std::string &argument) {
 
 void request_definition(EditorState &state) {
     EditorCore &core = active_core(state);
+    state.runtime.dispatch_editor_events(core);
     ServiceRequest request;
     request.type = ServiceRequestType::GoToDefinition;
     request.document_uri = core.document_uri();
@@ -1725,14 +1925,51 @@ void request_definition(EditorState &state) {
 
 void request_hover(EditorState &state) {
     EditorCore &core = active_core(state);
+    state.runtime.dispatch_editor_events(core);
     ServiceRequest request;
     request.type = ServiceRequestType::Hover;
     request.document_uri = core.document_uri();
     request.utf16_position = core.utf16_position_for_position(core.cursor());
+    request.document_version = core.document_version();
     state.runtime.dispatch_service_request(request);
     state.runtime.poll_services();
     handle_service_events(state);
     set_status(state, "Hover requested");
+}
+
+void request_completion(EditorState &state) {
+    EditorCore &core = active_core(state);
+    if (state.mode == Mode::Insert) {
+        end_insert_session(state);
+    }
+    state.runtime.dispatch_editor_events(core);
+    auto is_identifier_char = [](char32_t codepoint) {
+        return (codepoint >= U'a' && codepoint <= U'z') || (codepoint >= U'A' && codepoint <= U'Z') ||
+            (codepoint >= U'0' && codepoint <= U'9') || codepoint == U'_';
+    };
+
+    Position cursor = core.cursor();
+    Position start = cursor;
+    if (cursor.row < core.line_count()) {
+        const std::u32string &line = core.lines()[cursor.row];
+        std::size_t column = std::min(cursor.column, line.size());
+        while (column > 0 && is_identifier_char(line[column - 1])) {
+            --column;
+        }
+        start = {cursor.row, column};
+    }
+
+    ServiceRequest request;
+    request.type = ServiceRequestType::Completion;
+    request.document_uri = core.document_uri();
+    request.utf16_position = core.utf16_position_for_position(cursor);
+    request.document_version = core.document_version();
+    request.completion_range = Range{start, cursor};
+    request.completion_prefix = u32_to_utf8(core.read_text(*request.completion_range));
+    state.runtime.dispatch_service_request(request);
+    state.runtime.poll_services();
+    handle_service_events(state);
+    set_status(state, "Completion requested");
 }
 
 std::optional<std::string> token_under_cursor(const EditorCore &core) {
@@ -2221,6 +2458,8 @@ void execute_command(EditorState &state) {
         }
     } else if (verb == "diagnostics") {
         show_diagnostics_summary(state);
+    } else if (verb == "lsp-status") {
+        show_lsp_status(state);
     } else {
         set_status(state, "Unknown command: " + verb);
     }
@@ -2867,12 +3106,39 @@ void draw_popup(const EditorState &state, int screen_rows, int screen_cols) {
 
     int available_rows = screen_rows - 2;
     int max_text_width = std::max(12, screen_cols - 8);
-    std::vector<std::u32string> wrapped = wrap_annotation_text(state.popup.text, max_text_width - 4);
-    if (wrapped.empty()) {
-        wrapped.push_back(U"");
+    std::size_t menu_visible_rows = static_cast<std::size_t>(std::max(1, available_rows - 2));
+    std::size_t menu_scroll_offset = 0;
+    std::string popup_title = state.popup.title;
+    if (state.popup.kind == PopupKind::Menu && !state.popup.filter.empty()) {
+        popup_title += " [" + u32_to_utf8(state.popup.filter) + "]";
+    }
+    std::vector<std::u32string> wrapped;
+    if (state.popup.kind == PopupKind::Menu) {
+        std::size_t filtered_size = state.popup.filtered_indices.size();
+        std::size_t max_offset = filtered_size > menu_visible_rows ? filtered_size - menu_visible_rows : 0;
+        menu_scroll_offset = std::min(state.popup.scroll_offset, max_offset);
+        std::size_t item_count = filtered_size > menu_scroll_offset
+            ? std::min<std::size_t>(filtered_size - menu_scroll_offset, menu_visible_rows)
+            : 0;
+        for (std::size_t i = 0; i < item_count; ++i) {
+            const PopupMenuItem &item = state.popup.items[state.popup.filtered_indices[menu_scroll_offset + i]];
+            std::string line = item.label;
+            if (!item.detail.empty()) {
+                line += "  " + item.detail;
+            }
+            wrapped.push_back(utf8_to_u32(line));
+        }
+        if (wrapped.empty()) {
+            wrapped.push_back(U"(no matches)");
+        }
+    } else {
+        wrapped = wrap_annotation_text(state.popup.text, max_text_width - 4);
+        if (wrapped.empty()) {
+            wrapped.push_back(U"");
+        }
     }
 
-    std::size_t title_width = display_width(utf8_to_u32(state.popup.title), 8);
+    std::size_t title_width = display_width(utf8_to_u32(popup_title), 8);
     std::size_t content_width = title_width;
     for (const std::u32string &line : wrapped) {
         content_width = std::max(content_width, display_width(line, 8));
@@ -2885,6 +3151,7 @@ void draw_popup(const EditorState &state, int screen_rows, int screen_cols) {
 
     int border_attrs = curses_attributes(theme_style(state.theme, StyleRole::StatusBar), StyleRole::StatusBar);
     int body_attrs = curses_attributes(theme_style(state.theme, StyleRole::MessageBar), StyleRole::MessageBar);
+    int selected_attrs = curses_attributes(theme_style(state.theme, StyleRole::Selection), StyleRole::Selection);
 
     for (int row = 0; row < popup_height; ++row) {
         for (int col = 0; col < popup_width; ++col) {
@@ -2895,14 +3162,22 @@ void draw_popup(const EditorState &state, int screen_rows, int screen_cols) {
     }
 
     attrset(static_cast<attr_t>(border_attrs));
-    if (!state.popup.title.empty()) {
-        std::string title = " " + state.popup.title + " ";
+    if (!popup_title.empty()) {
+        std::string title = " " + popup_title + " ";
         mvaddnstr(top, left + 1, title.c_str(), std::max(0, popup_width - 2));
     }
 
     attrset(static_cast<attr_t>(body_attrs));
     for (int row = 0; row < popup_height - 2 && row < static_cast<int>(wrapped.size()); ++row) {
+        attrset(static_cast<attr_t>(body_attrs));
         clear_rect_line(top + 1 + row, left + 1, popup_width - 2);
+        if (state.popup.kind == PopupKind::Menu &&
+            static_cast<std::size_t>(row) + menu_scroll_offset == state.popup.selected_index) {
+            attrset(static_cast<attr_t>(selected_attrs));
+            mvhline(top + 1 + row, left + 1, ' ', popup_width - 2);
+        } else {
+            attrset(static_cast<attr_t>(body_attrs));
+        }
         mvaddnwstr(top + 1 + row, left + 2, u32_to_wstring(wrapped[static_cast<std::size_t>(row)]).c_str(), popup_width - 4);
     }
     attrset(A_NORMAL);
@@ -3792,6 +4067,7 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             enter_normal_mode(state);
             break;
         case EditorAction::InsertNewline:
+            begin_insert_session(state);
             if (effective_autoindent(state.config, core.file_path())) {
                 core.insert_newline_with_autoindent();
             } else {
@@ -3799,17 +4075,20 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             }
             break;
         case EditorAction::InsertSoftTab:
+            begin_insert_session(state);
             core.insert_soft_tab(
                 effective_tabstop(state.config, core.file_path()),
                 effective_softtabstop(state.config, core.file_path()),
                 effective_expandtab(state.config, core.file_path()));
             break;
         case EditorAction::InsertOutdent:
+            begin_insert_session(state);
             core.outdent_before_cursor(
                 effective_tabstop(state.config, core.file_path()),
                 effective_softtabstop(state.config, core.file_path()));
             break;
         case EditorAction::Backspace:
+            begin_insert_session(state);
             core.backspace_character();
             break;
         case EditorAction::CommandExecute:
@@ -3827,12 +4106,14 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             browse_prompt_history(state, false);
             break;
         case EditorAction::SelfInsert:
+            begin_insert_session(state);
             core.insert_codepoint(static_cast<char32_t>(key));
             break;
         case EditorAction::CommandInsert:
             state.command_buffer.push_back(static_cast<char32_t>(key));
             break;
         case EditorAction::SearchExecute:
+            add_prompt_history_entry(state, state.search_buffer);
             buffer_state.active_search_pattern = state.search_buffer;
             refresh_search_matches(state, true);
             if (!buffer_state.search_pattern_valid) {
@@ -3856,6 +4137,18 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             refresh_search_matches(state, true);
             set_search_status(state, buffer_state.search_pattern_valid ? "" : "invalid regex");
             break;
+        case EditorAction::SearchHistoryPrevious:
+            browse_prompt_history(state, true);
+            buffer_state.active_search_pattern = state.search_buffer;
+            refresh_search_matches(state, true);
+            set_search_status(state, buffer_state.search_pattern_valid ? "" : "invalid regex");
+            break;
+        case EditorAction::SearchHistoryNext:
+            browse_prompt_history(state, false);
+            buffer_state.active_search_pattern = state.search_buffer;
+            refresh_search_matches(state, true);
+            set_search_status(state, buffer_state.search_pattern_valid ? "" : "invalid regex");
+            break;
         case EditorAction::SearchNext:
             refresh_search_matches(state, false);
             navigate_search_match(state, true);
@@ -3869,6 +4162,9 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             break;
         case EditorAction::ShowHover:
             request_hover(state);
+            break;
+        case EditorAction::ShowCompletion:
+            request_completion(state);
             break;
         case EditorAction::GoToFileUnderCursor:
             open_file_under_cursor(state);
@@ -4118,7 +4414,12 @@ void handle_keymap_input(EditorState &state, wint_t key, bool is_special) {
     if (!token) {
         return;
     }
-    dismiss_popup(state);
+    if (handle_popup_input(state, *token)) {
+        return;
+    }
+    if (state.popup.visible) {
+        dismiss_popup(state);
+    }
     process_input_token(state, *token, key, is_printable_input(key, is_special));
 }
 
@@ -4251,7 +4552,22 @@ void handle_service_events(EditorState &state) {
             continue;
         }
         if (command.type == EditorCommandType::ShowPopup) {
-            show_popup(state, command.title, utf8_to_u32(command.message));
+            if (command.popup_kind == PopupKind::Menu) {
+                if (!command.document_uri || *command.document_uri != active_core(state).document_uri()) {
+                    log_debug("completion popup dropped: uri mismatch");
+                    continue;
+                }
+                if (event.document_version != 0 && event.document_version != active_core(state).document_version()) {
+                    log_debug(
+                        "completion popup dropped: version mismatch event=" + std::to_string(event.document_version) +
+                        " current=" + std::to_string(active_core(state).document_version()));
+                    continue;
+                }
+                log_debug("completion popup shown count=" + std::to_string(command.popup_items.size()));
+                show_menu_popup(state, command.title, command.popup_items);
+            } else {
+                show_popup(state, command.title, utf8_to_u32(command.message));
+            }
             continue;
         }
         if (command.type == EditorCommandType::ClearPopup) {
@@ -4292,32 +4608,36 @@ void handle_service_events(EditorState &state) {
     }
 }
 
+void render_frame(EditorState &state) {
+    normalize_selected_diagnostic(state);
+    int screen_rows = 0;
+    int screen_cols = 0;
+    getmaxyx(stdscr, screen_rows, screen_cols);
+    for (const EditorWindow &window : state.windows.windows()) {
+        refresh_search_matches_for_window(state, window.id);
+        refresh_syntax_highlights(state, window.id);
+    }
+    auto rects = state.windows.layout_rects(screen_rows, screen_cols, 2);
+    auto active_rect = std::find_if(
+        rects.begin(),
+        rects.end(),
+        [&state](const WindowLayoutRect &rect) { return rect.window_id == state.windows.active_window_id(); });
+    if (active_rect != rects.end()) {
+        int buffer_rows = active_rect->height;
+        int buffer_cols = active_rect->width - line_number_width(active_core(state)) - 1;
+        ensure_cursor_visible(state, state.windows.active_window_id(), buffer_rows, buffer_cols);
+    }
+    draw_editor(state);
+}
+
 void run_editor(EditorState &state) {
     while (!state.should_quit) {
         for (EditorBuffer &buffer : state.session.buffers()) {
             state.runtime.dispatch_editor_events(buffer.core);
         }
         state.runtime.poll_services();
-        normalize_selected_diagnostic(state);
         handle_service_events(state);
-        int screen_rows = 0;
-        int screen_cols = 0;
-        getmaxyx(stdscr, screen_rows, screen_cols);
-        for (const EditorWindow &window : state.windows.windows()) {
-            refresh_search_matches_for_window(state, window.id);
-            refresh_syntax_highlights(state, window.id);
-        }
-        auto rects = state.windows.layout_rects(screen_rows, screen_cols, 2);
-        auto active_rect = std::find_if(
-            rects.begin(),
-            rects.end(),
-            [&state](const WindowLayoutRect &rect) { return rect.window_id == state.windows.active_window_id(); });
-        if (active_rect != rects.end()) {
-            int buffer_rows = active_rect->height;
-            int buffer_cols = active_rect->width - line_number_width(active_core(state)) - 1;
-            ensure_cursor_visible(state, state.windows.active_window_id(), buffer_rows, buffer_cols);
-        }
-        draw_editor(state);
+        render_frame(state);
         update_input_timeout(state);
         handle_input(state);
     }
@@ -4389,6 +4709,7 @@ int main(int argc, char **argv) {
                 state.runtime.add_service(std::make_unique<LspService>(server));
             }
         }
+        render_frame(state);
         state.runtime.start_services();
         run_editor(state);
         state.runtime.stop_services();

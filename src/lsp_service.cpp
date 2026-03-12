@@ -112,6 +112,35 @@ Utf16Position utf16_position_for_text_position(const std::u32string &text, Posit
     return utf16;
 }
 
+Position text_position_for_utf16(const std::u32string &text, Utf16Position position) {
+    std::size_t utf16_row = 0;
+    std::size_t utf16_column = 0;
+    std::size_t row = 0;
+    std::size_t column = 0;
+    for (char32_t codepoint : text) {
+        if (utf16_row == position.row && utf16_column >= position.column) {
+            return {row, column};
+        }
+        if (codepoint == U'\n') {
+            if (utf16_row == position.row && utf16_column == position.column) {
+                return {row, column};
+            }
+            ++row;
+            column = 0;
+            ++utf16_row;
+            utf16_column = 0;
+            continue;
+        }
+        std::size_t width = codepoint > 0xFFFF ? 2 : 1;
+        if (utf16_row == position.row && utf16_column + width > position.column) {
+            return {row, column};
+        }
+        ++column;
+        utf16_column += width;
+    }
+    return {row, column};
+}
+
 void apply_incremental_text_change(std::u32string &document_text, Range range, const std::u32string &replacement) {
     Range normalized = normalized_range(range);
     std::size_t start_offset = text_offset_for_position(document_text, normalized.start);
@@ -205,6 +234,82 @@ std::optional<std::string> hover_text_from_contents(const JsonValue &contents) {
         default:
             return std::nullopt;
     }
+}
+
+std::vector<PopupMenuItem> completion_items_from_result(
+    const JsonValue &result,
+    const std::u32string &document_text,
+    const ServiceRequest &request) {
+    const JsonValue *items = &result;
+    if (result.type == JsonValue::Type::Object) {
+        auto found = result.object_value.find("items");
+        if (found == result.object_value.end() || found->second.type != JsonValue::Type::Array) {
+            return {};
+        }
+        items = &found->second;
+    }
+    if (items->type != JsonValue::Type::Array) {
+        return {};
+    }
+
+    Range default_range = request.completion_range.value_or(
+        Range{text_position_for_utf16(document_text, request.utf16_position),
+              text_position_for_utf16(document_text, request.utf16_position)});
+    std::string prefix = request.completion_prefix;
+    std::vector<PopupMenuItem> parsed;
+    for (const JsonValue &item : items->array_value) {
+        if (item.type != JsonValue::Type::Object) {
+            continue;
+        }
+        auto label = item.object_value.find("label");
+        if (label == item.object_value.end() || label->second.type != JsonValue::Type::String) {
+            continue;
+        }
+        PopupMenuItem parsed_item;
+        parsed_item.label = label->second.string_value;
+        parsed_item.insert_text = parsed_item.label;
+        parsed_item.replace_range = default_range;
+        std::string filter_text = parsed_item.label;
+
+        auto detail = item.object_value.find("detail");
+        if (detail != item.object_value.end() && detail->second.type == JsonValue::Type::String) {
+            parsed_item.detail = detail->second.string_value;
+        }
+
+        auto filter = item.object_value.find("filterText");
+        if (filter != item.object_value.end() && filter->second.type == JsonValue::Type::String) {
+            filter_text = filter->second.string_value;
+        }
+
+        auto insert_text = item.object_value.find("insertText");
+        if (insert_text != item.object_value.end() && insert_text->second.type == JsonValue::Type::String) {
+            parsed_item.insert_text = insert_text->second.string_value;
+        }
+
+        auto text_edit = item.object_value.find("textEdit");
+        if (text_edit != item.object_value.end() && text_edit->second.type == JsonValue::Type::Object) {
+            auto new_text = text_edit->second.object_value.find("newText");
+            if (new_text != text_edit->second.object_value.end() && new_text->second.type == JsonValue::Type::String) {
+                parsed_item.insert_text = new_text->second.string_value;
+            }
+        }
+
+        if (!prefix.empty()) {
+            std::string candidate = !parsed_item.insert_text.empty() ? parsed_item.insert_text : parsed_item.label;
+            if (!candidate.starts_with(prefix) && !parsed_item.label.starts_with(prefix) && !filter_text.starts_with(prefix)) {
+                continue;
+            }
+        }
+
+        parsed.push_back(std::move(parsed_item));
+        if (parsed.size() >= 32) {
+            break;
+        }
+    }
+    log_debug(
+        "completion parsed uri-prefix=[" + prefix + "] count=" + std::to_string(parsed.size()) +
+        " total=" + std::to_string(items->array_value.size()));
+    return parsed;
 }
 
 }  // namespace
@@ -376,6 +481,8 @@ void LspService::handle_request(const ServiceRequest &request) {
             queue_status("Definition unavailable");
         } else if (request.type == ServiceRequestType::Hover) {
             queue_status("Hover unavailable");
+        } else if (request.type == ServiceRequestType::Completion) {
+            queue_status("Completion unavailable");
         }
         return;
     }
@@ -384,6 +491,8 @@ void LspService::handle_request(const ServiceRequest &request) {
         send_definition_request(request);
     } else if (request.type == ServiceRequestType::Hover || request.type == ServiceRequestType::WarmHover) {
         send_hover_request(request);
+    } else if (request.type == ServiceRequestType::Completion) {
+        send_completion_request(request);
     }
 }
 
@@ -459,12 +568,40 @@ std::optional<int> LspService::poll_interval_ms() const {
     return 10;
 }
 
+std::string LspService::status_summary() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::ostringstream summary;
+    summary << name()
+            << "\ncommand: " << (config_.command.empty() ? "<none>" : config_.command)
+            << "\nrunning: " << (running_ ? "yes" : "no")
+            << "\ninitialized: " << (initialized_ ? "yes" : "no");
+    if (workspace_root_) {
+        summary << "\nworkspace: " << workspace_root_->string();
+    } else {
+        summary << "\nworkspace: <unset>";
+    }
+    summary << "\nopen documents: " << open_documents_.size();
+    summary << "\npending requests: " << pending_requests_.size();
+    summary << "\npending changes: " << pending_document_changes_.size();
+    if (!last_status_message_.empty()) {
+        summary << "\nlast status: " << last_status_message_;
+    }
+    if (!last_stderr_line_.empty()) {
+        summary << "\nlast stderr: " << last_stderr_line_;
+    }
+    return summary.str();
+}
+
 void LspService::queue_event(ServiceEvent event) {
     std::lock_guard<std::mutex> lock(mutex_);
     pending_events_.push_back(std::move(event));
 }
 
 void LspService::queue_status(const std::string &message) {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        last_status_message_ = message;
+    }
     EditorCommand command;
     command.type = EditorCommandType::SetStatusMessage;
     command.message = message;
@@ -474,6 +611,10 @@ void LspService::queue_status(const std::string &message) {
 void LspService::queue_stderr_line(const std::string &line) {
     if (line.empty()) {
         return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        last_stderr_line_ = line;
     }
     queue_status("LSP stderr: " + line);
 }
@@ -544,9 +685,29 @@ bool LspService::spawn_process() {
 }
 
 void LspService::shutdown_process() {
+    int pid = child_pid_;
     if (stdin_fd_ >= 0) {
         close(stdin_fd_);
         stdin_fd_ = -1;
+    }
+    if (pid > 0) {
+        bool exited = false;
+        for (int attempt = 0; attempt < 10; ++attempt) {
+            int status = 0;
+            pid_t result = waitpid(pid, &status, WNOHANG);
+            if (result == pid) {
+                exited = true;
+                break;
+            }
+            if (result < 0) {
+                exited = true;
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        if (!exited) {
+            kill(pid, SIGTERM);
+        }
     }
     if (stdout_fd_ >= 0) {
         close(stdout_fd_);
@@ -562,9 +723,8 @@ void LspService::shutdown_process() {
     if (stderr_thread_.joinable()) {
         stderr_thread_.join();
     }
-    if (child_pid_ > 0) {
-        kill(child_pid_, SIGTERM);
-        waitpid(child_pid_, nullptr, 0);
+    if (pid > 0) {
+        waitpid(pid, nullptr, 0);
         child_pid_ = -1;
     }
 }
@@ -692,6 +852,7 @@ void LspService::send_did_open(const EditorEvent &event) {
     warmup.type = ServiceRequestType::WarmHover;
     warmup.document_uri = event.document_uri;
     warmup.utf16_position = Utf16Position{0, 0};
+    warmup.document_version = event.document_version;
     send_hover_request(warmup);
 }
 
@@ -797,6 +958,26 @@ void LspService::send_hover_request(const ServiceRequest &request) {
     }
 }
 
+void LspService::send_completion_request(const ServiceRequest &request) {
+    int request_id = next_request_id_++;
+    pending_requests_[request_id] = request;
+    std::ostringstream payload;
+    payload << "{"
+            << "\"jsonrpc\":\"2.0\","
+            << "\"id\":" << request_id << ","
+            << "\"method\":\"textDocument/completion\","
+            << "\"params\":{"
+            << "\"textDocument\":{\"uri\":" << json_string(request.document_uri) << "},"
+            << "\"position\":{\"line\":" << request.utf16_position.row
+            << ",\"character\":" << request.utf16_position.column << "}"
+            << "}"
+            << "}";
+    if (!write_payload(payload.str())) {
+        pending_requests_.erase(request_id);
+        queue_status("Completion request failed");
+    }
+}
+
 void LspService::handle_message(const std::string &payload) {
     JsonValue root = parse_json(payload);
     if (root.type != JsonValue::Type::Object) {
@@ -836,6 +1017,8 @@ void LspService::handle_message(const std::string &payload) {
                     queue_status("Definition request failed");
                 } else if (request.type == ServiceRequestType::Hover) {
                     queue_status("Hover request failed");
+                } else if (request.type == ServiceRequestType::Completion) {
+                    queue_status("Completion request failed");
                 }
                 return;
             }
@@ -883,6 +1066,36 @@ void LspService::handle_message(const std::string &payload) {
                 command.message = *hover_text;
                 command.document_uri = request.document_uri;
                 queue_event({ServiceEventType::Notification, name(), "hover", command, request.document_uri, 0, std::nullopt, U""});
+            } else if (request.type == ServiceRequestType::Completion) {
+                if (result == root.object_value.end() || result->second.type == JsonValue::Type::Null) {
+                    queue_status("No completions");
+                    return;
+                }
+                std::u32string document_text;
+                auto pending_text = pending_document_texts_.find(request.document_uri);
+                if (pending_text != pending_document_texts_.end()) {
+                    document_text = pending_text->second;
+                } else {
+                    auto found = document_texts_.find(request.document_uri);
+                    if (found != document_texts_.end()) {
+                        document_text = found->second;
+                    }
+                }
+                std::vector<PopupMenuItem> items =
+                    completion_items_from_result(result->second, document_text, request);
+                if (items.empty()) {
+                    queue_status("No completions");
+                    return;
+                }
+                EditorCommand command;
+                command.type = EditorCommandType::ShowPopup;
+                command.title = "Completion";
+                command.popup_kind = PopupKind::Menu;
+                command.popup_items = std::move(items);
+                command.document_uri = request.document_uri;
+                command.position = text_position_for_utf16(document_text, request.utf16_position);
+                queue_event(
+                    {ServiceEventType::Notification, name(), "completion", command, request.document_uri, request.document_version, std::nullopt, U""});
             } else if (request.type == ServiceRequestType::WarmHover) {
                 return;
             }

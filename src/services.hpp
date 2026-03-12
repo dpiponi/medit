@@ -18,12 +18,16 @@ enum class ServiceRequestType {
     GoToDefinition,
     Hover,
     WarmHover,
+    Completion,
 };
 
 struct ServiceRequest {
     ServiceRequestType type = ServiceRequestType::GoToDefinition;
     std::string document_uri;
     Utf16Position utf16_position;
+    std::size_t document_version = 0;
+    std::string completion_prefix;
+    std::optional<Range> completion_range;
 };
 
 struct ServiceEvent {
@@ -48,6 +52,7 @@ class EditorService {
     virtual void handle_request(const ServiceRequest &request);
     virtual std::vector<ServiceEvent> poll() = 0;
     virtual std::optional<int> poll_interval_ms() const;
+    virtual std::string status_summary() const;
 };
 
 class EditorRuntime {
@@ -65,6 +70,7 @@ class EditorRuntime {
     void dispatch_service_request(const ServiceRequest &request);
     void poll_services();
     std::optional<int> idle_wait_timeout_ms() const;
+    std::string status_summary() const;
 
     const std::vector<ServiceEvent> &pending_service_events() const;
     std::vector<ServiceEvent> take_service_events();

@@ -28,6 +28,7 @@ class LspService : public EditorService {
     void handle_request(const ServiceRequest &request) override;
     std::vector<ServiceEvent> poll() override;
     std::optional<int> poll_interval_ms() const override;
+    std::string status_summary() const override;
 
   private:
     LspServerConfig config_;
@@ -43,7 +44,7 @@ class LspService : public EditorService {
     std::optional<std::filesystem::path> workspace_root_;
     std::thread reader_thread_;
     std::thread stderr_thread_;
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::vector<ServiceEvent> pending_events_;
     std::vector<EditorEvent> pending_editor_events_;
     std::map<std::string, EditorEvent> pending_document_changes_;
@@ -54,6 +55,8 @@ class LspService : public EditorService {
     std::map<int, ServiceRequest> pending_requests_;
     std::string read_buffer_;
     std::string stderr_buffer_;
+    std::string last_status_message_;
+    std::string last_stderr_line_;
 
     void queue_event(ServiceEvent event);
     void queue_status(const std::string &message);
@@ -78,5 +81,6 @@ class LspService : public EditorService {
     void send_did_close(const EditorEvent &event);
     void send_definition_request(const ServiceRequest &request);
     void send_hover_request(const ServiceRequest &request);
+    void send_completion_request(const ServiceRequest &request);
     void handle_message(const std::string &payload);
 };

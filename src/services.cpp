@@ -7,6 +7,10 @@ std::optional<int> EditorService::poll_interval_ms() const {
     return std::nullopt;
 }
 
+std::string EditorService::status_summary() const {
+    return name();
+}
+
 void EditorService::handle_request(const ServiceRequest &request) {
     (void)request;
 }
@@ -117,6 +121,21 @@ std::optional<int> EditorRuntime::idle_wait_timeout_ms() const {
         }
     }
     return timeout_ms;
+}
+
+std::string EditorRuntime::status_summary() const {
+    if (services_.empty()) {
+        return "No background services configured.";
+    }
+
+    std::string summary;
+    for (std::size_t index = 0; index < services_.size(); ++index) {
+        if (index > 0) {
+            summary += "\n\n";
+        }
+        summary += services_[index]->status_summary();
+    }
+    return summary;
 }
 
 const std::vector<ServiceEvent> &EditorRuntime::pending_service_events() const {

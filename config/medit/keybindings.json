@@ -92,6 +92,7 @@
     "b": "search_previous",
     "g d": "goto_definition",
     "K": "show_hover",
+    "ctrl-p": "show_completion",
     "g f": "goto_file_under_cursor",
     "g o": "jump_back",
     "g i": "jump_forward",
@@ -124,6 +125,7 @@
     "enter": "insert_newline",
     "tab": "insert_soft_tab",
     "shift-tab": "insert_outdent",
+    "ctrl-p": "show_completion",
     "backspace": "backspace",
     "left": "move_left",
     "right": "move_right",
@@ -144,6 +146,8 @@
     "esc": "enter_normal_mode",
     "enter": "search_execute",
     "backspace": "search_backspace",
+    "up": "search_history_previous",
+    "down": "search_history_next",
     "printable": "search_insert"
   }
 }
