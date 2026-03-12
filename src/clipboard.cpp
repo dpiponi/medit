@@ -2,7 +2,6 @@
 
 #include "logger.hpp"
 #include "process_utils.hpp"
-// #include "string_utils.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -13,7 +12,6 @@
 #include <sstream>
 #include <string>
 #include <string_view>
-// #include <vector>
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
@@ -28,6 +26,27 @@ struct NativeClipboardCommands {
     std::optional<std::string> write_command;
     std::string name;
 };
+
+bool running_under_wsl() {
+#if defined(__linux__)
+    if (std::getenv("WSL_INTEROP") != nullptr || std::getenv("WSL_DISTRO_NAME") != nullptr) {
+        return true;
+    }
+    std::ifstream input("/proc/sys/kernel/osrelease");
+    if (!input) {
+        return false;
+    }
+    std::ostringstream buffer;
+    buffer << input.rdbuf();
+    std::string text = buffer.str();
+    for (char &ch : text) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return text.contains("microsoft") || text.contains("wsl");
+#else
+    return false;
+#endif
+}
 
 std::string shell_single_quote(std::string_view text) {
     std::string quoted = "'";
@@ -301,23 +320,38 @@ NativeClipboardCommands native_clipboard_commands() {
     if (executable_exists("pbcopy") && executable_exists("pbpaste")) {
         commands.write_command = "pbcopy";
         commands.read_command = "pbpaste";
-        commands.name = "pbcopy/pbpaste";
+    commands.name = "pbcopy/pbpaste";
     }
 #else
-    const bool wayland = std::getenv("WAYLAND_DISPLAY") != nullptr;
-    const bool x11 = std::getenv("DISPLAY") != nullptr;
-    if (wayland && executable_exists("wl-copy") && executable_exists("wl-paste")) {
-        commands.write_command = "wl-copy";
-        commands.read_command = "wl-paste --no-newline";
-        commands.name = "wl-copy/wl-paste";
-    } else if (x11 && executable_exists("xclip")) {
-        commands.write_command = "xclip -selection clipboard";
-        commands.read_command = "xclip -selection clipboard -o";
-        commands.name = "xclip";
-    } else if (x11 && executable_exists("xsel")) {
-        commands.write_command = "xsel --clipboard --input";
-        commands.read_command = "xsel --clipboard --output";
-        commands.name = "xsel";
+    if (running_under_wsl() && executable_exists("clip.exe")) {
+        commands.write_command = "clip.exe";
+        if (executable_exists("powershell.exe")) {
+            commands.read_command =
+                "powershell.exe -NoProfile -Command \"[Console]::Out.Write((Get-Clipboard -Raw))\"";
+            commands.name = "clip.exe/powershell.exe";
+        } else if (executable_exists("pwsh.exe")) {
+            commands.read_command =
+                "pwsh.exe -NoProfile -Command \"[Console]::Out.Write((Get-Clipboard -Raw))\"";
+            commands.name = "clip.exe/pwsh.exe";
+        } else {
+            commands.name = "clip.exe";
+        }
+    } else {
+        const bool wayland = std::getenv("WAYLAND_DISPLAY") != nullptr;
+        const bool x11 = std::getenv("DISPLAY") != nullptr;
+        if (wayland && executable_exists("wl-copy") && executable_exists("wl-paste")) {
+            commands.write_command = "wl-copy";
+            commands.read_command = "wl-paste --no-newline";
+            commands.name = "wl-copy/wl-paste";
+        } else if (x11 && executable_exists("xclip")) {
+            commands.write_command = "xclip -selection clipboard";
+            commands.read_command = "xclip -selection clipboard -o";
+            commands.name = "xclip";
+        } else if (x11 && executable_exists("xsel")) {
+            commands.write_command = "xsel --clipboard --input";
+            commands.read_command = "xsel --clipboard --output";
+            commands.name = "xsel";
+        }
     }
 #endif
     return commands;
@@ -343,6 +377,9 @@ std::optional<ClipboardSnapshot> read_native_clipboard(SelectionMode fallback_mo
     if (!output) {
         log_debug("clipboard native read backend=" + commands.name + " status=failed");
         return std::nullopt;
+    }
+    while (!output->empty() && (output->back() == '\n' || output->back() == '\r')) {
+        output->pop_back();
     }
     ClipboardSnapshot snapshot;
     snapshot.text = utf8_to_u32(*output);
