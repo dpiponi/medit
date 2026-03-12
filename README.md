@@ -281,6 +281,7 @@ colors = forest.json
 - `:q!` force quit
 - `:wq` or `:x` write and quit
 - `:42` jump to line 42
+- `:s/pat/repl/`, `:s/pat/repl/g`, and `:%s/pat/repl/g` substitute on the current line or whole buffer
 - `:e filename` open another file in a new buffer and switch to it
 - `:buffers` list open buffers
 - `:buffer N` switch to buffer `N`

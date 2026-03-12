@@ -12,6 +12,7 @@
 #include "theme.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <clocale>
 #include <csignal>
 #include <cstdlib>
@@ -1553,6 +1554,100 @@ void execute_sed_command(EditorState &state) {
     set_status(state, "Selection filtered with sed");
 }
 
+struct SubstituteCommand {
+    bool whole_buffer = false;
+    std::string pattern;
+    std::string replacement;
+    bool global = false;
+};
+
+bool parse_substitute_component(
+    std::string_view command,
+    std::size_t &index,
+    char delimiter,
+    std::string &component,
+    std::string &error_message) {
+    while (index < command.size()) {
+        char ch = command[index];
+        if (ch == delimiter) {
+            ++index;
+            return true;
+        }
+        if (ch == '\\' && index + 1 < command.size() &&
+            (command[index + 1] == delimiter || command[index + 1] == '\\')) {
+            component.push_back(command[index + 1]);
+            index += 2;
+            continue;
+        }
+        component.push_back(ch);
+        ++index;
+    }
+    error_message = "unterminated substitute command";
+    return false;
+}
+
+bool parse_substitute_command(std::string_view command, SubstituteCommand &parsed, std::string &error_message) {
+    std::size_t index = 0;
+    if (command.starts_with("%s")) {
+        parsed.whole_buffer = true;
+        index = 2;
+    } else if (command.starts_with("s")) {
+        index = 1;
+    } else {
+        return false;
+    }
+
+    if (index >= command.size()) {
+        error_message = "missing substitute delimiter";
+        return false;
+    }
+    char delimiter = command[index++];
+    if (std::isalnum(static_cast<unsigned char>(delimiter)) || std::isspace(static_cast<unsigned char>(delimiter))) {
+        error_message = "invalid substitute delimiter";
+        return false;
+    }
+
+    if (!parse_substitute_component(command, index, delimiter, parsed.pattern, error_message)) {
+        return false;
+    }
+    if (!parse_substitute_component(command, index, delimiter, parsed.replacement, error_message)) {
+        return false;
+    }
+
+    for (; index < command.size(); ++index) {
+        if (command[index] == 'g') {
+            parsed.global = true;
+            continue;
+        }
+        error_message = "unsupported substitute flags";
+        return false;
+    }
+    return true;
+}
+
+void handle_substitute_command(EditorState &state, const SubstituteCommand &command) {
+    EditorCore &core = active_core(state);
+    std::size_t start_row = command.whole_buffer ? 0 : core.cursor().row;
+    std::size_t end_row = command.whole_buffer ? core.line_count() - 1 : core.cursor().row;
+    std::string error_message;
+    std::size_t substitutions =
+        core.substitute_regex(start_row, end_row, command.pattern, command.replacement, command.global, error_message);
+    if (!error_message.empty()) {
+        set_status(state, error_message);
+        return;
+    }
+    if (substitutions == 0) {
+        set_status(state, "Pattern not found");
+        return;
+    }
+    set_status(
+        state,
+        std::format(
+            "{} substitution{}",
+            substitutions,
+            substitutions == 1 ? "" : "s"));
+}
+
 void execute_command(EditorState &state) {
     if (state.command_prompt_kind == CommandPromptKind::FilterSelection) {
         execute_filter_command(state);
@@ -1580,7 +1675,13 @@ void execute_command(EditorState &state) {
         return;
     }
     add_prompt_history_entry(state, command_text);
-    if (std::ranges::all_of(verb, [](unsigned char ch) { return std::isdigit(ch) != 0; })) {
+    SubstituteCommand substitute;
+    std::string substitute_error;
+    if (parse_substitute_command(command, substitute, substitute_error)) {
+        handle_substitute_command(state, substitute);
+    } else if (!substitute_error.empty()) {
+        set_status(state, substitute_error);
+    } else if (std::ranges::all_of(verb, [](unsigned char ch) { return std::isdigit(ch) != 0; })) {
         handle_goto_line_command(state, verb);
     } else if (verb == "w") {
         handle_write_command(state, argument);

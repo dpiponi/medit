@@ -235,6 +235,13 @@ class EditorCore {
     void open_line_above();
     bool indent_lines(std::size_t start_row, std::size_t end_row, std::size_t shiftwidth, bool expandtab, std::size_t tabstop);
     bool outdent_lines(std::size_t start_row, std::size_t end_row, std::size_t shiftwidth, std::size_t tabstop);
+    std::size_t substitute_regex(
+        std::size_t start_row,
+        std::size_t end_row,
+        const std::string &pattern,
+        const std::string &replacement,
+        bool global,
+        std::string &error_message);
     bool yank_selection();
     bool delete_selection();
     bool paste_before_cursor();

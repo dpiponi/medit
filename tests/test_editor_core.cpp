@@ -226,6 +226,30 @@ void test_indent_and_outdent_lines() {
     expect_text(core, "\tone\ntwo\n\tthree", "noexpandtab indent uses a tab when possible");
 }
 
+void test_substitute_regex() {
+    EditorCore core;
+    expect(core.insert_text({0, 0}, utf8_to_u32("alpha beta alpha\nbeta alpha")), "seed substitute buffer");
+
+    std::string error_message;
+    std::size_t current_line = core.substitute_regex(0, 0, "alpha", "omega", false, error_message);
+    expect(error_message.empty(), "single substitute should not report an error");
+    expect(current_line == 1, "single substitute should replace one match");
+    expect_text(core, "omega beta alpha\nbeta alpha", "single substitute should affect only first match on the line");
+    expect(core.undo(), "undo single substitute should succeed");
+    expect_text(core, "alpha beta alpha\nbeta alpha", "undo single substitute should restore text");
+
+    std::size_t whole_buffer = core.substitute_regex(0, 1, "alpha", "omega", true, error_message);
+    expect(error_message.empty(), "global substitute should not report an error");
+    expect(whole_buffer == 3, "global substitute should count all matches");
+    expect_text(core, "omega beta omega\nbeta omega", "global substitute should replace across the range");
+    expect(core.undo(), "undo global substitute should succeed");
+    expect_text(core, "alpha beta alpha\nbeta alpha", "undo global substitute should restore text");
+
+    std::size_t invalid = core.substitute_regex(0, 1, "(", "omega", true, error_message);
+    expect(invalid == 0, "invalid regex should not apply substitutions");
+    expect(error_message == "invalid regex", "invalid regex should return explicit error");
+}
+
 void test_replace_selection_with_yank() {
     EditorCore core;
     for (char ch : std::string("abcd")) {
@@ -1572,6 +1596,7 @@ int main() {
         test_linewise_delete_and_paste();
         test_yank_and_paste();
         test_indent_and_outdent_lines();
+        test_substitute_regex();
         test_replace_selection_with_yank();
         test_file_io_and_dirty_tracking();
         test_open_empty_missing_file_and_save();

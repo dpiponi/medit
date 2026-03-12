@@ -8,6 +8,7 @@
 #include <fstream>
 #include <filesystem>
 #include <locale>
+#include <regex>
 #include <sstream>
 #include <utility>
 
@@ -1247,6 +1248,70 @@ bool EditorCore::outdent_lines(std::size_t start_row, std::size_t end_row, std::
         return false;
     }
     return apply_text_edits(edits);
+}
+
+std::size_t EditorCore::substitute_regex(
+    std::size_t start_row,
+    std::size_t end_row,
+    const std::string &pattern,
+    const std::string &replacement,
+    bool global,
+    std::string &error_message) {
+    if (start_row >= lines_.size() || end_row >= lines_.size() || start_row > end_row) {
+        error_message = "invalid substitute range";
+        return 0;
+    }
+    if (pattern.empty()) {
+        error_message = "empty substitute pattern";
+        return 0;
+    }
+
+    std::regex compiled;
+    try {
+        compiled = std::regex(pattern, std::regex::ECMAScript | std::regex::optimize);
+    } catch (const std::regex_error &) {
+        error_message = "invalid regex";
+        return 0;
+    }
+
+    std::vector<TextEdit> edits;
+    std::size_t substitutions = 0;
+    for (std::size_t row = start_row; row <= end_row; ++row) {
+        std::string line_utf8 = u32_to_utf8(lines_[row]);
+        if (!std::regex_search(line_utf8, compiled)) {
+            continue;
+        }
+
+        std::size_t row_substitutions = 0;
+        if (global) {
+            for (std::sregex_iterator it(line_utf8.begin(), line_utf8.end(), compiled), end; it != end; ++it) {
+                if (it->length() == 0) {
+                    continue;
+                }
+                ++row_substitutions;
+            }
+        } else {
+            row_substitutions = 1;
+        }
+
+        std::regex_constants::match_flag_type flags = std::regex_constants::format_default;
+        if (!global) {
+            flags |= std::regex_constants::format_first_only;
+        }
+        std::string replaced_utf8 = std::regex_replace(line_utf8, compiled, replacement, flags);
+        substitutions += row_substitutions;
+        if (replaced_utf8 != line_utf8) {
+            edits.push_back({line_range(row), utf8_to_u32(replaced_utf8)});
+        }
+    }
+
+    if (substitutions == 0) {
+        return 0;
+    }
+    if (!edits.empty()) {
+        apply_text_edits(edits);
+    }
+    return substitutions;
 }
 
 std::size_t EditorCore::utf8_offset_for_position(Position position) const {
