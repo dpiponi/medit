@@ -118,6 +118,7 @@ struct EditorState {
     PendingMotion pending_motion = PendingMotion::None;
     std::string repeat_digits;
     std::size_t pending_motion_repeat_count = 1;
+    std::size_t pending_replace_count = 0;
     std::size_t replay_depth = 0;
     std::size_t group_depth = 0;
     std::size_t group_repeat_count = 1;
@@ -423,6 +424,7 @@ void enter_normal_mode(EditorState &state) {
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
     state.pending_motion_repeat_count = 1;
+    state.pending_replace_count = 0;
     state.repeat_digits.clear();
     state.search_buffer.clear();
     Position cursor = core.cursor();
@@ -439,6 +441,7 @@ void enter_insert_mode(EditorState &state) {
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
     state.pending_motion_repeat_count = 1;
+    state.pending_replace_count = 0;
     state.repeat_digits.clear();
     state.search_buffer.clear();
     set_status(state, mode_name(state.mode));
@@ -453,6 +456,7 @@ void enter_command_mode(EditorState &state) {
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
     state.pending_motion_repeat_count = 1;
+    state.pending_replace_count = 0;
     state.repeat_digits.clear();
     state.search_buffer.clear();
     set_status(state, ":");
@@ -470,6 +474,7 @@ void enter_filter_command_mode(EditorState &state) {
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
     state.pending_motion_repeat_count = 1;
+    state.pending_replace_count = 0;
     state.repeat_digits.clear();
     state.search_buffer.clear();
     set_status(state, "|");
@@ -487,6 +492,7 @@ void enter_sed_command_mode(EditorState &state) {
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
     state.pending_motion_repeat_count = 1;
+    state.pending_replace_count = 0;
     state.repeat_digits.clear();
     state.search_buffer.clear();
     set_status(state, "S");
@@ -502,6 +508,7 @@ void enter_search_mode(EditorState &state) {
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
     state.pending_motion_repeat_count = 1;
+    state.pending_replace_count = 0;
     state.repeat_digits.clear();
     set_status(state, "/");
 }
@@ -2717,6 +2724,7 @@ bool action_accepts_repeat(EditorAction action) {
         case EditorAction::MoveLineStart:
         case EditorAction::MoveLineEnd:
         case EditorAction::DeleteChar:
+        case EditorAction::ReplaceChar:
         case EditorAction::Undo:
         case EditorAction::Redo:
         case EditorAction::PasteAfter:
@@ -2847,6 +2855,10 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
         case EditorAction::DeleteChar:
             core.delete_character_under_cursor();
             set_status(state, "Deleted character");
+            break;
+        case EditorAction::ReplaceChar:
+            state.pending_replace_count = take_repeat_count(state);
+            set_status(state, "r");
             break;
         case EditorAction::Undo:
             set_status(state, core.undo() ? "Undid change" : "Nothing to undo");
@@ -3154,6 +3166,30 @@ void process_input_token(EditorState &state, const std::string &token, wint_t ke
         execute_pending_motion(state, static_cast<char32_t>(key));
         return;
     }
+    if (state.mode == Mode::Normal && state.pending_replace_count > 0 && token == "esc") {
+        state.pending_replace_count = 0;
+        set_status(state, mode_name(state.mode));
+        return;
+    }
+    if (state.mode == Mode::Normal && state.pending_replace_count > 0 && printable) {
+        record_group_input(state, token, key, printable);
+        EditorCore &core = active_core(state);
+        Position cursor = core.cursor();
+        std::size_t line_length = core.line_length(cursor.row);
+        if (cursor.column >= line_length) {
+            state.pending_replace_count = 0;
+            set_status(state, "No character to replace");
+            return;
+        }
+        std::size_t replace_count = std::min(state.pending_replace_count, line_length - cursor.column);
+        core.replace_range(
+            {{cursor.row, cursor.column}, {cursor.row, cursor.column + replace_count}},
+            std::u32string(replace_count, static_cast<char32_t>(key)));
+        core.set_cursor(cursor);
+        state.pending_replace_count = 0;
+        set_status(state, "Replaced character");
+        return;
+    }
 
     if (mode_supports_command_language(state) && state.pending_motion == PendingMotion::None && state.pending_tokens.empty()) {
         if (token == "(") {
@@ -3208,6 +3244,7 @@ void handle_mouse_input(EditorState &state) {
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
     state.pending_motion_repeat_count = 1;
+    state.pending_replace_count = 0;
     state.repeat_digits.clear();
     active_core(state).set_cursor(*clicked);
     if (state.mode == Mode::Command) {

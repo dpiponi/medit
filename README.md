@@ -255,6 +255,7 @@ colors = forest.json
 - In insert mode, `Tab` in leading indentation advances to the next `softtabstop` column
 - In insert mode, `Shift-Tab` in leading indentation outdents to the previous `softtabstop` column
 - `x` delete character under cursor
+- `r<char>` replace the current character with `<char>`; counts work, for example `3ra`
 - `D` delete from the cursor to the end of the line through the configurable key-sequence alias system
 - `p` paste after the cursor
 - `P` paste before the cursor
@@ -274,7 +275,7 @@ colors = forest.json
 - `g f` opens the file reference under the cursor, first by direct relative path and then by searching from the workspace root with `fdfind` or `fd`
 - `g o` jump back through definition history and `g i` jump forward again
 - `u` undo last edit
-- `r` redo last undone edit
+- `Ctrl-R` redo last undone edit
 - `:w` write
 - `:w filename` write to a new path
 - `:q` quit if clean

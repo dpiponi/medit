@@ -796,6 +796,16 @@ void test_keybinding_dispatch() {
         search_prev.action.has_value() && *search_prev.action == EditorAction::SearchPrevious,
         "b should map to previous search result");
 
+    KeyDispatch replace_char = dispatch_key_sequence(keybindings, "normal", pending, "r", false);
+    expect(
+        replace_char.action.has_value() && *replace_char.action == EditorAction::ReplaceChar,
+        "r should map to replace char");
+
+    KeyDispatch redo = dispatch_key_sequence(keybindings, "normal", pending, "ctrl-r", false);
+    expect(
+        redo.action.has_value() && *redo.action == EditorAction::Redo,
+        "ctrl-r should map to redo");
+
     KeyDispatch definition_first = dispatch_key_sequence(keybindings, "normal", pending, "g", false);
     expect(definition_first.matched && definition_first.waiting_for_more, "g should wait for gd");
     KeyDispatch definition_second = dispatch_key_sequence(keybindings, "normal", pending, "d", false);

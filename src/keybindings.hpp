@@ -27,6 +27,7 @@ enum class EditorAction {
     OpenLineBelow,
     OpenLineAbove,
     DeleteChar,
+    ReplaceChar,
     Undo,
     Redo,
     PasteAfter,
