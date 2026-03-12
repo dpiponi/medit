@@ -41,8 +41,11 @@ class EditorSession {
     bool previous_buffer();
     bool close_active_buffer(bool force, std::vector<EditorEvent> *closed_events = nullptr);
 
+    EditorBuffer *find_buffer_by_id(std::size_t id);
+    const EditorBuffer *find_buffer_by_id(std::size_t id) const;
     EditorBuffer *find_buffer_by_uri(const std::string &document_uri);
     const EditorBuffer *find_buffer_by_uri(const std::string &document_uri) const;
+    std::optional<std::size_t> index_for_buffer_id(std::size_t id) const;
 
   private:
     std::vector<EditorBuffer> buffers_;

@@ -64,7 +64,15 @@ while True:
     elif method == "textDocument/didOpen":
         publish(message["params"]["textDocument"]["uri"], "open diagnostic")
     elif method == "textDocument/didChange":
-        publish(message["params"]["textDocument"]["uri"], "changed diagnostic")
+        change = message["params"]["contentChanges"][0]
+        if "range" in change:
+            start = change["range"]["start"]
+            publish(
+                message["params"]["textDocument"]["uri"],
+                f"incremental:{start['line']}:{start['character']}:{change['text']}",
+            )
+        else:
+            publish(message["params"]["textDocument"]["uri"], f"full:{change['text']}")
     elif method == "textDocument/definition":
         send_message(
             {

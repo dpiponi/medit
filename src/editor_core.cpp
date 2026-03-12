@@ -323,6 +323,45 @@ struct CompoundCommand : EditCommand {
     }
 };
 
+struct IncrementalDocumentChange {
+    Range range;
+    std::u32string text;
+};
+
+std::optional<IncrementalDocumentChange> incremental_change_for_command(const EditCommand &command, const EditorCore &core) {
+    if (const auto *insert = dynamic_cast<const InsertCodepointCommand *>(&command)) {
+        return IncrementalDocumentChange{{insert->position, insert->position}, std::u32string(1, insert->codepoint)};
+    }
+    if (const auto *split = dynamic_cast<const SplitLineCommand *>(&command)) {
+        return IncrementalDocumentChange{{split->position, split->position}, U"\n"};
+    }
+    if (const auto *backspace = dynamic_cast<const BackspaceCommand *>(&command)) {
+        if (backspace->joins_lines) {
+            std::size_t previous_row = backspace->position.row - 1;
+            return IncrementalDocumentChange{
+                {{previous_row, EditorCommandAccess::line(core, previous_row).size()}, {backspace->position.row, 0}},
+                U""};
+        }
+        return IncrementalDocumentChange{
+            {backspace->position, {backspace->position.row, backspace->position.column + 1}},
+            U""};
+    }
+    if (const auto *delete_char = dynamic_cast<const DeleteCharCommand *>(&command)) {
+        if (delete_char->joins_lines) {
+            return IncrementalDocumentChange{
+                {delete_char->position, {delete_char->position.row + 1, 0}},
+                U""};
+        }
+        return IncrementalDocumentChange{
+            {delete_char->position, {delete_char->position.row, delete_char->position.column + 1}},
+            U""};
+    }
+    if (const auto *replace = dynamic_cast<const ReplaceRangeCommand *>(&command)) {
+        return IncrementalDocumentChange{replace->range, replace->inserted_text};
+    }
+    return std::nullopt;
+}
+
 }  // namespace
 
 std::string file_uri_for_path(const std::string &path) {
@@ -481,6 +520,14 @@ Position EditorCore::cursor() const {
     return cursor_;
 }
 
+EditorViewState EditorCore::view_state() const {
+    return {cursor_, selection_anchor_, selection_mode_, preferred_column_};
+}
+
+void EditorCore::restore_view_state(const EditorViewState &view_state, bool emit_cursor_event) {
+    restore_view_state_internal(view_state, emit_cursor_event);
+}
+
 const std::vector<Diagnostic> &EditorCore::diagnostics() const {
     return document_diagnostics(document_uri_);
 }
@@ -605,6 +652,14 @@ std::size_t EditorCore::saved_document_version() const {
     return saved_document_version_;
 }
 
+std::size_t EditorCore::diagnostics_revision() const {
+    return diagnostics_revision_;
+}
+
+std::size_t EditorCore::annotations_revision() const {
+    return annotations_revision_;
+}
+
 bool EditorCore::is_dirty() const {
     return current_revision_ != saved_revision_;
 }
@@ -698,6 +753,17 @@ void EditorCore::emit_document_changed(const std::vector<std::u32string> &before
     });
 }
 
+void EditorCore::emit_document_changed(Range range, const std::u32string &text) {
+    emit_event({
+        EditorEventType::DocumentChanged,
+        document_uri_,
+        document_version_,
+        cursor_,
+        range,
+        text,
+    });
+}
+
 void EditorCore::emit_cursor_moved(Position previous_cursor) {
     if (suppress_cursor_events_ || positions_equal(previous_cursor, cursor_)) {
         return;
@@ -718,6 +784,21 @@ void EditorCore::set_cursor_internal(Position position, bool emit_cursor_event) 
     cursor_ = position;
     clamp_cursor();
     update_preferred_column();
+    if (emit_cursor_event) {
+        emit_cursor_moved(previous_cursor);
+    }
+}
+
+void EditorCore::restore_view_state_internal(const EditorViewState &view_state, bool emit_cursor_event) {
+    Position previous_cursor = cursor_;
+    cursor_ = view_state.cursor;
+    selection_anchor_ = view_state.selection_anchor;
+    selection_mode_ = view_state.selection_mode;
+    preferred_column_ = view_state.preferred_column;
+    clamp_cursor();
+    if (preferred_column_ > line_length(cursor_.row)) {
+        preferred_column_ = line_length(cursor_.row);
+    }
     if (emit_cursor_event) {
         emit_cursor_moved(previous_cursor);
     }
@@ -936,6 +1017,7 @@ void EditorCore::clear_diagnostics() {
 
 void EditorCore::set_document_diagnostics(const std::string &document_uri, std::vector<Diagnostic> diagnostics) {
     diagnostics_by_uri_[document_uri] = std::move(diagnostics);
+    ++diagnostics_revision_;
     if (document_uri == document_uri_) {
         emit_diagnostics_changed(document_uri);
         emit_annotations_changed(document_uri);
@@ -944,6 +1026,7 @@ void EditorCore::set_document_diagnostics(const std::string &document_uri, std::
 
 void EditorCore::clear_document_diagnostics(const std::string &document_uri) {
     diagnostics_by_uri_.erase(document_uri);
+    ++diagnostics_revision_;
     if (document_uri == document_uri_) {
         emit_diagnostics_changed(document_uri);
         emit_annotations_changed(document_uri);
@@ -960,6 +1043,7 @@ void EditorCore::clear_annotations() {
 
 void EditorCore::set_document_annotations(const std::string &document_uri, std::vector<InlineAnnotation> annotations) {
     annotations_by_uri_[document_uri] = std::move(annotations);
+    ++annotations_revision_;
     if (document_uri == document_uri_) {
         emit_annotations_changed(document_uri);
     }
@@ -967,6 +1051,7 @@ void EditorCore::set_document_annotations(const std::string &document_uri, std::
 
 void EditorCore::clear_document_annotations(const std::string &document_uri) {
     annotations_by_uri_.erase(document_uri);
+    ++annotations_revision_;
     if (document_uri == document_uri_) {
         emit_annotations_changed(document_uri);
     }
@@ -1484,7 +1569,11 @@ void EditorCore::apply_command(std::unique_ptr<EditCommand> command) {
         return;
     }
 
-    std::vector<std::u32string> before_lines = lines_;
+    std::optional<IncrementalDocumentChange> incremental_change = incremental_change_for_command(*command, *this);
+    std::vector<std::u32string> before_lines;
+    if (!incremental_change) {
+        before_lines = lines_;
+    }
     Position previous_cursor = cursor_;
     suppress_cursor_events_ = true;
     command->apply(*this);
@@ -1493,7 +1582,11 @@ void EditorCore::apply_command(std::unique_ptr<EditCommand> command) {
     redo_stack_.clear();
     ++current_revision_;
     ++document_version_;
-    emit_document_changed(before_lines);
+    if (incremental_change) {
+        emit_document_changed(incremental_change->range, incremental_change->text);
+    } else {
+        emit_document_changed(before_lines);
+    }
     emit_cursor_moved(previous_cursor);
 }
 

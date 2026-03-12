@@ -74,6 +74,51 @@ DiagnosticSeverity diagnostic_severity_from_lsp(const JsonValue &value) {
     return static_cast<int>(value.number_value) == 1 ? DiagnosticSeverity::Error : DiagnosticSeverity::Warning;
 }
 
+std::size_t text_offset_for_position(const std::u32string &text, Position position) {
+    std::size_t row = 0;
+    std::size_t column = 0;
+    for (std::size_t index = 0; index < text.size(); ++index) {
+        if (row == position.row && column == position.column) {
+            return index;
+        }
+        if (text[index] == U'\n') {
+            ++row;
+            column = 0;
+        } else {
+            ++column;
+        }
+    }
+    return text.size();
+}
+
+Utf16Position utf16_position_for_text_position(const std::u32string &text, Position position) {
+    Utf16Position utf16{};
+    std::size_t row = 0;
+    std::size_t column = 0;
+    for (char32_t codepoint : text) {
+        if (row == position.row && column == position.column) {
+            return utf16;
+        }
+        if (codepoint == U'\n') {
+            ++row;
+            column = 0;
+            ++utf16.row;
+            utf16.column = 0;
+            continue;
+        }
+        ++column;
+        utf16.column += codepoint > 0xFFFF ? 2 : 1;
+    }
+    return utf16;
+}
+
+void apply_incremental_text_change(std::u32string &document_text, Range range, const std::u32string &replacement) {
+    Range normalized = normalized_range(range);
+    std::size_t start_offset = text_offset_for_position(document_text, normalized.start);
+    std::size_t end_offset = text_offset_for_position(document_text, normalized.end);
+    document_text.replace(start_offset, end_offset - start_offset, replacement);
+}
+
 std::optional<std::pair<std::string, Position>> definition_location_from_result(const JsonValue &result) {
     const JsonValue *location = &result;
     if (result.type == JsonValue::Type::Array) {
@@ -215,6 +260,9 @@ void LspService::stop() {
     initialize_request_id_ = -1;
     workspace_root_.reset();
     open_documents_.clear();
+    document_texts_.clear();
+    pending_document_changes_.clear();
+    pending_change_times_.clear();
     pending_requests_.clear();
 }
 
@@ -227,7 +275,25 @@ void LspService::handle_editor_event(const EditorEvent &event) {
     }
     switch (event.type) {
         case EditorEventType::DocumentOpened:
+            if (!initialized_) {
+                ensure_initialized_for_event(event);
+                pending_editor_events_.push_back(event);
+                return;
+            }
+            flush_pending_document_changes(true, event.document_uri);
+            pending_document_changes_.erase(event.document_uri);
+            pending_change_times_.erase(event.document_uri);
+            send_editor_event(event);
+            return;
         case EditorEventType::DocumentChanged:
+            if (!initialized_) {
+                ensure_initialized_for_event(event);
+                pending_editor_events_.push_back(event);
+                return;
+            }
+            pending_document_changes_[event.document_uri] = event;
+            pending_change_times_[event.document_uri] = std::chrono::steady_clock::now();
+            return;
         case EditorEventType::DocumentSaved:
         case EditorEventType::DocumentClosed:
             if (!initialized_) {
@@ -235,6 +301,7 @@ void LspService::handle_editor_event(const EditorEvent &event) {
                 pending_editor_events_.push_back(event);
                 return;
             }
+            flush_pending_document_changes(true, event.document_uri);
             send_editor_event(event);
             return;
         default:
@@ -253,6 +320,7 @@ void LspService::handle_request(const ServiceRequest &request) {
         queue_status("Definition unavailable");
         return;
     }
+    flush_pending_document_changes(true, request.document_uri);
     send_definition_request(request);
 }
 
@@ -283,7 +351,40 @@ void LspService::flush_pending_editor_events() {
     }
 }
 
+void LspService::flush_pending_document_changes(bool force, const std::optional<std::string> &document_uri) {
+    if (!initialized_) {
+        return;
+    }
+
+    constexpr auto kDidChangeDebounce = std::chrono::milliseconds(125);
+    const auto now = std::chrono::steady_clock::now();
+    std::vector<std::string> ready_documents;
+    ready_documents.reserve(pending_document_changes_.size());
+
+    for (const auto &[uri, event] : pending_document_changes_) {
+        (void)event;
+        if (document_uri && uri != *document_uri) {
+            continue;
+        }
+        auto found = pending_change_times_.find(uri);
+        if (force || found == pending_change_times_.end() || now - found->second >= kDidChangeDebounce) {
+            ready_documents.push_back(uri);
+        }
+    }
+
+    for (const std::string &uri : ready_documents) {
+        auto found = pending_document_changes_.find(uri);
+        if (found == pending_document_changes_.end()) {
+            continue;
+        }
+        send_did_change(found->second);
+        pending_document_changes_.erase(found);
+        pending_change_times_.erase(uri);
+    }
+}
+
 std::vector<ServiceEvent> LspService::poll() {
+    flush_pending_document_changes(false);
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<ServiceEvent> events = std::move(pending_events_);
     pending_events_.clear();
@@ -510,6 +611,7 @@ void LspService::send_did_open(const EditorEvent &event) {
         return;
     }
     open_documents_.insert(event.document_uri);
+    document_texts_[event.document_uri] = event.text;
     std::ostringstream payload;
     payload << "{"
             << "\"jsonrpc\":\"2.0\","
@@ -527,13 +629,32 @@ void LspService::send_did_change(const EditorEvent &event) {
     if (!initialized_ || open_documents_.find(event.document_uri) == open_documents_.end()) {
         return;
     }
+    auto found = document_texts_.find(event.document_uri);
+    std::u32string *document_text = found != document_texts_.end() ? &found->second : nullptr;
     std::ostringstream payload;
     payload << "{"
             << "\"jsonrpc\":\"2.0\","
             << "\"method\":\"textDocument/didChange\","
             << "\"params\":{"
             << "\"textDocument\":{\"uri\":" << json_string(event.document_uri) << ",\"version\":" << event.document_version << "},"
-            << "\"contentChanges\":[{\"text\":" << json_string(u32_to_utf8(event.text)) << "}]"
+            << "\"contentChanges\":[";
+    if (event.range && document_text != nullptr) {
+        Range normalized = normalized_range(*event.range);
+        Utf16Position start = utf16_position_for_text_position(*document_text, normalized.start);
+        Utf16Position end = utf16_position_for_text_position(*document_text, normalized.end);
+        payload << "{"
+                << "\"range\":{"
+                << "\"start\":{\"line\":" << start.row << ",\"character\":" << start.column << "},"
+                << "\"end\":{\"line\":" << end.row << ",\"character\":" << end.column << "}"
+                << "},"
+                << "\"text\":" << json_string(u32_to_utf8(event.text))
+                << "}";
+        apply_incremental_text_change(*document_text, normalized, event.text);
+    } else {
+        payload << "{\"text\":" << json_string(u32_to_utf8(event.text)) << "}";
+        document_texts_[event.document_uri] = event.text;
+    }
+    payload << "]"
             << "}}";
     write_payload(payload.str());
 }
@@ -563,6 +684,7 @@ void LspService::send_did_close(const EditorEvent &event) {
             << "}";
     write_payload(payload.str());
     open_documents_.erase(event.document_uri);
+    document_texts_.erase(event.document_uri);
 }
 
 void LspService::send_definition_request(const ServiceRequest &request) {

@@ -23,6 +23,13 @@ enum class SelectionMode {
     Line,
 };
 
+struct EditorViewState {
+    Position cursor;
+    std::optional<Position> selection_anchor;
+    SelectionMode selection_mode = SelectionMode::Character;
+    std::size_t preferred_column = 0;
+};
+
 enum class StyleRole {
     DefaultText,
     LineNumber,
@@ -165,6 +172,8 @@ class EditorCore {
     std::string display_file_name() const;
     std::string document_uri() const;
     Position cursor() const;
+    EditorViewState view_state() const;
+    void restore_view_state(const EditorViewState &view_state, bool emit_cursor_event = false);
     Range line_range(std::size_t row) const;
     std::size_t line_count() const;
     std::size_t line_length(std::size_t row) const;
@@ -172,6 +181,8 @@ class EditorCore {
     std::size_t saved_revision() const;
     std::size_t document_version() const;
     std::size_t saved_document_version() const;
+    std::size_t diagnostics_revision() const;
+    std::size_t annotations_revision() const;
     bool is_dirty() const;
     bool has_selection() const;
     std::optional<Position> selection_anchor() const;
@@ -279,6 +290,8 @@ class EditorCore {
     std::size_t saved_revision_ = 0;
     std::size_t document_version_ = 0;
     std::size_t saved_document_version_ = 0;
+    std::size_t diagnostics_revision_ = 0;
+    std::size_t annotations_revision_ = 0;
     std::u32string yank_buffer_;
     SelectionMode yank_mode_ = SelectionMode::Character;
     std::string document_uri_;
@@ -296,10 +309,12 @@ class EditorCore {
     void emit_document_opened();
     void emit_document_saved();
     void emit_document_changed(const std::vector<std::u32string> &before_lines);
+    void emit_document_changed(Range range, const std::u32string &text);
     void emit_cursor_moved(Position previous_cursor);
     void emit_diagnostics_changed(const std::string &document_uri);
     void emit_annotations_changed(const std::string &document_uri);
     void set_cursor_internal(Position position, bool emit_event);
+    void restore_view_state_internal(const EditorViewState &view_state, bool emit_cursor_event);
     void update_preferred_column();
     Position position_after_character(Position position) const;
     Position position_before(Position position) const;

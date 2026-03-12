@@ -4,6 +4,7 @@
 #include "services.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <map>
 #include <set>
 #include <mutex>
@@ -45,6 +46,9 @@ class LspService : public EditorService {
     std::mutex mutex_;
     std::vector<ServiceEvent> pending_events_;
     std::vector<EditorEvent> pending_editor_events_;
+    std::map<std::string, EditorEvent> pending_document_changes_;
+    std::map<std::string, std::chrono::steady_clock::time_point> pending_change_times_;
+    std::map<std::string, std::u32string> document_texts_;
     std::set<std::string> open_documents_;
     std::map<int, ServiceRequest> pending_requests_;
     std::string read_buffer_;
@@ -57,6 +61,7 @@ class LspService : public EditorService {
     void ensure_initialized_for_event(const EditorEvent &event);
     void send_editor_event(const EditorEvent &event);
     void flush_pending_editor_events();
+    void flush_pending_document_changes(bool force = false, const std::optional<std::string> &document_uri = std::nullopt);
     bool spawn_process();
     void shutdown_process();
     void reader_loop();

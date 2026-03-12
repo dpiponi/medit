@@ -2,6 +2,7 @@
 #include "editor_commands.hpp"
 #include "editor_core.hpp"
 #include "editor_session.hpp"
+#include "editor_windows.hpp"
 #include "keybindings.hpp"
 #include "lsp_service.hpp"
 #include "process_utils.hpp"
@@ -753,6 +754,27 @@ void test_keybinding_dispatch() {
         previous_buffer.action.has_value() && *previous_buffer.action == EditorAction::PreviousBuffer,
         "shift-tab binding");
 
+    KeyDispatch split_first = dispatch_key_sequence(keybindings, "normal", pending, "ctrl-w", false);
+    expect(split_first.matched && split_first.waiting_for_more, "ctrl-w should wait for window command");
+    KeyDispatch split_second = dispatch_key_sequence(keybindings, "normal", pending, "s", false);
+    expect(
+        split_second.action.has_value() && *split_second.action == EditorAction::SplitHorizontal,
+        "ctrl-w s should split horizontally");
+
+    KeyDispatch focus_first = dispatch_key_sequence(keybindings, "normal", pending, "ctrl-w", false);
+    expect(focus_first.matched && focus_first.waiting_for_more, "ctrl-w should wait for focus command");
+    KeyDispatch focus_second = dispatch_key_sequence(keybindings, "normal", pending, "l", false);
+    expect(
+        focus_second.action.has_value() && *focus_second.action == EditorAction::FocusWindowRight,
+        "ctrl-w l should focus right window");
+
+    KeyDispatch focus_arrow_first = dispatch_key_sequence(keybindings, "normal", pending, "ctrl-w", false);
+    expect(focus_arrow_first.matched && focus_arrow_first.waiting_for_more, "ctrl-w should wait for arrow focus command");
+    KeyDispatch focus_arrow_second = dispatch_key_sequence(keybindings, "normal", pending, "left", false);
+    expect(
+        focus_arrow_second.action.has_value() && *focus_arrow_second.action == EditorAction::FocusWindowLeft,
+        "ctrl-w left should focus left window");
+
     KeyDispatch suspend = dispatch_key_sequence(keybindings, "normal", pending, "ctrl-z", false);
     expect(suspend.action.has_value() && *suspend.action == EditorAction::Suspend, "ctrl-z binding");
 
@@ -1261,10 +1283,13 @@ void test_lsp_service_roundtrip() {
     expect(core.diagnostics().size() == 1, "lsp roundtrip should apply open diagnostics");
     expect(u32_to_utf8(core.diagnostics()[0].message) == "open diagnostic", "lsp open diagnostic message");
 
+    core.move_line_end();
     core.insert_codepoint(U'x');
     drive_runtime(30);
     expect(core.diagnostics().size() == 1, "lsp roundtrip should update diagnostics after change");
-    expect(u32_to_utf8(core.diagnostics()[0].message) == "changed diagnostic", "lsp changed diagnostic message");
+    expect(
+        u32_to_utf8(core.diagnostics()[0].message) == "incremental:0:3:x",
+        "lsp changed diagnostic message should reflect incremental change");
 
     ServiceRequest request;
     request.type = ServiceRequestType::GoToDefinition;
@@ -1592,6 +1617,34 @@ void test_editor_session_open_missing_startup_file() {
     std::filesystem::remove_all(temp_dir);
 }
 
+void test_window_manager_split_focus_and_close() {
+    WindowManager windows(10);
+    expect(windows.window_count() == 1, "window manager should start with one window");
+    expect(windows.active_window() != nullptr && windows.active_window()->buffer_id == 10, "initial window buffer id");
+
+    expect(windows.split_active(WindowSplitDirection::Vertical), "vertical split should succeed");
+    expect(windows.window_count() == 2, "vertical split should add a second window");
+    expect(windows.active_window() != nullptr && windows.active_window()->buffer_id == 10, "split window should show same buffer");
+
+    auto rects = windows.layout_rects(24, 80, 2);
+    expect(rects.size() == 2, "split should produce two layout rects");
+    expect(windows.focus_direction(WindowMoveDirection::Left, 24, 80, 2), "focus left should succeed");
+    std::size_t left_window = windows.active_window_id();
+    expect(windows.focus_direction(WindowMoveDirection::Right, 24, 80, 2), "focus right should succeed");
+    expect(windows.active_window_id() != left_window, "focus right should move to other window");
+
+    expect(windows.split_active(WindowSplitDirection::Horizontal), "horizontal split should succeed");
+    expect(windows.window_count() == 3, "horizontal split should add a third window");
+
+    std::size_t current_window = windows.active_window_id();
+    expect(windows.close_active(), "closing non-last window should succeed");
+    expect(windows.window_count() == 2, "close active should remove one window");
+    expect(windows.find_window(current_window) == nullptr, "closed window should be removed");
+
+    expect(windows.close_others(), "close others should succeed");
+    expect(windows.window_count() == 1, "close others should leave one window");
+}
+
 }  // namespace
 
 int main() {
@@ -1646,6 +1699,7 @@ int main() {
         test_editor_session_open_missing_file_creates_named_buffer();
         test_editor_session_open_multiple_files();
         test_editor_session_open_missing_startup_file();
+        test_window_manager_split_focus_and_close();
     } catch (const std::exception &error) {
         std::cerr << "test failure: " << error.what() << '\n';
         return 1;

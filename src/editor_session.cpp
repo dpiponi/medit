@@ -164,6 +164,24 @@ bool EditorSession::close_active_buffer(bool force, std::vector<EditorEvent> *cl
     return true;
 }
 
+EditorBuffer *EditorSession::find_buffer_by_id(std::size_t id) {
+    for (EditorBuffer &buffer : buffers_) {
+        if (buffer.id == id) {
+            return &buffer;
+        }
+    }
+    return nullptr;
+}
+
+const EditorBuffer *EditorSession::find_buffer_by_id(std::size_t id) const {
+    for (const EditorBuffer &buffer : buffers_) {
+        if (buffer.id == id) {
+            return &buffer;
+        }
+    }
+    return nullptr;
+}
+
 EditorBuffer *EditorSession::find_buffer_by_uri(const std::string &document_uri) {
     for (EditorBuffer &buffer : buffers_) {
         if (buffer.core.document_uri() == document_uri) {
@@ -180,6 +198,15 @@ const EditorBuffer *EditorSession::find_buffer_by_uri(const std::string &documen
         }
     }
     return nullptr;
+}
+
+std::optional<std::size_t> EditorSession::index_for_buffer_id(std::size_t id) const {
+    for (std::size_t index = 0; index < buffers_.size(); ++index) {
+        if (buffers_[index].id == id) {
+            return index;
+        }
+    }
+    return std::nullopt;
 }
 
 EditorBuffer &EditorSession::create_buffer(bool activate) {
