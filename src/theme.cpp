@@ -3,6 +3,7 @@
 #include "config.hpp"
 #include "json.hpp"
 
+#include <charconv>
 #include <array>
 #include <map>
 #include <curses.h>
@@ -79,12 +80,38 @@ short parse_color_name(const std::string &name) {
         {"magenta", COLOR_MAGENTA},
         {"cyan", COLOR_CYAN},
         {"white", COLOR_WHITE},
+        {"bright_black", 8},
+        {"bright_red", 9},
+        {"bright_green", 10},
+        {"bright_yellow", 11},
+        {"bright_blue", 12},
+        {"bright_magenta", 13},
+        {"bright_cyan", 14},
+        {"bright_white", 15},
     };
     auto found = colors.find(name);
-    if (found == colors.end()) {
-        throw std::runtime_error("unknown color: " + name);
+    if (found != colors.end()) {
+        return found->second;
     }
-    return found->second;
+
+    auto parse_numeric = [](std::string_view value) -> std::optional<short> {
+        unsigned parsed = 0;
+        auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
+        if (error != std::errc{} || end != value.data() + value.size() || parsed > 255) {
+            return std::nullopt;
+        }
+        return static_cast<short>(parsed);
+    };
+
+    if (std::optional<short> numeric = parse_numeric(name)) {
+        return *numeric;
+    }
+    if (name.starts_with("color")) {
+        if (std::optional<short> numeric = parse_numeric(std::string_view(name).substr(5))) {
+            return *numeric;
+        }
+    }
+    throw std::runtime_error("unknown color: " + name);
 }
 
 bool parse_bool_string(const std::string &value) {

@@ -138,6 +138,17 @@ std::optional<std::string> missing_executable_in_command(std::string_view comman
     if (!word) {
         return std::nullopt;
     }
+    static const std::vector<std::string> shell_builtins = {
+        "printf",
+        "echo",
+        "test",
+        "[",
+        "true",
+        "false",
+    };
+    if (std::ranges::find(shell_builtins, *word) != shell_builtins.end()) {
+        return std::nullopt;
+    }
     if (executable_exists(*word)) {
         return std::nullopt;
     }

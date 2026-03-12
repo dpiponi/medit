@@ -206,11 +206,15 @@ The checked-in example config is:
 
 - [`config/meditrc`](/home/dan/de/config/meditrc)
 - [`config/medit/keybindings.json`](/home/dan/de/config/medit/keybindings.json)
-- [`config/medit/colors.json`](/home/dan/de/config/medit/colors.json)
 - [`config/medit/lsp.json`](/home/dan/de/config/medit/lsp.json)
 - [`config/medit/syntax.json`](/home/dan/de/config/medit/syntax.json)
-- [`config/medit/neon.json`](/home/dan/de/config/medit/neon.json)
-- [`config/medit/forest.json`](/home/dan/de/config/medit/forest.json)
+- [`config/medit/themes/default.json`](/home/dan/de/config/medit/themes/default.json)
+- [`config/medit/themes/neon.json`](/home/dan/de/config/medit/themes/neon.json)
+- [`config/medit/themes/forest.json`](/home/dan/de/config/medit/themes/forest.json)
+- [`config/medit/themes/dragon.json`](/home/dan/de/config/medit/themes/dragon.json)
+- [`config/medit/themes/tiger.json`](/home/dan/de/config/medit/themes/tiger.json)
+- [`config/medit/themes/seaside.json`](/home/dan/de/config/medit/themes/seaside.json)
+- [`config/medit/themes/luxor.json`](/home/dan/de/config/medit/themes/luxor.json)
 
 If `meditrc` is absent, `medit` falls back to default file names in `./.config/medit/` and then `~/.config/medit/`. If those files are also absent, it falls back to embedded defaults.
 
@@ -225,14 +229,23 @@ Then edit `./.config/meditrc` and the JSON files under `./.config/medit/` for yo
 To switch themes, update `colors = ...` in your `meditrc`, for example:
 
 ```ini
-colors = neon.json
+colors = themes/neon.json
 ```
 
 or:
 
 ```ini
-colors = forest.json
+colors = themes/forest.json
 ```
+
+Theme color values can use:
+
+- named ANSI colors like `red` or `cyan`
+- bright ANSI names like `bright_red`
+- numeric palette entries like `196`
+- prefixed palette entries like `color196`
+
+On terminals with extended color support, `medit` uses those palette entries directly. On terminals with fewer colors, it maps them down to the nearest supported palette color.
 
 ## Keys
 
@@ -311,6 +324,7 @@ colors = forest.json
 - `:bd!` force close the current buffer
 - `:find-file` open a project file via the external file picker (`fd`/`fdfind` or `rg`, then `fzf`)
 - `:grep pattern` search with `rg` and jump via `fzf`
+- `:pick-theme` choose a theme via `fzf`, update `meditrc`, and reload colors immediately
 - `:reload-config` reload `meditrc`, keybindings, colors, and logging
 - `:diagnostics` show a diagnostics summary
 

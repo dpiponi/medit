@@ -452,6 +452,7 @@ void set_status(EditorState &state, const std::string &message) {
     state.status_message = message;
 }
 
+bool reload_editor_configuration(EditorState &state, std::string &error_message);
 void handle_service_events(EditorState &state);
 
 void show_popup(EditorState &state, std::string title, std::u32string text) {
@@ -516,13 +517,92 @@ void initialize_locale() {
     setlocale(LC_ALL, "");
 }
 
+struct RgbColor {
+    int red = 0;
+    int green = 0;
+    int blue = 0;
+};
+
+RgbColor xterm_palette_rgb(short color) {
+    static const std::array<RgbColor, 16> ansi = {{
+        {0, 0, 0},
+        {205, 0, 0},
+        {0, 205, 0},
+        {205, 205, 0},
+        {0, 0, 238},
+        {205, 0, 205},
+        {0, 205, 205},
+        {229, 229, 229},
+        {127, 127, 127},
+        {255, 0, 0},
+        {0, 255, 0},
+        {255, 255, 0},
+        {92, 92, 255},
+        {255, 0, 255},
+        {0, 255, 255},
+        {255, 255, 255},
+    }};
+
+    if (color < 0) {
+        return {};
+    }
+    if (color < 16) {
+        return ansi[static_cast<std::size_t>(color)];
+    }
+    if (color >= 16 && color <= 231) {
+        int index = color - 16;
+        int red = index / 36;
+        int green = (index / 6) % 6;
+        int blue = index % 6;
+        auto component = [](int value) { return value == 0 ? 0 : 55 + value * 40; };
+        return {component(red), component(green), component(blue)};
+    }
+    if (color >= 232 && color <= 255) {
+        int gray = 8 + (color - 232) * 10;
+        return {gray, gray, gray};
+    }
+    return ansi[7];
+}
+
+short nearest_supported_color(short color, int terminal_colors) {
+    if (color < 0 || terminal_colors <= 0) {
+        return color;
+    }
+    if (color < terminal_colors) {
+        return color;
+    }
+    int supported = std::min(terminal_colors, 16);
+    RgbColor target = xterm_palette_rgb(color);
+    int best_distance = std::numeric_limits<int>::max();
+    short best = terminal_colors > 8 ? 7 : COLOR_WHITE;
+    for (int candidate = 0; candidate < supported; ++candidate) {
+        RgbColor sample = xterm_palette_rgb(static_cast<short>(candidate));
+        int dr = target.red - sample.red;
+        int dg = target.green - sample.green;
+        int db = target.blue - sample.blue;
+        int distance = dr * dr + dg * dg + db * db;
+        if (distance < best_distance) {
+            best_distance = distance;
+            best = static_cast<short>(candidate);
+        }
+    }
+    if (terminal_colors <= 8 && best >= 8) {
+        return static_cast<short>(best - 8);
+    }
+    return best;
+}
+
 void apply_theme_to_terminal(const Theme &theme) {
     start_color();
     use_default_colors();
+    int terminal_colors = has_colors() ? COLORS : 0;
     for (int role_index = 0; role_index <= static_cast<int>(StyleRole::DiagnosticWarning); ++role_index) {
         StyleRole role = static_cast<StyleRole>(role_index);
         TextStyle style = theme_style(theme, role);
-        init_pair(static_cast<short>(theme_slot(role)), style.foreground, style.background);
+        init_pair(
+            static_cast<short>(theme_slot(role)),
+            nearest_supported_color(style.foreground, terminal_colors),
+            nearest_supported_color(style.background, terminal_colors));
     }
 }
 
@@ -1153,6 +1233,15 @@ std::string project_file_list_command() {
     return "rg --files --hidden --no-ignore -g '!.git'";
 }
 
+std::string shell_printf_lines_command(const std::vector<std::string> &lines) {
+    std::string command = "printf '%s\\n'";
+    for (const std::string &line : lines) {
+        command += " ";
+        command += shell_single_quote(line);
+    }
+    return command;
+}
+
 std::optional<std::string> run_picker_command(EditorState &state, const std::string &pipeline_command, std::string &error_message) {
 #if defined(__unix__) || defined(__APPLE__)
     if (std::optional<std::string> missing = missing_executable_in_pipeline(pipeline_command)) {
@@ -1215,6 +1304,111 @@ std::optional<std::string> run_picker_command(EditorState &state, const std::str
     error_message = "external pickers unsupported on this platform";
     return std::nullopt;
 #endif
+}
+
+std::filesystem::path theme_directory_for_config(const EditorConfig &config) {
+    if (!config.source_path.empty()) {
+        return std::filesystem::path(config.source_path).parent_path() / "medit" / "themes";
+    }
+    if (config.colors_path) {
+        std::filesystem::path parent = config.colors_path->parent_path();
+        if (parent.filename() == "themes") {
+            return parent;
+        }
+        return parent / "themes";
+    }
+    return {};
+}
+
+bool update_meditrc_setting(
+    const std::filesystem::path &meditrc_path,
+    const std::string &key,
+    const std::string &value,
+    std::string &error_message) {
+    std::ifstream input(meditrc_path);
+    if (!input) {
+        error_message = "could not open meditrc";
+        return false;
+    }
+
+    std::vector<std::string> lines;
+    std::string line;
+    bool replaced = false;
+    while (std::getline(input, line)) {
+        std::string trimmed = trim_ascii_whitespace(line);
+        std::size_t separator = trimmed.find('=');
+        if (!trimmed.empty() && trimmed[0] != '#' && separator != std::string::npos &&
+            trim_ascii_whitespace(trimmed.substr(0, separator)) == key) {
+            lines.push_back(key + " = " + value);
+            replaced = true;
+        } else {
+            lines.push_back(line);
+        }
+    }
+    if (!replaced) {
+        lines.push_back(key + " = " + value);
+    }
+
+    std::ofstream output(meditrc_path, std::ios::trunc);
+    if (!output) {
+        error_message = "could not write meditrc";
+        return false;
+    }
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+        output << lines[index];
+        if (index + 1 < lines.size()) {
+            output << '\n';
+        }
+    }
+    return true;
+}
+
+void handle_pick_theme_command(EditorState &state) {
+    if (state.config.source_path.empty()) {
+        set_status(state, "Theme picker needs a meditrc");
+        return;
+    }
+
+    std::filesystem::path theme_dir = theme_directory_for_config(state.config);
+    if (theme_dir.empty() || !std::filesystem::exists(theme_dir)) {
+        set_status(state, "No theme directory");
+        return;
+    }
+
+    std::vector<std::string> theme_names;
+    for (const auto &entry : std::filesystem::directory_iterator(theme_dir)) {
+        if (!entry.is_regular_file() || entry.path().extension() != ".json") {
+            continue;
+        }
+        theme_names.push_back("themes/" + entry.path().filename().string());
+    }
+    std::ranges::sort(theme_names);
+    if (theme_names.empty()) {
+        set_status(state, "No themes found");
+        return;
+    }
+
+    std::string error_message;
+    std::optional<std::string> selection =
+        run_picker_command(state, shell_printf_lines_command(theme_names) + " | fzf", error_message);
+    if (!selection) {
+        set_status(state, error_message);
+        return;
+    }
+
+    std::string update_error;
+    std::filesystem::path meditrc_path = state.config.source_path;
+    if (!update_meditrc_setting(meditrc_path, "colors", *selection, update_error)) {
+        set_status(state, update_error);
+        return;
+    }
+
+    std::string reload_error;
+    if (reload_editor_configuration(state, reload_error)) {
+        set_status(state, "Theme: " + *selection);
+    } else {
+        set_status(state, "Config reload failed: " + reload_error);
+    }
 }
 
 bool run_selection_filter_command(
@@ -1988,6 +2182,8 @@ void execute_command(EditorState &state) {
         handle_find_file_command(state);
     } else if (verb == "grep") {
         handle_grep_command(state, argument);
+    } else if (verb == "pick-theme") {
+        handle_pick_theme_command(state);
     } else if (verb == "reload-config") {
         std::string error_message;
         if (reload_editor_configuration(state, error_message)) {
