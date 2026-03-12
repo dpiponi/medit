@@ -73,22 +73,22 @@ std::string json_string(const std::string &text) {
 
 Position position_from_lsp(const JsonValue &position_value, const EditorCore &core) {
     Utf16Position utf16;
-    auto line = position_value.object_value.find("line");
-    auto character = position_value.object_value.find("character");
-    if (line != position_value.object_value.end() && line->second.type == JsonValue::Type::Number) {
-        utf16.row = static_cast<std::size_t>(line->second.number_value);
+    auto line = position_value.find("line");
+    auto character = position_value.find("character");
+    if (line != position_value.end() && line->is_number()) {
+        utf16.row = static_cast<std::size_t>(line->get<double>());
     }
-    if (character != position_value.object_value.end() && character->second.type == JsonValue::Type::Number) {
-        utf16.column = static_cast<std::size_t>(character->second.number_value);
+    if (character != position_value.end() && character->is_number()) {
+        utf16.column = static_cast<std::size_t>(character->get<double>());
     }
     return core.position_for_utf16(utf16);
 }
 
 DiagnosticSeverity diagnostic_severity_from_lsp(const JsonValue &value) {
-    if (value.type != JsonValue::Type::Number) {
+    if (!value.is_number()) {
         return DiagnosticSeverity::Warning;
     }
-    return static_cast<int>(value.number_value) == 1 ? DiagnosticSeverity::Error : DiagnosticSeverity::Warning;
+    return static_cast<int>(value.get<double>()) == 1 ? DiagnosticSeverity::Error : DiagnosticSeverity::Warning;
 }
 
 std::size_t text_offset_for_position(const std::u32string &text, Position position) {
@@ -167,20 +167,20 @@ void apply_incremental_text_change(std::u32string &document_text, Range range, c
 
 std::optional<std::pair<std::string, Position>> definition_location_from_result(const JsonValue &result) {
     const JsonValue *location = &result;
-    if (result.type == JsonValue::Type::Array) {
-        if (result.array_value.empty()) {
+    if (result.is_array()) {
+        if (result.empty()) {
             return std::nullopt;
         }
-        location = &result.array_value.front();
+        location = &result.front();
     }
 
-    if (location->type != JsonValue::Type::Object) {
+    if (!location->is_object()) {
         return std::nullopt;
     }
 
     auto extract_start_position = [](const std::string &document_uri, const JsonValue &range_object) -> std::optional<Position> {
-        auto start = range_object.object_value.find("start");
-        if (start == range_object.object_value.end() || start->second.type != JsonValue::Type::Object) {
+        auto start = range_object.find("start");
+        if (start == range_object.end() || !start->is_object()) {
             return std::nullopt;
         }
         EditorCore conversion_core;
@@ -188,33 +188,32 @@ std::optional<std::pair<std::string, Position>> definition_location_from_result(
         if (!path.empty()) {
             conversion_core.load_file(path);
         }
-        return position_from_lsp(start->second, conversion_core);
+        return position_from_lsp(*start, conversion_core);
     };
 
-    auto uri = location->object_value.find("uri");
-    if (uri != location->object_value.end() && uri->second.type == JsonValue::Type::String) {
-        std::string normalized_uri = normalize_document_uri(uri->second.string_value);
-        auto range = location->object_value.find("range");
-        if (range != location->object_value.end() && range->second.type == JsonValue::Type::Object) {
-            if (std::optional<Position> start = extract_start_position(normalized_uri, range->second)) {
+    auto uri = location->find("uri");
+    if (uri != location->end() && uri->is_string()) {
+        std::string normalized_uri = normalize_document_uri(uri->get<std::string>());
+        auto range = location->find("range");
+        if (range != location->end() && range->is_object()) {
+            if (std::optional<Position> start = extract_start_position(normalized_uri, *range)) {
                 return std::make_pair(normalized_uri, *start);
             }
         }
     }
 
-    auto target_uri = location->object_value.find("targetUri");
-    if (target_uri != location->object_value.end() && target_uri->second.type == JsonValue::Type::String) {
-        std::string normalized_uri = normalize_document_uri(target_uri->second.string_value);
-        auto target_selection_range = location->object_value.find("targetSelectionRange");
-        if (target_selection_range != location->object_value.end() &&
-            target_selection_range->second.type == JsonValue::Type::Object) {
-            if (std::optional<Position> start = extract_start_position(normalized_uri, target_selection_range->second)) {
+    auto target_uri = location->find("targetUri");
+    if (target_uri != location->end() && target_uri->is_string()) {
+        std::string normalized_uri = normalize_document_uri(target_uri->get<std::string>());
+        auto target_selection_range = location->find("targetSelectionRange");
+        if (target_selection_range != location->end() && target_selection_range->is_object()) {
+            if (std::optional<Position> start = extract_start_position(normalized_uri, *target_selection_range)) {
                 return std::make_pair(normalized_uri, *start);
             }
         }
-        auto target_range = location->object_value.find("targetRange");
-        if (target_range != location->object_value.end() && target_range->second.type == JsonValue::Type::Object) {
-            if (std::optional<Position> start = extract_start_position(normalized_uri, target_range->second)) {
+        auto target_range = location->find("targetRange");
+        if (target_range != location->end() && target_range->is_object()) {
+            if (std::optional<Position> start = extract_start_position(normalized_uri, *target_range)) {
                 return std::make_pair(normalized_uri, *start);
             }
         }
@@ -224,33 +223,31 @@ std::optional<std::pair<std::string, Position>> definition_location_from_result(
 }
 
 std::optional<std::string> hover_text_from_contents(const JsonValue &contents) {
-    switch (contents.type) {
-        case JsonValue::Type::String:
-            return contents.string_value;
-        case JsonValue::Type::Object: {
-            auto value = contents.object_value.find("value");
-            if (value != contents.object_value.end() && value->second.type == JsonValue::Type::String) {
-                return value->second.string_value;
-            }
-            return std::nullopt;
-        }
-        case JsonValue::Type::Array: {
-            std::string combined;
-            for (const JsonValue &item : contents.array_value) {
-                std::optional<std::string> text = hover_text_from_contents(item);
-                if (!text || text->empty()) {
-                    continue;
-                }
-                if (!combined.empty()) {
-                    combined += "\n\n";
-                }
-                combined += *text;
-            }
-            return combined.empty() ? std::nullopt : std::optional<std::string>(combined);
-        }
-        default:
-            return std::nullopt;
+    if (contents.is_string()) {
+        return contents.get<std::string>();
     }
+    if (contents.is_object()) {
+        auto value = contents.find("value");
+        if (value != contents.end() && value->is_string()) {
+            return value->get<std::string>();
+        }
+        return std::nullopt;
+    }
+    if (contents.is_array()) {
+        std::string combined;
+        for (const JsonValue &item : contents) {
+            std::optional<std::string> text = hover_text_from_contents(item);
+            if (!text || text->empty()) {
+                continue;
+            }
+            if (!combined.empty()) {
+                combined += "\n\n";
+            }
+            combined += *text;
+        }
+        return combined.empty() ? std::nullopt : std::optional<std::string>(combined);
+    }
+    return std::nullopt;
 }
 
 std::vector<PopupMenuItem> completion_items_from_result(
@@ -258,14 +255,14 @@ std::vector<PopupMenuItem> completion_items_from_result(
     const std::u32string &document_text,
     const ServiceRequest &request) {
     const JsonValue *items = &result;
-    if (result.type == JsonValue::Type::Object) {
-        auto found = result.object_value.find("items");
-        if (found == result.object_value.end() || found->second.type != JsonValue::Type::Array) {
+    if (result.is_object()) {
+        auto found = result.find("items");
+        if (found == result.end() || !found->is_array()) {
             return {};
         }
-        items = &found->second;
+        items = &*found;
     }
-    if (items->type != JsonValue::Type::Array) {
+    if (!items->is_array()) {
         return {};
     }
 
@@ -274,40 +271,40 @@ std::vector<PopupMenuItem> completion_items_from_result(
               text_position_for_utf16(document_text, request.utf16_position)});
     std::string prefix = request.completion_prefix;
     std::vector<PopupMenuItem> parsed;
-    for (const JsonValue &item : items->array_value) {
-        if (item.type != JsonValue::Type::Object) {
+    for (const JsonValue &item : *items) {
+        if (!item.is_object()) {
             continue;
         }
-        auto label = item.object_value.find("label");
-        if (label == item.object_value.end() || label->second.type != JsonValue::Type::String) {
+        auto label = item.find("label");
+        if (label == item.end() || !label->is_string()) {
             continue;
         }
         PopupMenuItem parsed_item;
-        parsed_item.label = label->second.string_value;
+        parsed_item.label = label->get<std::string>();
         parsed_item.insert_text = parsed_item.label;
         parsed_item.replace_range = default_range;
         std::string filter_text = parsed_item.label;
 
-        auto detail = item.object_value.find("detail");
-        if (detail != item.object_value.end() && detail->second.type == JsonValue::Type::String) {
-            parsed_item.detail = detail->second.string_value;
+        auto detail = item.find("detail");
+        if (detail != item.end() && detail->is_string()) {
+            parsed_item.detail = detail->get<std::string>();
         }
 
-        auto filter = item.object_value.find("filterText");
-        if (filter != item.object_value.end() && filter->second.type == JsonValue::Type::String) {
-            filter_text = filter->second.string_value;
+        auto filter = item.find("filterText");
+        if (filter != item.end() && filter->is_string()) {
+            filter_text = filter->get<std::string>();
         }
 
-        auto insert_text = item.object_value.find("insertText");
-        if (insert_text != item.object_value.end() && insert_text->second.type == JsonValue::Type::String) {
-            parsed_item.insert_text = insert_text->second.string_value;
+        auto insert_text = item.find("insertText");
+        if (insert_text != item.end() && insert_text->is_string()) {
+            parsed_item.insert_text = insert_text->get<std::string>();
         }
 
-        auto text_edit = item.object_value.find("textEdit");
-        if (text_edit != item.object_value.end() && text_edit->second.type == JsonValue::Type::Object) {
-            auto new_text = text_edit->second.object_value.find("newText");
-            if (new_text != text_edit->second.object_value.end() && new_text->second.type == JsonValue::Type::String) {
-                parsed_item.insert_text = new_text->second.string_value;
+        auto text_edit = item.find("textEdit");
+        if (text_edit != item.end() && text_edit->is_object()) {
+            auto new_text = text_edit->find("newText");
+            if (new_text != text_edit->end() && new_text->is_string()) {
+                parsed_item.insert_text = new_text->get<std::string>();
             }
         }
 
@@ -325,7 +322,7 @@ std::vector<PopupMenuItem> completion_items_from_result(
     }
     log_debug(
         "completion parsed uri-prefix=[" + prefix + "] count=" + std::to_string(parsed.size()) +
-        " total=" + std::to_string(items->array_value.size()));
+        " total=" + std::to_string(items->size()));
     return parsed;
 }
 
@@ -1017,18 +1014,17 @@ void LspService::send_completion_request(const ServiceRequest &request) {
 
 void LspService::handle_message(const std::string &payload) {
     JsonValue root = parse_json(payload);
-    if (root.type != JsonValue::Type::Object) {
+    if (!root.is_object()) {
         return;
     }
 
-    auto id = root.object_value.find("id");
-    if (id != root.object_value.end() && id->second.type == JsonValue::Type::Number &&
-        static_cast<int>(id->second.number_value) == initialize_request_id_) {
-        auto error = root.object_value.find("error");
-        if (error != root.object_value.end() && error->second.type == JsonValue::Type::Object) {
-            auto message = error->second.object_value.find("message");
-            if (message != error->second.object_value.end() && message->second.type == JsonValue::Type::String) {
-                queue_status("LSP initialize error: " + message->second.string_value);
+    auto id = root.find("id");
+    if (id != root.end() && id->is_number() && static_cast<int>(id->get<double>()) == initialize_request_id_) {
+        auto error = root.find("error");
+        if (error != root.end() && error->is_object()) {
+            auto message = error->find("message");
+            if (message != error->end() && message->is_string()) {
+                queue_status("LSP initialize error: " + message->get<std::string>());
             } else {
                 queue_status("LSP initialize error");
             }
@@ -1041,15 +1037,15 @@ void LspService::handle_message(const std::string &payload) {
         return;
     }
 
-    if (id != root.object_value.end() && id->second.type == JsonValue::Type::Number) {
-        int request_id = static_cast<int>(id->second.number_value);
+    if (id != root.end() && id->is_number()) {
+        int request_id = static_cast<int>(id->get<double>());
         auto pending = pending_requests_.find(request_id);
         if (pending != pending_requests_.end()) {
             ServiceRequest request = pending->second;
             pending_requests_.erase(pending);
 
-            auto error = root.object_value.find("error");
-            if (error != root.object_value.end()) {
+            auto error = root.find("error");
+            if (error != root.end() && !error->is_null()) {
                 if (request.type == ServiceRequestType::GoToDefinition) {
                     queue_status("Definition request failed");
                 } else if (request.type == ServiceRequestType::Hover) {
@@ -1060,14 +1056,14 @@ void LspService::handle_message(const std::string &payload) {
                 return;
             }
 
-            auto result = root.object_value.find("result");
+            auto result = root.find("result");
             if (request.type == ServiceRequestType::GoToDefinition) {
-                if (result == root.object_value.end() || result->second.type == JsonValue::Type::Null) {
+                if (result == root.end() || result->is_null()) {
                     queue_status("Definition not found");
                     return;
                 }
 
-                std::optional<std::pair<std::string, Position>> location = definition_location_from_result(result->second);
+                std::optional<std::pair<std::string, Position>> location = definition_location_from_result(*result);
                 if (!location) {
                     queue_status("Definition not found");
                     return;
@@ -1079,20 +1075,20 @@ void LspService::handle_message(const std::string &payload) {
                 command.position = location->second;
                 queue_event({ServiceEventType::Notification, name(), "definition", command, location->first, 0, std::nullopt, U""});
             } else if (request.type == ServiceRequestType::Hover) {
-                if (result == root.object_value.end() || result->second.type == JsonValue::Type::Null) {
+                if (result == root.end() || result->is_null()) {
                     queue_status("No hover information");
                     return;
                 }
-                if (result->second.type != JsonValue::Type::Object) {
+                if (!result->is_object()) {
                     queue_status("No hover information");
                     return;
                 }
-                auto contents = result->second.object_value.find("contents");
-                if (contents == result->second.object_value.end()) {
+                auto contents = result->find("contents");
+                if (contents == result->end()) {
                     queue_status("No hover information");
                     return;
                 }
-                std::optional<std::string> hover_text = hover_text_from_contents(contents->second);
+                std::optional<std::string> hover_text = hover_text_from_contents(*contents);
                 if (!hover_text || hover_text->empty()) {
                     queue_status("No hover information");
                     return;
@@ -1104,7 +1100,7 @@ void LspService::handle_message(const std::string &payload) {
                 command.document_uri = request.document_uri;
                 queue_event({ServiceEventType::Notification, name(), "hover", command, request.document_uri, 0, std::nullopt, U""});
             } else if (request.type == ServiceRequestType::Completion) {
-                if (result == root.object_value.end() || result->second.type == JsonValue::Type::Null) {
+                if (result == root.end() || result->is_null()) {
                     queue_status("No completions");
                     return;
                 }
@@ -1118,8 +1114,7 @@ void LspService::handle_message(const std::string &payload) {
                         document_text = found->second;
                     }
                 }
-                std::vector<PopupMenuItem> items =
-                    completion_items_from_result(result->second, document_text, request);
+                std::vector<PopupMenuItem> items = completion_items_from_result(*result, document_text, request);
                 if (items.empty()) {
                     queue_status("No completions");
                     return;
@@ -1140,72 +1135,70 @@ void LspService::handle_message(const std::string &payload) {
         }
     }
 
-    auto method = root.object_value.find("method");
-    if (method == root.object_value.end() || method->second.type != JsonValue::Type::String) {
+    auto method = root.find("method");
+    if (method == root.end() || !method->is_string()) {
         return;
     }
 
-    if (method->second.string_value == "window/logMessage" || method->second.string_value == "window/showMessage") {
-        auto params = root.object_value.find("params");
-        if (params != root.object_value.end() && params->second.type == JsonValue::Type::Object) {
-            auto message = params->second.object_value.find("message");
-            if (message != params->second.object_value.end() && message->second.type == JsonValue::Type::String) {
-                queue_status("LSP: " + message->second.string_value);
+    std::string method_name = method->get<std::string>();
+    if (method_name == "window/logMessage" || method_name == "window/showMessage") {
+        auto params = root.find("params");
+        if (params != root.end() && params->is_object()) {
+            auto message = params->find("message");
+            if (message != params->end() && message->is_string()) {
+                queue_status("LSP: " + message->get<std::string>());
             }
         }
         return;
     }
 
-    if (method->second.string_value != "textDocument/publishDiagnostics") {
+    if (method_name != "textDocument/publishDiagnostics") {
         return;
     }
 
-    auto params = root.object_value.find("params");
-    if (params == root.object_value.end() || params->second.type != JsonValue::Type::Object) {
+    auto params = root.find("params");
+    if (params == root.end() || !params->is_object()) {
         return;
     }
 
-    auto uri = params->second.object_value.find("uri");
-    auto diagnostics = params->second.object_value.find("diagnostics");
-    if (uri == params->second.object_value.end() || diagnostics == params->second.object_value.end() ||
-        uri->second.type != JsonValue::Type::String || diagnostics->second.type != JsonValue::Type::Array) {
+    auto uri = params->find("uri");
+    auto diagnostics = params->find("diagnostics");
+    if (uri == params->end() || diagnostics == params->end() || !uri->is_string() || !diagnostics->is_array()) {
         return;
     }
 
-    std::string normalized_uri = normalize_document_uri(uri->second.string_value);
+    std::string normalized_uri = normalize_document_uri(uri->get<std::string>());
     std::vector<Diagnostic> parsed_diagnostics;
     EditorCore conversion_core;
     std::string file_path = file_path_from_uri(normalized_uri);
     if (!file_path.empty()) {
         conversion_core.load_file(file_path);
     }
-    for (const JsonValue &diagnostic_value : diagnostics->second.array_value) {
-        if (diagnostic_value.type != JsonValue::Type::Object) {
+    for (const JsonValue &diagnostic_value : *diagnostics) {
+        if (!diagnostic_value.is_object()) {
             continue;
         }
-        auto range = diagnostic_value.object_value.find("range");
-        auto message = diagnostic_value.object_value.find("message");
-        if (range == diagnostic_value.object_value.end() || message == diagnostic_value.object_value.end() ||
-            range->second.type != JsonValue::Type::Object || message->second.type != JsonValue::Type::String) {
+        auto range = diagnostic_value.find("range");
+        auto message = diagnostic_value.find("message");
+        if (range == diagnostic_value.end() || message == diagnostic_value.end() || !range->is_object() || !message->is_string()) {
             continue;
         }
-        auto start = range->second.object_value.find("start");
-        auto end = range->second.object_value.find("end");
-        if (start == range->second.object_value.end() || end == range->second.object_value.end() ||
-            start->second.type != JsonValue::Type::Object || end->second.type != JsonValue::Type::Object) {
+        auto start = range->find("start");
+        auto end = range->find("end");
+        if (start == range->end() || end == range->end() || !start->is_object() || !end->is_object()) {
             continue;
         }
         Diagnostic parsed;
-        parsed.range = {position_from_lsp(start->second, conversion_core), position_from_lsp(end->second, conversion_core)};
-        auto severity = diagnostic_value.object_value.find("severity");
-        if (severity != diagnostic_value.object_value.end()) {
-            parsed.severity = diagnostic_severity_from_lsp(severity->second);
+        parsed.range = {position_from_lsp(*start, conversion_core), position_from_lsp(*end, conversion_core)};
+        auto severity = diagnostic_value.find("severity");
+        if (severity != diagnostic_value.end()) {
+            parsed.severity = diagnostic_severity_from_lsp(*severity);
         }
-        auto source = diagnostic_value.object_value.find("source");
-        if (source != diagnostic_value.object_value.end() && source->second.type == JsonValue::Type::String) {
-            parsed.source = source->second.string_value;
+        auto source = diagnostic_value.find("source");
+        if (source != diagnostic_value.end() && source->is_string()) {
+            parsed.source = source->get<std::string>();
         }
-        parsed.message = utf8_to_u32(message->second.string_value);
+        parsed.message = utf8_to_u32(message->get<std::string>());
         parsed_diagnostics.push_back(std::move(parsed));
     }
 

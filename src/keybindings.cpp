@@ -279,38 +279,38 @@ std::optional<EditorAction> action_from_name(const std::string &name) {
 
 KeyBindings parse_keybindings_source(const std::string &source, const std::string &origin) {
     JsonValue root = parse_json(source);
-    if (root.type != JsonValue::Type::Object) {
+    if (!root.is_object()) {
         throw std::runtime_error("keybindings root must be an object");
     }
 
     KeyBindings keybindings;
     keybindings.source_path = origin;
 
-    for (const auto &mode_entry : root.object_value) {
-        if (mode_entry.second.type != JsonValue::Type::Object) {
+    for (const auto &mode_entry : root.items()) {
+        if (!mode_entry.value().is_object()) {
             throw std::runtime_error("mode bindings must be objects");
         }
-        for (const auto &binding_entry : mode_entry.second.object_value) {
-            if (binding_entry.second.type == JsonValue::Type::String) {
-                std::optional<EditorAction> action = action_from_name(binding_entry.second.string_value);
+        for (const auto &binding_entry : mode_entry.value().items()) {
+            if (binding_entry.value().is_string()) {
+                std::optional<EditorAction> action = action_from_name(binding_entry.value().get<std::string>());
                 if (!action) {
-                    throw std::runtime_error("unknown action in keybindings: " + binding_entry.second.string_value);
+                    throw std::runtime_error("unknown action in keybindings: " + binding_entry.value().get<std::string>());
                 }
-                keybindings.bindings.push_back({mode_entry.first, split_key_sequence(binding_entry.first), *action, {}});
+                keybindings.bindings.push_back({mode_entry.key(), split_key_sequence(binding_entry.key()), *action, {}});
                 continue;
             }
-            if (binding_entry.second.type == JsonValue::Type::Array) {
+            if (binding_entry.value().is_array()) {
                 std::vector<std::string> expansion;
-                for (const JsonValue &value : binding_entry.second.array_value) {
-                    if (value.type != JsonValue::Type::String) {
+                for (const JsonValue &value : binding_entry.value()) {
+                    if (!value.is_string()) {
                         throw std::runtime_error("binding sequence entries must be strings");
                     }
-                    expansion.push_back(value.string_value);
+                    expansion.push_back(value.get<std::string>());
                 }
                 if (expansion.empty()) {
                     throw std::runtime_error("binding sequence aliases must not be empty");
                 }
-                keybindings.bindings.push_back({mode_entry.first, split_key_sequence(binding_entry.first), std::nullopt, expansion});
+                keybindings.bindings.push_back({mode_entry.key(), split_key_sequence(binding_entry.key()), std::nullopt, expansion});
                 continue;
             }
             throw std::runtime_error("binding values must be strings or arrays");

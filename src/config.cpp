@@ -101,21 +101,21 @@ std::filesystem::path resolve_config_reference(
 }
 
 const JsonValue &required_object_member(const JsonValue &object, const char *key) {
-    auto found = object.object_value.find(key);
-    if (found == object.object_value.end()) {
+    auto found = object.find(key);
+    if (found == object.end()) {
         throw std::runtime_error(std::string("missing lsp config field: ") + key);
     }
-    return found->second;
+    return *found;
 }
 
 const JsonValue &required_patterns_member(const JsonValue &object, const char *config_kind) {
-    auto patterns = object.object_value.find("patterns");
-    if (patterns != object.object_value.end()) {
-        return patterns->second;
+    auto patterns = object.find("patterns");
+    if (patterns != object.end()) {
+        return *patterns;
     }
-    auto extensions = object.object_value.find("extensions");
-    if (extensions != object.object_value.end()) {
-        return extensions->second;
+    auto extensions = object.find("extensions");
+    if (extensions != object.end()) {
+        return *extensions;
     }
     throw std::runtime_error(std::string("missing ") + config_kind + " config field: patterns");
 }
@@ -128,30 +128,30 @@ std::string pattern_from_legacy_extension(const std::string &extension) {
 }
 
 LspServerConfig::WorkspaceConfig parse_workspace_config(const JsonValue &value) {
-    if (value.type != JsonValue::Type::Object) {
+    if (!value.is_object()) {
         throw std::runtime_error("lsp workspace config must be an object");
     }
 
     LspServerConfig::WorkspaceConfig workspace;
-    auto markers = value.object_value.find("markers");
-    if (markers != value.object_value.end()) {
-        if (markers->second.type != JsonValue::Type::Array) {
+    auto markers = value.find("markers");
+    if (markers != value.end()) {
+        if (!markers->is_array()) {
             throw std::runtime_error("lsp workspace markers must be an array");
         }
-        for (const JsonValue &marker_value : markers->second.array_value) {
-            if (marker_value.type != JsonValue::Type::String) {
+        for (const JsonValue &marker_value : *markers) {
+            if (!marker_value.is_string()) {
                 throw std::runtime_error("lsp workspace markers must be strings");
             }
-            workspace.markers.push_back(marker_value.string_value);
+            workspace.markers.push_back(marker_value.get<std::string>());
         }
     }
 
-    auto fallback = value.object_value.find("fallback");
-    if (fallback != value.object_value.end()) {
-        if (fallback->second.type != JsonValue::Type::String) {
+    auto fallback = value.find("fallback");
+    if (fallback != value.end()) {
+        if (!fallback->is_string()) {
             throw std::runtime_error("lsp workspace fallback must be a string");
         }
-        workspace.fallback = fallback->second.string_value;
+        workspace.fallback = fallback->get<std::string>();
     }
 
     if (workspace.fallback != "file_directory" && workspace.fallback != "current_working_directory") {
@@ -161,54 +161,54 @@ LspServerConfig::WorkspaceConfig parse_workspace_config(const JsonValue &value) 
 }
 
 SyntaxLanguageConfig::EditorSettings parse_syntax_editor_settings(const JsonValue &value) {
-    if (value.type != JsonValue::Type::Object) {
+    if (!value.is_object()) {
         throw std::runtime_error("syntax language editor settings must be an object");
     }
 
     SyntaxLanguageConfig::EditorSettings settings;
-    for (const auto &[key, setting_value] : value.object_value) {
+    for (const auto &[key, setting_value] : value.items()) {
         if (key == "shiftwidth") {
-            if (setting_value.type != JsonValue::Type::Number) {
+            if (!setting_value.is_number()) {
                 throw std::runtime_error("syntax language shiftwidth must be a number");
             }
-            if (setting_value.number_value <= 0 ||
-                setting_value.number_value != static_cast<double>(static_cast<std::size_t>(setting_value.number_value))) {
+            double number_value = setting_value.get<double>();
+            if (number_value <= 0 || number_value != static_cast<double>(static_cast<std::size_t>(number_value))) {
                 throw std::runtime_error("syntax language shiftwidth must be a positive integer");
             }
-            settings.shiftwidth = static_cast<std::size_t>(setting_value.number_value);
+            settings.shiftwidth = static_cast<std::size_t>(number_value);
         } else if (key == "tabstop") {
-            if (setting_value.type != JsonValue::Type::Number) {
+            if (!setting_value.is_number()) {
                 throw std::runtime_error("syntax language tabstop must be a number");
             }
-            if (setting_value.number_value <= 0 ||
-                setting_value.number_value != static_cast<double>(static_cast<std::size_t>(setting_value.number_value))) {
+            double number_value = setting_value.get<double>();
+            if (number_value <= 0 || number_value != static_cast<double>(static_cast<std::size_t>(number_value))) {
                 throw std::runtime_error("syntax language tabstop must be a positive integer");
             }
-            settings.tabstop = static_cast<std::size_t>(setting_value.number_value);
+            settings.tabstop = static_cast<std::size_t>(number_value);
         } else if (key == "softtabstop") {
-            if (setting_value.type != JsonValue::Type::Number) {
+            if (!setting_value.is_number()) {
                 throw std::runtime_error("syntax language softtabstop must be a number");
             }
-            if (setting_value.number_value < 0 ||
-                setting_value.number_value != static_cast<double>(static_cast<std::size_t>(setting_value.number_value))) {
+            double number_value = setting_value.get<double>();
+            if (number_value < 0 || number_value != static_cast<double>(static_cast<std::size_t>(number_value))) {
                 throw std::runtime_error("syntax language softtabstop must be a non-negative integer");
             }
-            settings.softtabstop = static_cast<std::size_t>(setting_value.number_value);
+            settings.softtabstop = static_cast<std::size_t>(number_value);
         } else if (key == "expandtab") {
-            if (setting_value.type != JsonValue::Type::Bool) {
+            if (!setting_value.is_boolean()) {
                 throw std::runtime_error("syntax language expandtab must be a boolean");
             }
-            settings.expandtab = setting_value.bool_value;
+            settings.expandtab = setting_value.get<bool>();
         } else if (key == "autoindent") {
-            if (setting_value.type != JsonValue::Type::Bool) {
+            if (!setting_value.is_boolean()) {
                 throw std::runtime_error("syntax language autoindent must be a boolean");
             }
-            settings.autoindent = setting_value.bool_value;
+            settings.autoindent = setting_value.get<bool>();
         } else if (key == "show_diagnostics_in_insert_mode") {
-            if (setting_value.type != JsonValue::Type::Bool) {
+            if (!setting_value.is_boolean()) {
                 throw std::runtime_error("syntax language show_diagnostics_in_insert_mode must be a boolean");
             }
-            settings.show_diagnostics_in_insert_mode = setting_value.bool_value;
+            settings.show_diagnostics_in_insert_mode = setting_value.get<bool>();
         } else {
             throw std::runtime_error("unknown syntax language editor setting: " + key);
         }
@@ -223,19 +223,19 @@ std::vector<LspServerConfig> load_lsp_servers_from_path(const std::filesystem::p
     }
 
     JsonValue root = parse_json(source);
-    if (root.type != JsonValue::Type::Object) {
+    if (!root.is_object()) {
         throw std::runtime_error("lsp config root must be an object");
     }
 
-    auto servers = root.object_value.find("servers");
-    if (servers == root.object_value.end() || servers->second.type != JsonValue::Type::Array) {
+    auto servers = root.find("servers");
+    if (servers == root.end() || !servers->is_array()) {
         throw std::runtime_error("lsp config must contain a servers array");
     }
 
     std::vector<LspServerConfig> parsed_servers;
     std::map<std::string, std::string> pattern_owners;
-    for (const JsonValue &server_value : servers->second.array_value) {
-        if (server_value.type != JsonValue::Type::Object) {
+    for (const JsonValue &server_value : *servers) {
+        if (!server_value.is_object()) {
             throw std::runtime_error("lsp server entries must be objects");
         }
 
@@ -243,37 +243,36 @@ std::vector<LspServerConfig> load_lsp_servers_from_path(const std::filesystem::p
         const JsonValue &command = required_object_member(server_value, "command");
         const JsonValue &language_id = required_object_member(server_value, "language_id");
         const JsonValue &patterns = required_patterns_member(server_value, "lsp server");
-        if (name.type != JsonValue::Type::String || command.type != JsonValue::Type::String ||
-            language_id.type != JsonValue::Type::String || patterns.type != JsonValue::Type::Array) {
+        if (!name.is_string() || !command.is_string() || !language_id.is_string() || !patterns.is_array()) {
             throw std::runtime_error("invalid lsp server field types");
         }
 
         LspServerConfig server;
-        server.name = name.string_value;
-        server.command = command.string_value;
-        server.language_id = language_id.string_value;
-        bool using_legacy_extensions = server_value.object_value.find("patterns") == server_value.object_value.end();
-        for (const JsonValue &pattern_value : patterns.array_value) {
-            if (pattern_value.type != JsonValue::Type::String) {
+        server.name = name.get<std::string>();
+        server.command = command.get<std::string>();
+        server.language_id = language_id.get<std::string>();
+        bool using_legacy_extensions = !server_value.contains("patterns");
+        for (const JsonValue &pattern_value : patterns) {
+            if (!pattern_value.is_string()) {
                 throw std::runtime_error("lsp server patterns must be strings");
             }
             std::string pattern = using_legacy_extensions
-                ? pattern_from_legacy_extension(pattern_value.string_value)
-                : pattern_value.string_value;
+                ? pattern_from_legacy_extension(pattern_value.get<std::string>())
+                : pattern_value.get<std::string>();
             auto existing_owner = pattern_owners.find(pattern);
             if (existing_owner != pattern_owners.end()) {
                 throw std::runtime_error(
-                    "duplicate lsp pattern mapping for " + pattern + ": " + existing_owner->second + " and " + name.string_value);
+                    "duplicate lsp pattern mapping for " + pattern + ": " + existing_owner->second + " and " + name.get<std::string>());
             }
-            pattern_owners.emplace(pattern, name.string_value);
+            pattern_owners.emplace(pattern, name.get<std::string>());
             server.patterns.push_back(std::move(pattern));
         }
         if (server.name.empty() || server.command.empty() || server.language_id.empty() || server.patterns.empty()) {
             throw std::runtime_error("lsp server entries must not be empty");
         }
-        auto workspace = server_value.object_value.find("workspace");
-        if (workspace != server_value.object_value.end()) {
-            server.workspace = parse_workspace_config(workspace->second);
+        auto workspace = server_value.find("workspace");
+        if (workspace != server_value.end()) {
+            server.workspace = parse_workspace_config(*workspace);
         }
         parsed_servers.push_back(std::move(server));
     }
@@ -288,19 +287,19 @@ std::vector<SyntaxLanguageConfig> load_syntax_languages_from_path(const std::fil
     }
 
     JsonValue root = parse_json(source);
-    if (root.type != JsonValue::Type::Object) {
+    if (!root.is_object()) {
         throw std::runtime_error("syntax config root must be an object");
     }
 
-    auto languages = root.object_value.find("languages");
-    if (languages == root.object_value.end() || languages->second.type != JsonValue::Type::Array) {
+    auto languages = root.find("languages");
+    if (languages == root.end() || !languages->is_array()) {
         throw std::runtime_error("syntax config must contain a languages array");
     }
 
     std::vector<SyntaxLanguageConfig> parsed_languages;
     std::map<std::string, std::string> pattern_owners;
-    for (const JsonValue &language_value : languages->second.array_value) {
-        if (language_value.type != JsonValue::Type::Object) {
+    for (const JsonValue &language_value : *languages) {
+        if (!language_value.is_object()) {
             throw std::runtime_error("syntax language entries must be objects");
         }
 
@@ -309,35 +308,34 @@ std::vector<SyntaxLanguageConfig> load_syntax_languages_from_path(const std::fil
         const JsonValue &grammar_path = required_object_member(language_value, "grammar_path");
         const JsonValue &symbol_name = required_object_member(language_value, "symbol_name");
         const JsonValue &highlights_path = required_object_member(language_value, "highlights_path");
-        if (name.type != JsonValue::Type::String || patterns.type != JsonValue::Type::Array ||
-            grammar_path.type != JsonValue::Type::String || symbol_name.type != JsonValue::Type::String ||
-            highlights_path.type != JsonValue::Type::String) {
+        if (!name.is_string() || !patterns.is_array() || !grammar_path.is_string() || !symbol_name.is_string() ||
+            !highlights_path.is_string()) {
             throw std::runtime_error("invalid syntax language field types");
         }
 
         SyntaxLanguageConfig language;
-        language.name = name.string_value;
-        language.grammar_path = grammar_path.string_value;
+        language.name = name.get<std::string>();
+        language.grammar_path = grammar_path.get<std::string>();
         if (!language.grammar_path.is_absolute()) {
             language.grammar_path = path.parent_path() / language.grammar_path;
         }
-        language.symbol_name = symbol_name.string_value;
-        language.highlights_path = highlights_path.string_value;
+        language.symbol_name = symbol_name.get<std::string>();
+        language.highlights_path = highlights_path.get<std::string>();
         if (!language.highlights_path.is_absolute()) {
             language.highlights_path = path.parent_path() / language.highlights_path;
         }
-        auto editor = language_value.object_value.find("editor");
-        if (editor != language_value.object_value.end()) {
-            language.editor = parse_syntax_editor_settings(editor->second);
+        auto editor = language_value.find("editor");
+        if (editor != language_value.end()) {
+            language.editor = parse_syntax_editor_settings(*editor);
         }
-        bool using_legacy_extensions = language_value.object_value.find("patterns") == language_value.object_value.end();
-        for (const JsonValue &pattern_value : patterns.array_value) {
-            if (pattern_value.type != JsonValue::Type::String) {
+        bool using_legacy_extensions = !language_value.contains("patterns");
+        for (const JsonValue &pattern_value : patterns) {
+            if (!pattern_value.is_string()) {
                 throw std::runtime_error("syntax language patterns must be strings");
             }
             std::string pattern = using_legacy_extensions
-                ? pattern_from_legacy_extension(pattern_value.string_value)
-                : pattern_value.string_value;
+                ? pattern_from_legacy_extension(pattern_value.get<std::string>())
+                : pattern_value.get<std::string>();
             auto existing_owner = pattern_owners.find(pattern);
             if (existing_owner != pattern_owners.end()) {
                 throw std::runtime_error(

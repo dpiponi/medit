@@ -2,6 +2,8 @@
 
 `medit` is a minimal modal text editor written in C++ with `ncursesw`.
 
+The repo vendors `nlohmann::json` under `third_party/nlohmann/`, so a fresh checkout does not need a separately installed JSON library.
+
 ## Layout
 
 - Application sources live in `src/`

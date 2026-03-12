@@ -125,15 +125,15 @@ bool parse_bool_string(const std::string &value) {
 }
 
 const JsonValue &required_member(const JsonValue &value, const char *key) {
-    auto found = value.object_value.find(key);
-    if (found == value.object_value.end()) {
+    auto found = value.find(key);
+    if (found == value.end()) {
         throw std::runtime_error(std::string("missing theme property: ") + key);
     }
-    return found->second;
+    return *found;
 }
 
 TextStyle parse_text_style(const JsonValue &value) {
-    if (value.type != JsonValue::Type::Object) {
+    if (!value.is_object()) {
         throw std::runtime_error("theme role must be an object");
     }
 
@@ -142,24 +142,23 @@ TextStyle parse_text_style(const JsonValue &value) {
     const JsonValue &bold = required_member(value, "bold");
     const JsonValue &underline = required_member(value, "underline");
     const JsonValue &reverse = required_member(value, "reverse");
-    if (foreground.type != JsonValue::Type::String || background.type != JsonValue::Type::String ||
-        bold.type != JsonValue::Type::String || underline.type != JsonValue::Type::String ||
-        reverse.type != JsonValue::Type::String) {
+    if (!foreground.is_string() || !background.is_string() || !bold.is_string() || !underline.is_string() ||
+        !reverse.is_string()) {
         throw std::runtime_error("theme properties must be strings");
     }
 
     return {
-        parse_color_name(foreground.string_value),
-        parse_color_name(background.string_value),
-        parse_bool_string(bold.string_value),
-        parse_bool_string(underline.string_value),
-        parse_bool_string(reverse.string_value),
+        parse_color_name(foreground.get<std::string>()),
+        parse_color_name(background.get<std::string>()),
+        parse_bool_string(bold.get<std::string>()),
+        parse_bool_string(underline.get<std::string>()),
+        parse_bool_string(reverse.get<std::string>()),
     };
 }
 
 Theme parse_theme_source_with_defaults(const std::string &source, const std::string &origin, const Theme *defaults) {
     JsonValue root = parse_json(source);
-    if (root.type != JsonValue::Type::Object) {
+    if (!root.is_object()) {
         throw std::runtime_error("theme root must be an object");
     }
 
@@ -169,7 +168,7 @@ Theme parse_theme_source_with_defaults(const std::string &source, const std::str
     }
     theme.source_path = origin;
     const std::map<std::string, StyleRole> names = role_names();
-    for (const auto &[name, value] : root.object_value) {
+    for (const auto &[name, value] : root.items()) {
         auto found = names.find(name);
         if (found == names.end()) {
             throw std::runtime_error("unknown theme role: " + name);
