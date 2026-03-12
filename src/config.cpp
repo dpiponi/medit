@@ -21,6 +21,22 @@ bool parse_bool_value(const std::string &value) {
     throw std::runtime_error("invalid boolean value: " + value);
 }
 
+ClipboardMode parse_clipboard_mode(const std::string &value) {
+    if (value == "auto") {
+        return ClipboardMode::Auto;
+    }
+    if (value == "native") {
+        return ClipboardMode::Native;
+    }
+    if (value == "shared-file") {
+        return ClipboardMode::SharedFile;
+    }
+    if (value == "internal") {
+        return ClipboardMode::Internal;
+    }
+    throw std::runtime_error("invalid clipboard mode: " + value);
+}
+
 std::optional<std::filesystem::path> first_existing_meditrc_path() {
     std::filesystem::path local = std::filesystem::current_path() / ".config" / "meditrc";
     if (std::filesystem::exists(local)) {
@@ -270,6 +286,7 @@ EditorConfig load_editor_config() {
     }
 
     EditorConfig config;
+    config.clipboard = default_clipboard_config();
     config.keybindings_path = first_existing_default_config_path("keybindings.json");
     config.colors_path = first_existing_default_config_path("colors.json");
     config.lsp_path = first_existing_default_config_path("lsp.json");
@@ -290,6 +307,7 @@ EditorConfig load_editor_config_from_path(const std::filesystem::path &path) {
     }
 
     EditorConfig config;
+    config.clipboard = default_clipboard_config();
     config.source_path = path.string();
 
     std::string line;
@@ -327,6 +345,15 @@ EditorConfig load_editor_config_from_path(const std::filesystem::path &path) {
             config.syntax_name = value;
         } else if (key == "right_justify_diagnostics") {
             config.right_justify_diagnostics = parse_bool_value(value);
+        } else if (key == "clipboard") {
+            config.clipboard.mode = parse_clipboard_mode(value);
+        } else if (key == "clipboard_file") {
+            config.clipboard.shared_file_path = value;
+            if (!config.clipboard.shared_file_path.is_absolute()) {
+                config.clipboard.shared_file_path = resolve_config_reference(path, value);
+            }
+        } else if (key == "clipboard_osc52") {
+            config.clipboard.osc52 = parse_bool_value(value);
         } else {
             throw std::runtime_error("unknown config key: " + key);
         }

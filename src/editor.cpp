@@ -1428,6 +1428,7 @@ bool reload_editor_configuration(EditorState &state, std::string &error_message)
         state.config = std::move(new_config);
         configure_logger(state.config.log_path);
         log_debug("reload-config applied");
+        state.session.configure_clipboard(state.config.clipboard);
         state.keybindings = std::move(new_keybindings);
         state.theme = std::move(new_theme);
         invalidate_syntax_runtime_cache();
@@ -3186,6 +3187,7 @@ int main(int argc, char **argv) {
         state.config = load_editor_config();
         configure_logger(state.config.log_path);
         log_debug("editor startup");
+        state.session.configure_clipboard(state.config.clipboard);
         state.keybindings = load_keybindings(state.config);
     } catch (const std::exception &error) {
         state.keybindings = load_embedded_keybindings();

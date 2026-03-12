@@ -1,5 +1,7 @@
 #pragma once
 
+#include "clipboard.hpp"
+
 #include <filesystem>
 #include <map>
 #include <optional>
@@ -34,6 +36,7 @@ struct EditorConfig {
     std::optional<std::filesystem::path> lsp_path;
     std::optional<std::filesystem::path> syntax_config_path;
     std::optional<std::filesystem::path> log_path;
+    ClipboardConfig clipboard;
     std::optional<std::string> lsp_command;
     std::optional<std::string> lsp_language_id;
     std::vector<LspServerConfig> lsp_servers;

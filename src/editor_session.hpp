@@ -1,16 +1,13 @@
 #pragma once
 
+#include "clipboard.hpp"
 #include "editor_core.hpp"
 
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
-
-struct SharedClipboard {
-    std::u32string text;
-    SelectionMode mode = SelectionMode::Character;
-};
 
 struct EditorBuffer {
     std::size_t id = 0;
@@ -30,7 +27,8 @@ class EditorSession {
     const std::vector<EditorBuffer> &buffers() const;
     bool has_dirty_buffers() const;
 
-    SharedClipboard clipboard() const;
+    ClipboardSnapshot clipboard() const;
+    void configure_clipboard(ClipboardConfig config);
     void set_clipboard(std::u32string text, SelectionMode mode);
     void capture_active_clipboard();
     void sync_active_clipboard();
@@ -50,8 +48,10 @@ class EditorSession {
     std::vector<EditorBuffer> buffers_;
     std::size_t active_buffer_index_ = 0;
     std::size_t next_buffer_id_ = 1;
-    SharedClipboard clipboard_;
+    ClipboardSnapshot clipboard_;
+    std::unique_ptr<ClipboardProvider> clipboard_provider_;
 
     EditorBuffer &create_buffer(bool activate);
     void sync_clipboard_into(EditorBuffer &buffer);
+    void sync_clipboard_into_all_buffers();
 };

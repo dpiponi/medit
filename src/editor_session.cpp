@@ -5,6 +5,7 @@
 
 EditorSession::EditorSession() {
     new_buffer(true);
+    configure_clipboard(default_clipboard_config());
 }
 
 std::size_t EditorSession::buffer_count() const {
@@ -44,22 +45,37 @@ bool EditorSession::has_dirty_buffers() const {
     return false;
 }
 
-SharedClipboard EditorSession::clipboard() const {
+ClipboardSnapshot EditorSession::clipboard() const {
     return clipboard_;
+}
+
+void EditorSession::configure_clipboard(ClipboardConfig config) {
+    clipboard_provider_ = std::make_unique<ClipboardProvider>(std::move(config));
+    clipboard_ = clipboard_provider_->read(clipboard_);
+    sync_clipboard_into_all_buffers();
 }
 
 void EditorSession::set_clipboard(std::u32string text, SelectionMode mode) {
     clipboard_.text = std::move(text);
     clipboard_.mode = mode;
+    if (clipboard_provider_) {
+        clipboard_provider_->write(clipboard_);
+    }
     sync_active_clipboard();
 }
 
 void EditorSession::capture_active_clipboard() {
     clipboard_.text = active_buffer().core.yank_buffer();
     clipboard_.mode = active_buffer().core.yank_mode();
+    if (clipboard_provider_) {
+        clipboard_provider_->write(clipboard_);
+    }
 }
 
 void EditorSession::sync_active_clipboard() {
+    if (clipboard_provider_) {
+        clipboard_ = clipboard_provider_->read(clipboard_);
+    }
     sync_clipboard_into(active_buffer());
 }
 
@@ -179,4 +195,10 @@ EditorBuffer &EditorSession::create_buffer(bool activate) {
 
 void EditorSession::sync_clipboard_into(EditorBuffer &buffer) {
     buffer.core.set_yank_buffer(clipboard_.text, clipboard_.mode);
+}
+
+void EditorSession::sync_clipboard_into_all_buffers() {
+    for (EditorBuffer &buffer : buffers_) {
+        sync_clipboard_into(buffer);
+    }
 }

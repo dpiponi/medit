@@ -799,6 +799,9 @@ void test_config_file_selects_keybindings_and_colors() {
         rc << "syntax_config = syntax.json\n";
         rc << "syntax = cpp\n";
         rc << "right_justify_diagnostics = true\n";
+        rc << "clipboard = shared-file\n";
+        rc << "clipboard_file = clipboard.json\n";
+        rc << "clipboard_osc52 = false\n";
     }
     {
         std::ofstream lsp(medit_dir + "/lsp.json");
@@ -867,6 +870,9 @@ void test_config_file_selects_keybindings_and_colors() {
     expect(config.lsp_path.has_value(), "config should resolve lsp path");
     expect(config.log_path.has_value(), "config should resolve log path");
     expect(config.syntax_config_path.has_value(), "config should resolve syntax config path");
+    expect(config.clipboard.mode == ClipboardMode::SharedFile, "config should parse clipboard mode");
+    expect(config.clipboard.shared_file_path.filename() == "clipboard.json", "config should parse clipboard file");
+    expect(!config.clipboard.osc52, "config should parse clipboard osc52 flag");
     expect(
         config.keybindings_path->filename() == "custom-keys.json",
         "config should use configured keybindings file");
@@ -1292,6 +1298,9 @@ void test_editor_runtime_idle_timeout() {
 
 void test_editor_session_buffers_and_clipboard() {
     EditorSession session;
+    ClipboardConfig clipboard_config;
+    clipboard_config.mode = ClipboardMode::Internal;
+    session.configure_clipboard(clipboard_config);
     expect(session.buffer_count() == 1, "session should start with one buffer");
     expect(session.active_buffer().core.display_file_name() == "[No Name]", "initial buffer should be unnamed");
 
@@ -1312,6 +1321,34 @@ void test_editor_session_buffers_and_clipboard() {
     expect_text(session.active_buffer().core, "albeta", "second buffer should keep independent text");
     expect(session.switch_to_id(first_id), "switch back to first buffer");
     expect_text(session.active_buffer().core, "alpha", "first buffer text should be preserved");
+}
+
+void test_editor_session_shared_file_clipboard() {
+    char template_path[] = "/tmp/medit-clipboard-XXXXXX";
+    char *dir = mkdtemp(template_path);
+    expect(dir != nullptr, "mkdtemp for clipboard dir should succeed");
+
+    std::filesystem::path clipboard_path = std::filesystem::path(dir) / "clipboard.json";
+    ClipboardConfig clipboard_config;
+    clipboard_config.mode = ClipboardMode::SharedFile;
+    clipboard_config.shared_file_path = clipboard_path;
+    clipboard_config.osc52 = false;
+
+    EditorSession first;
+    first.configure_clipboard(clipboard_config);
+    first.active_buffer().core.insert_text({0, 0}, utf8_to_u32("alpha"));
+    first.active_buffer().core.begin_selection();
+    first.active_buffer().core.move_right();
+    expect(first.active_buffer().core.yank_selection(), "first session yank should succeed");
+    first.capture_active_clipboard();
+
+    EditorSession second;
+    second.configure_clipboard(clipboard_config);
+    second.sync_active_clipboard();
+    expect(second.active_buffer().core.paste_after_cursor(), "second session should paste shared clipboard");
+    expect_text(second.active_buffer().core, "al", "second session should see shared clipboard contents");
+
+    std::filesystem::remove_all(dir);
 }
 
 void test_editor_session_open_and_close_rules() {
@@ -1444,6 +1481,7 @@ int main() {
         test_editor_runtime_service_boundary();
         test_editor_runtime_idle_timeout();
         test_editor_session_buffers_and_clipboard();
+        test_editor_session_shared_file_clipboard();
         test_editor_session_open_and_close_rules();
         test_editor_session_open_missing_file_creates_named_buffer();
         test_editor_session_open_multiple_files();

@@ -17,6 +17,7 @@
 - Core document/edit/history logic separated from the terminal UI for future protocol integrations like LSP
 - Runtime service boundary for future background integrations like LSP clients
 - Optional single-server LSP stdio transport configured through `meditrc`
+- Clipboard integration that uses the system clipboard when available and otherwise shares clipboard contents between `medit` instances through a shared file
 
 ## Build
 
@@ -74,6 +75,8 @@ log = debug.log
 syntax_config = syntax.json
 syntax = python
 right_justify_diagnostics = true
+clipboard = auto
+clipboard_osc52 = true
 ```
 
 Example [lsp.json](/home/dan/de/.config/medit/lsp.json):
@@ -150,6 +153,15 @@ Then run `make bootstrap-tree-sitter` to rebuild local grammar libraries, querie
 `right_justify_diagnostics = true` makes inline diagnostic annotations render against the right edge of the text area instead of starting from the left.
 
 `log = debug.log` enables append-only debug logging to `.config/medit/debug.log` relative to the loaded `meditrc` unless you use an absolute path. This is useful for debugging picker, file-open, and config reload issues without copying transient status messages.
+
+Clipboard settings:
+
+- `clipboard = auto` uses the native system clipboard when readable, mirrors writes through OSC52 when supported, and keeps a shared clipboard file for cross-instance fallback
+- `clipboard = native` uses only native clipboard tools
+- `clipboard = shared-file` uses only the shared clipboard file
+- `clipboard = internal` keeps the clipboard inside one `medit` process
+- `clipboard_file = /path/to/clipboard.json` overrides the shared clipboard file path
+- `clipboard_osc52 = true|false` enables or disables OSC52 clipboard writes in `auto` mode
 
 The checked-in local config is:
 
