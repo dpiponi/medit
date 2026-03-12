@@ -77,6 +77,7 @@ syntax = python
 right_justify_diagnostics = true
 clipboard = auto
 clipboard_osc52 = true
+shiftwidth = 4
 ```
 
 Example [lsp.json](/home/dan/de/.config/medit/lsp.json):
@@ -152,6 +153,8 @@ Then run `make bootstrap-tree-sitter` to rebuild local grammar libraries, querie
 
 `right_justify_diagnostics = true` makes inline diagnostic annotations render against the right edge of the text area instead of starting from the left.
 
+`shiftwidth = 4` sets how many spaces `>` and `<` add or remove when indenting and outdenting lines.
+
 `log = debug.log` enables append-only debug logging to `.config/medit/debug.log` relative to the loaded `meditrc` unless you use an absolute path. This is useful for debugging picker, file-open, and config reload issues without copying transient status messages.
 
 Clipboard settings:
@@ -214,6 +217,7 @@ colors = forest.json
 - `gg` jump to the top of the file
 - `G` jump to the bottom of the file
 - `0`, `$` move to line start/end
+- `>`, `<` indent or outdent the current line, or all selected lines in visual mode, by `shiftwidth`
 - `x` delete character under cursor
 - `D` delete from the cursor to the end of the line through the configurable key-sequence alias system
 - `p` paste after the cursor

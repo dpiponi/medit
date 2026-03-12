@@ -229,6 +229,8 @@ class EditorCore {
     void delete_current_line();
     void open_line_below();
     void open_line_above();
+    bool indent_lines(std::size_t start_row, std::size_t end_row, std::size_t width);
+    bool outdent_lines(std::size_t start_row, std::size_t end_row, std::size_t width);
     bool yank_selection();
     bool delete_selection();
     bool paste_before_cursor();

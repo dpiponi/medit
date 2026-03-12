@@ -3,6 +3,7 @@
 #include "string_utils.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -19,6 +20,15 @@ bool parse_bool_value(const std::string &value) {
         return false;
     }
     throw std::runtime_error("invalid boolean value: " + value);
+}
+
+std::size_t parse_positive_size_value(const std::string &value, const std::string &key) {
+    std::size_t parsed = 0;
+    auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
+    if (error != std::errc{} || end != value.data() + value.size() || parsed == 0) {
+        throw std::runtime_error("invalid " + key + " value: " + value);
+    }
+    return parsed;
 }
 
 ClipboardMode parse_clipboard_mode(const std::string &value) {
@@ -354,6 +364,8 @@ EditorConfig load_editor_config_from_path(const std::filesystem::path &path) {
             }
         } else if (key == "clipboard_osc52") {
             config.clipboard.osc52 = parse_bool_value(value);
+        } else if (key == "shiftwidth") {
+            config.shiftwidth = parse_positive_size_value(value, key);
         } else {
             throw std::runtime_error("unknown config key: " + key);
         }

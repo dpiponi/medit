@@ -2322,6 +2322,27 @@ bool select_entire_buffer(EditorState &state) {
     return true;
 }
 
+std::pair<std::size_t, std::size_t> selected_line_span(const EditorCore &core) {
+    if (std::optional<Range> selection = core.selection_range()) {
+        Range normalized = normalized_range(*selection);
+        return {normalized.start.row, normalized.end.row > normalized.start.row ? normalized.end.row - (normalized.end.column == 0 ? 1 : 0) : normalized.start.row};
+    }
+    std::size_t row = core.cursor().row;
+    return {row, row};
+}
+
+bool indent_selection_or_line(EditorState &state, bool indent) {
+    EditorCore &core = active_core(state);
+    auto [start_row, end_row] = selected_line_span(core);
+    bool changed = indent
+        ? core.indent_lines(start_row, end_row, state.config.shiftwidth)
+        : core.outdent_lines(start_row, end_row, state.config.shiftwidth);
+    if (changed && (state.mode == Mode::Visual || state.mode == Mode::VisualLine)) {
+        state.mode = Mode::Normal;
+    }
+    return changed;
+}
+
 bool motion_is_character_based(PendingMotion motion) {
     return motion != PendingMotion::None;
 }
@@ -2553,6 +2574,8 @@ bool action_accepts_repeat(EditorAction action) {
         case EditorAction::HalfPageUp:
         case EditorAction::PageUp:
         case EditorAction::PageDown:
+        case EditorAction::Indent:
+        case EditorAction::Outdent:
         case EditorAction::SearchNext:
         case EditorAction::SearchPrevious:
         case EditorAction::NextDiagnostic:
@@ -2714,6 +2737,12 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             break;
         case EditorAction::PageDown:
             page_down(state);
+            break;
+        case EditorAction::Indent:
+            set_status(state, indent_selection_or_line(state, true) ? "Indented" : "Nothing to indent");
+            break;
+        case EditorAction::Outdent:
+            set_status(state, indent_selection_or_line(state, false) ? "Outdented" : "Nothing to outdent");
             break;
         case EditorAction::NextBuffer:
             state.session.next_buffer();

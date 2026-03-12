@@ -171,6 +171,20 @@ void test_yank_and_paste() {
     expect_text(core, "abcdab", "paste after cursor");
 }
 
+void test_indent_and_outdent_lines() {
+    EditorCore core;
+    expect(core.insert_text({0, 0}, utf8_to_u32("one\ntwo\n\tthree")), "seed indent buffer");
+    expect(core.indent_lines(0, 1, 2), "indent first two lines");
+    expect_text(core, "  one\n  two\n\tthree", "indent adds spaces to selected lines");
+    expect(core.undo(), "undo indent");
+    expect_text(core, "one\ntwo\n\tthree", "undo indent restores text");
+
+    expect(core.outdent_lines(2, 2, 2), "outdent tab-indented line");
+    expect_text(core, "one\ntwo\nthree", "outdent removes a leading tab");
+    expect(core.undo(), "undo outdent");
+    expect_text(core, "one\ntwo\n\tthree", "undo outdent restores text");
+}
+
 void test_replace_selection_with_yank() {
     EditorCore core;
     for (char ch : std::string("abcd")) {
@@ -651,6 +665,12 @@ void test_keybinding_dispatch() {
 
     KeyDispatch special = dispatch_key_sequence(keybindings, "normal", pending, "pagedown", false);
     expect(special.action.has_value() && *special.action == EditorAction::PageDown, "pagedown binding");
+
+    KeyDispatch indent = dispatch_key_sequence(keybindings, "normal", pending, ">", false);
+    expect(indent.action.has_value() && *indent.action == EditorAction::Indent, "> binding");
+
+    KeyDispatch outdent = dispatch_key_sequence(keybindings, "normal", pending, "<", false);
+    expect(outdent.action.has_value() && *outdent.action == EditorAction::Outdent, "< binding");
 
     KeyDispatch next_buffer = dispatch_key_sequence(keybindings, "normal", pending, "tab", false);
     expect(next_buffer.action.has_value() && *next_buffer.action == EditorAction::NextBuffer, "tab binding");
@@ -1447,6 +1467,7 @@ int main() {
         test_linewise_selection_range_and_delete();
         test_linewise_delete_and_paste();
         test_yank_and_paste();
+        test_indent_and_outdent_lines();
         test_replace_selection_with_yank();
         test_file_io_and_dirty_tracking();
         test_open_empty_missing_file_and_save();

@@ -43,6 +43,7 @@ struct EditorConfig {
     std::vector<SyntaxLanguageConfig> syntax_languages;
     std::optional<std::string> syntax_name;
     bool right_justify_diagnostics = false;
+    std::size_t shiftwidth = 4;
 };
 
 EditorConfig load_editor_config();

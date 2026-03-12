@@ -1113,6 +1113,43 @@ bool EditorCore::insert_text(Position position, const std::u32string &text) {
     return replace_range({position, position}, text);
 }
 
+std::u32string indent_prefix(std::size_t width) {
+    return std::u32string(width, U' ');
+}
+
+std::size_t outdent_column_width(char32_t codepoint, std::size_t shiftwidth) {
+    if (codepoint == U' ') {
+        return 1;
+    }
+    if (codepoint == U'\t') {
+        return shiftwidth;
+    }
+    return 0;
+}
+
+std::size_t outdent_char_count(const std::u32string &line, std::size_t shiftwidth) {
+    std::size_t removed_width = 0;
+    std::size_t removed_chars = 0;
+    for (char32_t codepoint : line) {
+        std::size_t width = outdent_column_width(codepoint, shiftwidth);
+        if (width == 0) {
+            break;
+        }
+        if (removed_width + width > shiftwidth) {
+            if (removed_chars == 0 && codepoint == U'\t') {
+                return 1;
+            }
+            break;
+        }
+        removed_width += width;
+        ++removed_chars;
+        if (removed_width == shiftwidth) {
+            break;
+        }
+    }
+    return removed_chars;
+}
+
 bool EditorCore::apply_text_edits(const std::vector<TextEdit> &edits) {
     if (edits.empty()) {
         return false;
@@ -1144,6 +1181,40 @@ bool EditorCore::apply_text_edits(const std::vector<TextEdit> &edits) {
     apply_command(std::make_unique<TransactionCommand>(std::move(commands)));
     clear_selection();
     return true;
+}
+
+bool EditorCore::indent_lines(std::size_t start_row, std::size_t end_row, std::size_t width) {
+    if (width == 0 || start_row >= lines_.size() || end_row >= lines_.size() || start_row > end_row) {
+        return false;
+    }
+
+    std::vector<TextEdit> edits;
+    edits.reserve(end_row - start_row + 1);
+    std::u32string prefix = indent_prefix(width);
+    for (std::size_t row = start_row; row <= end_row; ++row) {
+        edits.push_back({{{row, 0}, {row, 0}}, prefix});
+    }
+    return apply_text_edits(edits);
+}
+
+bool EditorCore::outdent_lines(std::size_t start_row, std::size_t end_row, std::size_t width) {
+    if (width == 0 || start_row >= lines_.size() || end_row >= lines_.size() || start_row > end_row) {
+        return false;
+    }
+
+    std::vector<TextEdit> edits;
+    edits.reserve(end_row - start_row + 1);
+    for (std::size_t row = start_row; row <= end_row; ++row) {
+        std::size_t remove_count = outdent_char_count(lines_[row], width);
+        if (remove_count == 0) {
+            continue;
+        }
+        edits.push_back({{{row, 0}, {row, remove_count}}, U""});
+    }
+    if (edits.empty()) {
+        return false;
+    }
+    return apply_text_edits(edits);
 }
 
 std::size_t EditorCore::utf8_offset_for_position(Position position) const {
