@@ -177,6 +177,36 @@ std::optional<std::pair<std::string, Position>> definition_location_from_result(
     return std::nullopt;
 }
 
+std::optional<std::string> hover_text_from_contents(const JsonValue &contents) {
+    switch (contents.type) {
+        case JsonValue::Type::String:
+            return contents.string_value;
+        case JsonValue::Type::Object: {
+            auto value = contents.object_value.find("value");
+            if (value != contents.object_value.end() && value->second.type == JsonValue::Type::String) {
+                return value->second.string_value;
+            }
+            return std::nullopt;
+        }
+        case JsonValue::Type::Array: {
+            std::string combined;
+            for (const JsonValue &item : contents.array_value) {
+                std::optional<std::string> text = hover_text_from_contents(item);
+                if (!text || text->empty()) {
+                    continue;
+                }
+                if (!combined.empty()) {
+                    combined += "\n\n";
+                }
+                combined += *text;
+            }
+            return combined.empty() ? std::nullopt : std::optional<std::string>(combined);
+        }
+        default:
+            return std::nullopt;
+    }
+}
+
 }  // namespace
 
 std::string encode_lsp_message(const std::string &payload) {
@@ -310,18 +340,26 @@ void LspService::handle_editor_event(const EditorEvent &event) {
 }
 
 void LspService::handle_request(const ServiceRequest &request) {
-    if (!running_ || request.type != ServiceRequestType::GoToDefinition) {
+    if (!running_) {
         return;
     }
     if (!matches_document(request.document_uri)) {
         return;
     }
     if (!initialized_ || open_documents_.find(request.document_uri) == open_documents_.end()) {
-        queue_status("Definition unavailable");
+        if (request.type == ServiceRequestType::GoToDefinition) {
+            queue_status("Definition unavailable");
+        } else if (request.type == ServiceRequestType::Hover) {
+            queue_status("Hover unavailable");
+        }
         return;
     }
     flush_pending_document_changes(true, request.document_uri);
-    send_definition_request(request);
+    if (request.type == ServiceRequestType::GoToDefinition) {
+        send_definition_request(request);
+    } else if (request.type == ServiceRequestType::Hover || request.type == ServiceRequestType::WarmHover) {
+        send_hover_request(request);
+    }
 }
 
 void LspService::send_editor_event(const EditorEvent &event) {
@@ -392,7 +430,7 @@ std::vector<ServiceEvent> LspService::poll() {
 }
 
 std::optional<int> LspService::poll_interval_ms() const {
-    return 50;
+    return 10;
 }
 
 void LspService::queue_event(ServiceEvent event) {
@@ -623,6 +661,12 @@ void LspService::send_did_open(const EditorEvent &event) {
             << "\"text\":" << json_string(u32_to_utf8(event.text))
             << "}}}";
     write_payload(payload.str());
+
+    ServiceRequest warmup;
+    warmup.type = ServiceRequestType::WarmHover;
+    warmup.document_uri = event.document_uri;
+    warmup.utf16_position = Utf16Position{0, 0};
+    send_hover_request(warmup);
 }
 
 void LspService::send_did_change(const EditorEvent &event) {
@@ -707,6 +751,26 @@ void LspService::send_definition_request(const ServiceRequest &request) {
     }
 }
 
+void LspService::send_hover_request(const ServiceRequest &request) {
+    int request_id = next_request_id_++;
+    pending_requests_[request_id] = request;
+    std::ostringstream payload;
+    payload << "{"
+            << "\"jsonrpc\":\"2.0\","
+            << "\"id\":" << request_id << ","
+            << "\"method\":\"textDocument/hover\","
+            << "\"params\":{"
+            << "\"textDocument\":{\"uri\":" << json_string(request.document_uri) << "},"
+            << "\"position\":{\"line\":" << request.utf16_position.row
+            << ",\"character\":" << request.utf16_position.column << "}"
+            << "}"
+            << "}";
+    if (!write_payload(payload.str())) {
+        pending_requests_.erase(request_id);
+        queue_status("Hover request failed");
+    }
+}
+
 void LspService::handle_message(const std::string &payload) {
     JsonValue root = parse_json(payload);
     if (root.type != JsonValue::Type::Object) {
@@ -737,31 +801,65 @@ void LspService::handle_message(const std::string &payload) {
         int request_id = static_cast<int>(id->second.number_value);
         auto pending = pending_requests_.find(request_id);
         if (pending != pending_requests_.end()) {
+            ServiceRequest request = pending->second;
             pending_requests_.erase(pending);
 
             auto error = root.object_value.find("error");
             if (error != root.object_value.end()) {
-                queue_status("Definition request failed");
+                if (request.type == ServiceRequestType::GoToDefinition) {
+                    queue_status("Definition request failed");
+                } else if (request.type == ServiceRequestType::Hover) {
+                    queue_status("Hover request failed");
+                }
                 return;
             }
 
             auto result = root.object_value.find("result");
-            if (result == root.object_value.end() || result->second.type == JsonValue::Type::Null) {
-                queue_status("Definition not found");
+            if (request.type == ServiceRequestType::GoToDefinition) {
+                if (result == root.object_value.end() || result->second.type == JsonValue::Type::Null) {
+                    queue_status("Definition not found");
+                    return;
+                }
+
+                std::optional<std::pair<std::string, Position>> location = definition_location_from_result(result->second);
+                if (!location) {
+                    queue_status("Definition not found");
+                    return;
+                }
+
+                EditorCommand command;
+                command.type = EditorCommandType::OpenLocation;
+                command.document_uri = location->first;
+                command.position = location->second;
+                queue_event({ServiceEventType::Notification, name(), "definition", command, location->first, 0, std::nullopt, U""});
+            } else if (request.type == ServiceRequestType::Hover) {
+                if (result == root.object_value.end() || result->second.type == JsonValue::Type::Null) {
+                    queue_status("No hover information");
+                    return;
+                }
+                if (result->second.type != JsonValue::Type::Object) {
+                    queue_status("No hover information");
+                    return;
+                }
+                auto contents = result->second.object_value.find("contents");
+                if (contents == result->second.object_value.end()) {
+                    queue_status("No hover information");
+                    return;
+                }
+                std::optional<std::string> hover_text = hover_text_from_contents(contents->second);
+                if (!hover_text || hover_text->empty()) {
+                    queue_status("No hover information");
+                    return;
+                }
+                EditorCommand command;
+                command.type = EditorCommandType::ShowPopup;
+                command.title = "Hover";
+                command.message = *hover_text;
+                command.document_uri = request.document_uri;
+                queue_event({ServiceEventType::Notification, name(), "hover", command, request.document_uri, 0, std::nullopt, U""});
+            } else if (request.type == ServiceRequestType::WarmHover) {
                 return;
             }
-
-            std::optional<std::pair<std::string, Position>> location = definition_location_from_result(result->second);
-            if (!location) {
-                queue_status("Definition not found");
-                return;
-            }
-
-            EditorCommand command;
-            command.type = EditorCommandType::OpenLocation;
-            command.document_uri = location->first;
-            command.position = location->second;
-            queue_event({ServiceEventType::Notification, name(), "definition", command, location->first, 0, std::nullopt, U""});
             return;
         }
     }

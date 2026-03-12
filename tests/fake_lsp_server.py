@@ -89,6 +89,19 @@ while True:
                 ],
             }
         )
+    elif method == "textDocument/hover":
+        send_message(
+            {
+                "jsonrpc": "2.0",
+                "id": message["id"],
+                "result": {
+                    "contents": {
+                        "kind": "markdown",
+                        "value": f"hover:{message['params']['position']['line']}:{message['params']['position']['character']}"
+                    }
+                },
+            }
+        )
     elif method == "shutdown":
         send_message({"jsonrpc": "2.0", "id": message["id"], "result": None})
     elif method == "exit":

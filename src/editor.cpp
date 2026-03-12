@@ -145,6 +145,12 @@ struct EditorState {
         bool syntax_config_error_reported = false;
     };
 
+    struct PopupState {
+        bool visible = false;
+        std::string title;
+        std::u32string text;
+    };
+
     EditorSession session;
     EditorRuntime runtime;
     EditorConfig config;
@@ -163,6 +169,7 @@ struct EditorState {
     PromptHistory sed_command_history;
     std::u32string search_buffer;
     std::string status_message = "NORMAL";
+    PopupState popup;
     std::vector<std::string> pending_tokens;
     PendingMotion pending_motion = PendingMotion::None;
     std::string repeat_digits;
@@ -443,6 +450,20 @@ std::string mode_name(Mode mode) {
 
 void set_status(EditorState &state, const std::string &message) {
     state.status_message = message;
+}
+
+void handle_service_events(EditorState &state);
+
+void show_popup(EditorState &state, std::string title, std::u32string text) {
+    state.popup.visible = true;
+    state.popup.title = std::move(title);
+    state.popup.text = std::move(text);
+}
+
+void dismiss_popup(EditorState &state) {
+    state.popup.visible = false;
+    state.popup.title.clear();
+    state.popup.text.clear();
 }
 
 void sync_active_window_buffer(EditorState &state) {
@@ -1478,6 +1499,18 @@ void request_definition(EditorState &state) {
     request.utf16_position = core.utf16_position_for_position(core.cursor());
     state.runtime.dispatch_service_request(request);
     set_status(state, "Definition requested");
+}
+
+void request_hover(EditorState &state) {
+    EditorCore &core = active_core(state);
+    ServiceRequest request;
+    request.type = ServiceRequestType::Hover;
+    request.document_uri = core.document_uri();
+    request.utf16_position = core.utf16_position_for_position(core.cursor());
+    state.runtime.dispatch_service_request(request);
+    state.runtime.poll_services();
+    handle_service_events(state);
+    set_status(state, "Hover requested");
 }
 
 std::optional<std::string> token_under_cursor(const EditorCore &core) {
@@ -2603,6 +2636,54 @@ void draw_message_bar(const EditorState &state, int screen_rows, int screen_cols
     attroff(curses_attributes(style, StyleRole::MessageBar));
 }
 
+void draw_popup(const EditorState &state, int screen_rows, int screen_cols) {
+    if (!state.popup.visible || screen_rows <= 4 || screen_cols <= 8) {
+        return;
+    }
+
+    int available_rows = screen_rows - 2;
+    int max_text_width = std::max(12, screen_cols - 8);
+    std::vector<std::u32string> wrapped = wrap_annotation_text(state.popup.text, max_text_width - 4);
+    if (wrapped.empty()) {
+        wrapped.push_back(U"");
+    }
+
+    std::size_t title_width = display_width(utf8_to_u32(state.popup.title), 8);
+    std::size_t content_width = title_width;
+    for (const std::u32string &line : wrapped) {
+        content_width = std::max(content_width, display_width(line, 8));
+    }
+
+    int popup_width = std::min(screen_cols - 4, static_cast<int>(content_width) + 4);
+    int popup_height = std::min(available_rows, static_cast<int>(wrapped.size()) + 2);
+    int top = std::max(0, (available_rows - popup_height) / 2);
+    int left = std::max(0, (screen_cols - popup_width) / 2);
+
+    int border_attrs = curses_attributes(theme_style(state.theme, StyleRole::StatusBar), StyleRole::StatusBar);
+    int body_attrs = curses_attributes(theme_style(state.theme, StyleRole::MessageBar), StyleRole::MessageBar);
+
+    for (int row = 0; row < popup_height; ++row) {
+        for (int col = 0; col < popup_width; ++col) {
+            bool border = row == 0 || row == popup_height - 1 || col == 0 || col == popup_width - 1;
+            attrset(static_cast<attr_t>(border ? border_attrs : body_attrs));
+            mvaddch(top + row, left + col, ' ');
+        }
+    }
+
+    attrset(static_cast<attr_t>(border_attrs));
+    if (!state.popup.title.empty()) {
+        std::string title = " " + state.popup.title + " ";
+        mvaddnstr(top, left + 1, title.c_str(), std::max(0, popup_width - 2));
+    }
+
+    attrset(static_cast<attr_t>(body_attrs));
+    for (int row = 0; row < popup_height - 2 && row < static_cast<int>(wrapped.size()); ++row) {
+        clear_rect_line(top + 1 + row, left + 1, popup_width - 2);
+        mvaddnwstr(top + 1 + row, left + 2, u32_to_wstring(wrapped[static_cast<std::size_t>(row)]).c_str(), popup_width - 4);
+    }
+    attrset(A_NORMAL);
+}
+
 int line_number_width(const EditorCore &core) {
     std::size_t line_count = core.line_count();
     int width = 1;
@@ -2698,6 +2779,7 @@ void draw_editor(const EditorState &state) {
     }
     draw_status_bar(state, screen_rows, screen_cols);
     draw_message_bar(state, screen_rows, screen_cols);
+    draw_popup(state, screen_rows, screen_cols);
 
     auto active_rect = std::find_if(
         rects.begin(),
@@ -3459,6 +3541,9 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
         case EditorAction::GoToDefinition:
             request_definition(state);
             break;
+        case EditorAction::ShowHover:
+            request_hover(state);
+            break;
         case EditorAction::GoToFileUnderCursor:
             open_file_under_cursor(state);
             break;
@@ -3681,10 +3766,12 @@ void handle_keymap_input(EditorState &state, wint_t key, bool is_special) {
     if (!token) {
         return;
     }
+    dismiss_popup(state);
     process_input_token(state, *token, key, is_printable_input(key, is_special));
 }
 
 void handle_mouse_input(EditorState &state) {
+    dismiss_popup(state);
     MEVENT event;
     if (getmouse(&event) != OK) {
         return;
@@ -3809,6 +3896,14 @@ void handle_service_events(EditorState &state) {
             }
             state.jump_forward_stack.clear();
             set_status(state, "Opened definition");
+            continue;
+        }
+        if (command.type == EditorCommandType::ShowPopup) {
+            show_popup(state, command.title, utf8_to_u32(command.message));
+            continue;
+        }
+        if (command.type == EditorCommandType::ClearPopup) {
+            dismiss_popup(state);
             continue;
         }
         EditorCore *target = &active_core(state);

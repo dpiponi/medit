@@ -13,6 +13,8 @@ enum class EditorCommandType {
     ClearAnnotations,
     MoveCursor,
     OpenLocation,
+    ShowPopup,
+    ClearPopup,
     SetStatusMessage,
 };
 
@@ -22,6 +24,7 @@ struct EditorCommand {
     std::vector<Diagnostic> diagnostics;
     std::vector<InlineAnnotation> annotations;
     std::optional<Position> position;
+    std::string title;
     std::string message;
 };
 

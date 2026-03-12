@@ -43,6 +43,8 @@ EditorCommandResult apply_editor_command(EditorCore &core, const EditorCommand &
             }
             return result;
         case EditorCommandType::OpenLocation:
+        case EditorCommandType::ShowPopup:
+        case EditorCommandType::ClearPopup:
             return result;
         case EditorCommandType::SetStatusMessage:
             result.applied = true;

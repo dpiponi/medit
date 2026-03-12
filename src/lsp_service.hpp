@@ -76,5 +76,6 @@ class LspService : public EditorService {
     void send_did_save(const EditorEvent &event);
     void send_did_close(const EditorEvent &event);
     void send_definition_request(const ServiceRequest &request);
+    void send_hover_request(const ServiceRequest &request);
     void handle_message(const std::string &payload);
 };

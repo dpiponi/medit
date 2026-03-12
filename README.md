@@ -291,6 +291,7 @@ colors = forest.json
 - In visual mode, `aw` extends the selection to include the word plus adjacent spaces at the cursor
 - Search updates dynamically as you type and highlights all matches, with the current match highlighted separately
 - `g d` jump to the LSP definition of the symbol under the cursor, switching to an open buffer or opening the target file in a new buffer
+- `K` request LSP hover information for the symbol under the cursor and show it in a temporary popup
 - `g f` opens the file reference under the cursor, first by direct relative path and then by searching from the workspace root with `fdfind` or `fd`
 - `g o` jump back through definition history and `g i` jump forward again
 - `u` undo last edit

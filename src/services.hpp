@@ -16,6 +16,8 @@ enum class ServiceEventType {
 
 enum class ServiceRequestType {
     GoToDefinition,
+    Hover,
+    WarmHover,
 };
 
 struct ServiceRequest {

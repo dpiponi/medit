@@ -726,6 +726,9 @@ void test_keybinding_dispatch() {
     KeyDispatch second = dispatch_key_sequence(keybindings, "normal", pending, "g", false);
     expect(second.action.has_value() && *second.action == EditorAction::GotoTop, "gg should map to goto top");
 
+    KeyDispatch hover = dispatch_key_sequence(keybindings, "normal", pending, "K", false);
+    expect(hover.action.has_value() && *hover.action == EditorAction::ShowHover, "K should map to hover");
+
     KeyDispatch printable = dispatch_key_sequence(keybindings, "insert", pending, "x", true);
     expect(printable.action.has_value() && *printable.action == EditorAction::SelfInsert, "insert printable binding");
 
@@ -1313,6 +1316,24 @@ void test_lsp_service_roundtrip() {
     }
     expect(saw_definition, "lsp roundtrip should produce a definition location");
 
+    request.type = ServiceRequestType::Hover;
+    runtime.dispatch_service_request(request);
+
+    bool saw_hover = false;
+    for (int i = 0; i < 30 && !saw_hover; ++i) {
+        runtime.poll_services();
+        for (const ServiceEvent &event : runtime.take_service_events()) {
+            if (!event.command || event.command->type != EditorCommandType::ShowPopup) {
+                continue;
+            }
+            expect(event.command->title == "Hover", "hover should use popup title");
+            expect(event.command->message == "hover:0:0", "hover should preserve hover contents");
+            saw_hover = true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    expect(saw_hover, "lsp roundtrip should produce hover popup content");
+
     runtime.stop_services();
     std::filesystem::remove_all(dir);
 #endif
@@ -1377,7 +1398,7 @@ class RecordingService : public EditorService {
             {ServiceEventType::Notification,
              name(),
              event.type == EditorEventType::DocumentChanged ? "document_changed" : "editor_event",
-             EditorCommand{EditorCommandType::SetStatusMessage, std::nullopt, {}, {}, std::nullopt, "recorded"},
+             EditorCommand{EditorCommandType::SetStatusMessage, std::nullopt, {}, {}, std::nullopt, "", "recorded"},
              event.document_uri,
              event.document_version,
              event.range,

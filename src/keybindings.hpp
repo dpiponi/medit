@@ -71,6 +71,7 @@ enum class EditorAction {
     SearchNext,
     SearchPrevious,
     GoToDefinition,
+    ShowHover,
     GoToFileUnderCursor,
     JumpBack,
     JumpForward,
