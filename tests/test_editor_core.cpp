@@ -120,6 +120,16 @@ void test_autoindent_newline() {
     expect_text(core, "    alpha", "undo autoindent newline restores the original line");
 }
 
+void test_autoindent_open_line_below() {
+    EditorCore core;
+    expect(core.insert_text({0, 0}, utf8_to_u32("    alpha")), "seed open-line-below autoindent buffer");
+    core.set_cursor({0, 2});
+    core.open_line_below_with_autoindent();
+    expect_text(core, "    alpha\n    ", "open line below copies leading indentation");
+    expect(core.undo(), "undo autoindented open line below");
+    expect_text(core, "    alpha", "undo autoindented open line below restores the original line");
+}
+
 void test_visual_range_semantics_and_delete() {
     EditorCore core;
     for (char ch : std::string("abcd")) {
@@ -1497,6 +1507,7 @@ int main() {
         test_newline_backspace_and_join();
         test_insert_mode_soft_tab_and_shift_tab();
         test_autoindent_newline();
+        test_autoindent_open_line_below();
         test_visual_range_semantics_and_delete();
         test_linewise_selection_range_and_delete();
         test_linewise_delete_and_paste();

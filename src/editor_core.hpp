@@ -231,6 +231,7 @@ class EditorCore {
     void delete_character_under_cursor();
     void delete_current_line();
     void open_line_below();
+    void open_line_below_with_autoindent();
     void open_line_above();
     bool indent_lines(std::size_t start_row, std::size_t end_row, std::size_t width);
     bool outdent_lines(std::size_t start_row, std::size_t end_row, std::size_t width);

@@ -156,7 +156,7 @@ Then run `make bootstrap-tree-sitter` to rebuild local grammar libraries, querie
 
 `shiftwidth = 4` sets how many spaces `>` and `<` add or remove when indenting and outdenting lines.
 
-`autoindent = true` makes Enter copy the leading whitespace from the line above onto the new line.
+`autoindent = true` makes Enter and `o` copy the leading whitespace from the line above onto the new line.
 
 `log = debug.log` enables append-only debug logging to `.config/medit/debug.log` relative to the loaded `meditrc` unless you use an absolute path. This is useful for debugging picker, file-open, and config reload issues without copying transient status messages.
 

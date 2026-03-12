@@ -1681,6 +1681,19 @@ void EditorCore::open_line_below() {
     set_cursor({cursor_.row, 0});
 }
 
+void EditorCore::open_line_below_with_autoindent() {
+    begin_compound_edit();
+    open_line_below();
+    if (cursor_.row > 0) {
+        Position insert_at = cursor_;
+        std::u32string prefix = leading_indentation_prefix(lines_[cursor_.row - 1]);
+        if (!prefix.empty() && insert_text(insert_at, prefix)) {
+            set_cursor({insert_at.row, insert_at.column + prefix.size()});
+        }
+    }
+    end_compound_edit();
+}
+
 void EditorCore::open_line_above() {
     apply_command(std::make_unique<InsertLineCommand>(cursor_.row));
     set_cursor({cursor_.row, 0});

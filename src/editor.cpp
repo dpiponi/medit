@@ -2677,7 +2677,11 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             break;
         }
         case EditorAction::OpenLineBelow:
-            core.open_line_below();
+            if (state.config.autoindent) {
+                core.open_line_below_with_autoindent();
+            } else {
+                core.open_line_below();
+            }
             state.mode = Mode::Insert;
             set_status(state, mode_name(state.mode));
             break;
