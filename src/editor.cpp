@@ -3011,17 +3011,6 @@ std::optional<std::string> key_token(wint_t key, bool is_special) {
     return u32_to_utf8(std::u32string(1, static_cast<char32_t>(key)));
 }
 
-std::string join_tokens_for_log(const std::vector<std::string> &tokens) {
-    std::ostringstream output;
-    for (std::size_t index = 0; index < tokens.size(); ++index) {
-        if (index > 0) {
-            output << ' ';
-        }
-        output << tokens[index];
-    }
-    return output.str();
-}
-
 std::string mode_key(const EditorState &state) {
     switch (state.mode) {
         case Mode::Normal:
@@ -3630,17 +3619,6 @@ void handle_group_open(EditorState &state) {
 }
 
 void process_input_token(EditorState &state, const std::string &token, wint_t key, bool printable) {
-    bool log_ctrl_w_path = token == "ctrl-w"
-        || std::ranges::find(state.pending_tokens, std::string("ctrl-w")) != state.pending_tokens.end();
-    if (log_ctrl_w_path) {
-        log_debug(std::format(
-            "ctrl-w input token={} key={} printable={} mode={} pending_before=[{}]",
-            token,
-            static_cast<long long>(key),
-            printable ? "true" : "false",
-            mode_key(state),
-            join_tokens_for_log(state.pending_tokens)));
-    }
     if (mode_supports_command_language(state) && state.pending_motion != PendingMotion::None && printable) {
         record_group_input(state, token, key, printable);
         execute_pending_motion(state, static_cast<char32_t>(key));
@@ -3691,15 +3669,6 @@ void process_input_token(EditorState &state, const std::string &token, wint_t ke
     record_group_input(state, token, key, printable);
 
     KeyDispatch dispatch = dispatch_key_sequence(state.keybindings, mode_key(state), state.pending_tokens, token, printable);
-    if (log_ctrl_w_path || std::ranges::find(state.pending_tokens, std::string("ctrl-w")) != state.pending_tokens.end()) {
-        log_debug(std::format(
-            "ctrl-w dispatch token={} matched={} waiting={} action={} pending_after=[{}]",
-            token,
-            dispatch.matched ? "true" : "false",
-            dispatch.waiting_for_more ? "true" : "false",
-            dispatch.action ? std::to_string(static_cast<int>(*dispatch.action)) : "<none>",
-            join_tokens_for_log(state.pending_tokens)));
-    }
     if (dispatch.waiting_for_more) {
         set_status(state, u32_to_utf8(utf8_to_u32(token)));
         return;
@@ -3711,14 +3680,6 @@ void handle_keymap_input(EditorState &state, wint_t key, bool is_special) {
     std::optional<std::string> token = key_token(key, is_special);
     if (!token) {
         return;
-    }
-    if (*token == "ctrl-w" || std::ranges::find(state.pending_tokens, std::string("ctrl-w")) != state.pending_tokens.end()) {
-        log_debug(std::format(
-            "ctrl-w raw result token={} key={} is_special={} pending_before=[{}]",
-            *token,
-            static_cast<long long>(key),
-            is_special ? "true" : "false",
-            join_tokens_for_log(state.pending_tokens)));
     }
     process_input_token(state, *token, key, is_printable_input(key, is_special));
 }
