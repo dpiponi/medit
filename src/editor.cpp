@@ -170,6 +170,8 @@ struct EditorState {
     std::u32string search_buffer;
     std::string status_message = "NORMAL";
     PopupState popup;
+    bool diagnostics_visible = true;
+    bool insert_session_active = false;
     std::vector<std::string> pending_tokens;
     PendingMotion pending_motion = PendingMotion::None;
     std::string repeat_digits;
@@ -179,6 +181,11 @@ struct EditorState {
     std::size_t group_depth = 0;
     std::size_t group_repeat_count = 1;
     std::vector<RecordedInput> group_inputs;
+    bool command_recording = false;
+    bool command_recording_nonrepeatable = false;
+    std::vector<RecordedInput> command_inputs;
+    std::vector<std::pair<std::size_t, std::size_t>> command_buffer_versions;
+    std::vector<RecordedInput> last_repeatable_command;
     std::vector<JumpLocation> jump_back_stack;
     std::vector<JumpLocation> jump_forward_stack;
 };
@@ -686,8 +693,27 @@ void suspend_editor(EditorState &state) {
 #endif
 }
 
+void begin_insert_session(EditorState &state) {
+    if (state.insert_session_active) {
+        return;
+    }
+    active_core(state).begin_compound_edit();
+    state.insert_session_active = true;
+}
+
+void end_insert_session(EditorState &state) {
+    if (!state.insert_session_active) {
+        return;
+    }
+    active_core(state).end_compound_edit();
+    state.insert_session_active = false;
+}
+
 void enter_normal_mode(EditorState &state) {
     EditorCore &core = active_core(state);
+    if (state.mode == Mode::Insert) {
+        end_insert_session(state);
+    }
     if (state.mode == Mode::Visual || state.mode == Mode::VisualLine) {
         core.clear_selection();
     }
@@ -709,6 +735,7 @@ void enter_normal_mode(EditorState &state) {
 
 void enter_insert_mode(EditorState &state) {
     active_core(state).clear_selection();
+    begin_insert_session(state);
     state.mode = Mode::Insert;
     state.pending_tokens.clear();
     state.pending_motion = PendingMotion::None;
@@ -856,8 +883,9 @@ const std::vector<DiagnosticEntryView> &sorted_diagnostics(const EditorState &st
 }
 
 bool should_render_diagnostics(const EditorState &state, std::size_t window_id) {
-    return state.mode != Mode::Insert ||
-        effective_show_diagnostics_in_insert_mode(state.config, window_core(state, window_id).file_path());
+    return state.diagnostics_visible && (
+        state.mode != Mode::Insert ||
+        effective_show_diagnostics_in_insert_mode(state.config, window_core(state, window_id).file_path()));
 }
 
 void normalize_selected_diagnostic(EditorState &state) {
@@ -3357,11 +3385,76 @@ std::size_t take_repeat_count(EditorState &state) {
     return repeat;
 }
 
+std::vector<std::pair<std::size_t, std::size_t>> capture_buffer_versions(const EditorState &state) {
+    std::vector<std::pair<std::size_t, std::size_t>> versions;
+    versions.reserve(state.session.buffers().size());
+    for (const EditorBuffer &buffer : state.session.buffers()) {
+        versions.push_back({buffer.id, buffer.core.document_version()});
+    }
+    return versions;
+}
+
+bool command_recording_can_start(const EditorState &state) {
+    return state.replay_depth == 0 && !state.command_recording;
+}
+
+void begin_command_recording(EditorState &state) {
+    state.command_recording = true;
+    state.command_recording_nonrepeatable = false;
+    state.command_inputs.clear();
+    state.command_buffer_versions = capture_buffer_versions(state);
+}
+
+void reset_command_recording(EditorState &state) {
+    state.command_recording = false;
+    state.command_recording_nonrepeatable = false;
+    state.command_inputs.clear();
+    state.command_buffer_versions.clear();
+}
+
+bool command_recording_complete(const EditorState &state) {
+    if (!state.command_recording) {
+        return false;
+    }
+    if (state.replay_depth > 0) {
+        return false;
+    }
+    if (state.group_depth != 0 || !state.pending_tokens.empty() || state.pending_motion != PendingMotion::None ||
+        state.pending_replace_count != 0) {
+        return false;
+    }
+    return state.mode != Mode::Insert && state.mode != Mode::Command && state.mode != Mode::Search;
+}
+
+bool command_recording_changed_buffer(const EditorState &state) {
+    std::vector<std::pair<std::size_t, std::size_t>> after = capture_buffer_versions(state);
+    return after != state.command_buffer_versions;
+}
+
+void finalize_command_recording(EditorState &state) {
+    if (!command_recording_complete(state)) {
+        return;
+    }
+    bool changed = command_recording_changed_buffer(state);
+    if (!state.command_recording_nonrepeatable && changed &&
+        !state.command_inputs.empty()) {
+        state.last_repeatable_command = state.command_inputs;
+    }
+    reset_command_recording(state);
+}
+
 void record_group_input(EditorState &state, const std::string &token, wint_t key, bool printable) {
     if (state.group_depth == 0) {
         return;
     }
     state.group_inputs.push_back({token, key, printable});
+}
+
+void record_command_input(EditorState &state, const std::string &token, wint_t key, bool printable) {
+    if (!state.command_recording || state.replay_depth > 0) {
+        return;
+    }
+    state.command_inputs.push_back({token, key, printable});
 }
 
 std::optional<wint_t> key_from_token(const std::string &token) {
@@ -3456,6 +3549,10 @@ bool action_defers_completion(EditorAction action) {
         action == EditorAction::TillForward || action == EditorAction::TillBackward;
 }
 
+bool action_handles_own_repeat(EditorAction action) {
+    return action == EditorAction::RepeatLastCommand;
+}
+
 void replay_group_inputs(EditorState &state, const std::vector<EditorState::RecordedInput> &inputs, std::size_t repeat) {
     static constexpr std::size_t kMaxReplayDepth = 16;
     if (repeat <= 1) {
@@ -3473,6 +3570,31 @@ void replay_group_inputs(EditorState &state, const std::vector<EditorState::Reco
         }
     }
     --state.replay_depth;
+}
+
+bool repeat_last_command(EditorState &state) {
+    static constexpr std::size_t kMaxReplayDepth = 16;
+    if (state.last_repeatable_command.empty()) {
+        set_status(state, "Nothing to repeat");
+        return false;
+    }
+    if (state.replay_depth >= kMaxReplayDepth) {
+        set_status(state, "Repeat nesting too deep");
+        return false;
+    }
+
+    std::size_t repeat = take_repeat_count(state);
+    active_core(state).begin_compound_edit();
+    ++state.replay_depth;
+    for (std::size_t iteration = 0; iteration < repeat; ++iteration) {
+        for (const EditorState::RecordedInput &input : state.last_repeatable_command) {
+            process_input_token(state, input.token, input.key, input.printable);
+        }
+    }
+    --state.replay_depth;
+    active_core(state).end_compound_edit();
+    set_status(state, "Repeated command");
+    return true;
 }
 
 void execute_action(EditorState &state, EditorAction action, wint_t key) {
@@ -3542,6 +3664,7 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             break;
         }
         case EditorAction::OpenLineBelow:
+            begin_insert_session(state);
             if (effective_autoindent(state.config, core.file_path())) {
                 core.open_line_below_with_autoindent();
             } else {
@@ -3551,6 +3674,7 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             set_status(state, mode_name(state.mode));
             break;
         case EditorAction::OpenLineAbove:
+            begin_insert_session(state);
             core.open_line_above();
             state.mode = Mode::Insert;
             set_status(state, mode_name(state.mode));
@@ -3563,10 +3687,16 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             state.pending_replace_count = take_repeat_count(state);
             set_status(state, "r");
             break;
+        case EditorAction::RepeatLastCommand:
+            state.command_recording_nonrepeatable = true;
+            repeat_last_command(state);
+            break;
         case EditorAction::Undo:
+            state.command_recording_nonrepeatable = true;
             set_status(state, core.undo() ? "Undid change" : "Nothing to undo");
             break;
         case EditorAction::Redo:
+            state.command_recording_nonrepeatable = true;
             set_status(state, core.redo() ? "Redid change" : "Nothing to redo");
             break;
         case EditorAction::PasteAfter:
@@ -3755,6 +3885,10 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
         case EditorAction::PreviousDiagnostic:
             navigate_diagnostic(state, false);
             break;
+        case EditorAction::ToggleDiagnosticsVisibility:
+            state.diagnostics_visible = !state.diagnostics_visible;
+            set_status(state, state.diagnostics_visible ? "Diagnostics shown" : "Diagnostics hidden");
+            break;
         case EditorAction::ToggleDiagnosticsPanel:
             show_diagnostics_summary(state);
             break;
@@ -3791,10 +3925,12 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             break;
         case EditorAction::ChangeSelection:
             {
+            begin_insert_session(state);
             if (core.delete_selection()) {
                 state.session.capture_active_clipboard();
                 enter_insert_mode(state);
             } else {
+                end_insert_session(state);
                 set_status(state, "No selection");
             }
             break;
@@ -3855,6 +3991,10 @@ void execute_dispatch(EditorState &state, const KeyDispatch &dispatch, wint_t ke
         return;
     }
     if (dispatch.action) {
+        if (action_handles_own_repeat(*dispatch.action)) {
+            execute_action(state, *dispatch.action, key);
+            return;
+        }
         std::size_t repeat = take_repeat_count(state);
         if (action_defers_completion(*dispatch.action)) {
             execute_action(state, *dispatch.action, key);
@@ -3900,24 +4040,32 @@ void handle_group_open(EditorState &state) {
 }
 
 void process_input_token(EditorState &state, const std::string &token, wint_t key, bool printable) {
+    if (command_recording_can_start(state) && mode_supports_command_language(state)) {
+        begin_command_recording(state);
+    }
     if (mode_supports_command_language(state) && state.pending_motion != PendingMotion::None && printable) {
         record_group_input(state, token, key, printable);
+        record_command_input(state, token, key, printable);
         execute_pending_motion(state, static_cast<char32_t>(key));
+        finalize_command_recording(state);
         return;
     }
     if (state.mode == Mode::Normal && state.pending_replace_count > 0 && token == "esc") {
         state.pending_replace_count = 0;
         set_status(state, mode_name(state.mode));
+        finalize_command_recording(state);
         return;
     }
     if (state.mode == Mode::Normal && state.pending_replace_count > 0 && printable) {
         record_group_input(state, token, key, printable);
+        record_command_input(state, token, key, printable);
         EditorCore &core = active_core(state);
         Position cursor = core.cursor();
         std::size_t line_length = core.line_length(cursor.row);
         if (cursor.column >= line_length) {
             state.pending_replace_count = 0;
             set_status(state, "No character to replace");
+            finalize_command_recording(state);
             return;
         }
         std::size_t replace_count = std::min(state.pending_replace_count, line_length - cursor.column);
@@ -3927,20 +4075,26 @@ void process_input_token(EditorState &state, const std::string &token, wint_t ke
         core.set_cursor(cursor);
         state.pending_replace_count = 0;
         set_status(state, "Replaced character");
+        finalize_command_recording(state);
         return;
     }
 
     if (mode_supports_command_language(state) && state.pending_motion == PendingMotion::None && state.pending_tokens.empty()) {
         if (token == "(") {
+            record_command_input(state, token, key, printable);
             handle_group_open(state);
+            finalize_command_recording(state);
             return;
         }
         if (token == ")" && state.group_depth > 0) {
+            record_command_input(state, token, key, printable);
             handle_group_close(state);
+            finalize_command_recording(state);
             return;
         }
         if (token_starts_repeat(state, token)) {
             record_group_input(state, token, key, printable);
+            record_command_input(state, token, key, printable);
             state.repeat_digits += token;
             set_status(state, state.repeat_digits);
             return;
@@ -3948,6 +4102,7 @@ void process_input_token(EditorState &state, const std::string &token, wint_t ke
     }
 
     record_group_input(state, token, key, printable);
+    record_command_input(state, token, key, printable);
 
     KeyDispatch dispatch = dispatch_key_sequence(state.keybindings, mode_key(state), state.pending_tokens, token, printable);
     if (dispatch.waiting_for_more) {
@@ -3955,6 +4110,7 @@ void process_input_token(EditorState &state, const std::string &token, wint_t ke
         return;
     }
     execute_dispatch(state, dispatch, key);
+    finalize_command_recording(state);
 }
 
 void handle_keymap_input(EditorState &state, wint_t key, bool is_special) {

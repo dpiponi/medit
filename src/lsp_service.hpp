@@ -48,6 +48,7 @@ class LspService : public EditorService {
     std::vector<EditorEvent> pending_editor_events_;
     std::map<std::string, EditorEvent> pending_document_changes_;
     std::map<std::string, std::chrono::steady_clock::time_point> pending_change_times_;
+    std::map<std::string, std::u32string> pending_document_texts_;
     std::map<std::string, std::u32string> document_texts_;
     std::set<std::string> open_documents_;
     std::map<int, ServiceRequest> pending_requests_;

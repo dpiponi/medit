@@ -293,6 +293,7 @@ void LspService::stop() {
     document_texts_.clear();
     pending_document_changes_.clear();
     pending_change_times_.clear();
+    pending_document_texts_.clear();
     pending_requests_.clear();
 }
 
@@ -313,6 +314,7 @@ void LspService::handle_editor_event(const EditorEvent &event) {
             flush_pending_document_changes(true, event.document_uri);
             pending_document_changes_.erase(event.document_uri);
             pending_change_times_.erase(event.document_uri);
+            pending_document_texts_.erase(event.document_uri);
             send_editor_event(event);
             return;
         case EditorEventType::DocumentChanged:
@@ -321,7 +323,30 @@ void LspService::handle_editor_event(const EditorEvent &event) {
                 pending_editor_events_.push_back(event);
                 return;
             }
-            pending_document_changes_[event.document_uri] = event;
+            {
+                std::u32string latest_text;
+                auto pending_text = pending_document_texts_.find(event.document_uri);
+                if (pending_text != pending_document_texts_.end()) {
+                    latest_text = pending_text->second;
+                } else {
+                    auto existing_text = document_texts_.find(event.document_uri);
+                    if (existing_text != document_texts_.end()) {
+                        latest_text = existing_text->second;
+                    }
+                }
+
+                if (event.range) {
+                    apply_incremental_text_change(latest_text, *event.range, event.text);
+                } else {
+                    latest_text = event.text;
+                }
+
+                pending_document_texts_[event.document_uri] = latest_text;
+                EditorEvent coalesced = event;
+                coalesced.range.reset();
+                coalesced.text = latest_text;
+                pending_document_changes_[event.document_uri] = std::move(coalesced);
+            }
             pending_change_times_[event.document_uri] = std::chrono::steady_clock::now();
             return;
         case EditorEventType::DocumentSaved:
@@ -418,6 +443,7 @@ void LspService::flush_pending_document_changes(bool force, const std::optional<
         send_did_change(found->second);
         pending_document_changes_.erase(found);
         pending_change_times_.erase(uri);
+        pending_document_texts_.erase(uri);
     }
 }
 

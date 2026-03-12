@@ -266,6 +266,7 @@ On terminals with extended color support, `medit` uses those palette entries dir
 - `n` jump to the next search match
 - `b` jump to the previous search match
 - `]d`, `[d` jump to the next and previous diagnostic
+- `Ctrl-G` toggle diagnostic display on and off
 - Inline diagnostic annotations render below relevant code and are skipped by normal cursoring
 - `gx` show a diagnostics summary
 - `PageUp`, `PageDown` move by a screen
@@ -288,6 +289,7 @@ On terminals with extended color support, `medit` uses those palette entries dir
 - In insert mode, `Shift-Tab` in leading indentation outdents to the previous `softtabstop` column
 - `x` delete character under cursor
 - `r<char>` replace the current character with `<char>`; counts work, for example `3ra`
+- `.` repeat the last change command; counts work, for example `3.`
 - `D` delete from the cursor to the end of the line through the configurable key-sequence alias system
 - `p` paste after the cursor
 - `P` paste before the cursor

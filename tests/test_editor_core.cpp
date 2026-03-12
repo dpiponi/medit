@@ -826,6 +826,11 @@ void test_keybinding_dispatch() {
         replace_char.action.has_value() && *replace_char.action == EditorAction::ReplaceChar,
         "r should map to replace char");
 
+    KeyDispatch repeat = dispatch_key_sequence(keybindings, "normal", pending, ".", false);
+    expect(
+        repeat.action.has_value() && *repeat.action == EditorAction::RepeatLastCommand,
+        ". should map to repeat last command");
+
     KeyDispatch redo = dispatch_key_sequence(keybindings, "normal", pending, "ctrl-r", false);
     expect(
         redo.action.has_value() && *redo.action == EditorAction::Redo,
@@ -872,6 +877,11 @@ void test_keybinding_dispatch() {
     expect(
         diag_prev_second.action.has_value() && *diag_prev_second.action == EditorAction::PreviousDiagnostic,
         "[d should map to previous diagnostic");
+
+    KeyDispatch toggle_diags = dispatch_key_sequence(keybindings, "normal", pending, "ctrl-g", false);
+    expect(
+        toggle_diags.action.has_value() && *toggle_diags.action == EditorAction::ToggleDiagnosticsVisibility,
+        "ctrl-g should toggle diagnostics visibility");
 
     KeyDispatch paste_after = dispatch_key_sequence(keybindings, "normal", pending, "p", false);
     expect(
@@ -1288,11 +1298,13 @@ void test_lsp_service_roundtrip() {
 
     core.move_line_end();
     core.insert_codepoint(U'x');
+    core.insert_codepoint(U'y');
+    core.insert_codepoint(U'z');
     drive_runtime(30);
     expect(core.diagnostics().size() == 1, "lsp roundtrip should update diagnostics after change");
     expect(
-        u32_to_utf8(core.diagnostics()[0].message) == "incremental:0:3:x",
-        "lsp changed diagnostic message should reflect incremental change");
+        u32_to_utf8(core.diagnostics()[0].message) == "full:abcxyz",
+        "lsp changed diagnostic message should reflect coalesced document text");
 
     ServiceRequest request;
     request.type = ServiceRequestType::GoToDefinition;

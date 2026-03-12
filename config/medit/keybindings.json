@@ -24,6 +24,7 @@
     "O": "open_line_above",
     "x": "delete_char",
     "r": "replace_char",
+    ".": "repeat_last_command",
     "D": ["v", "$", "d"],
     "u": "undo",
     "ctrl-r": "redo",
@@ -43,6 +44,7 @@
     "g i": "jump_forward",
     "] d": "next_diagnostic",
     "[ d": "previous_diagnostic",
+    "ctrl-g": "toggle_diagnostics_visibility",
     "g x": "toggle_diagnostics_panel",
     "d d": "delete_line",
     "ctrl-d": "half_page_down",
@@ -95,6 +97,7 @@
     "g i": "jump_forward",
     "] d": "next_diagnostic",
     "[ d": "previous_diagnostic",
+    "ctrl-g": "toggle_diagnostics_visibility",
     "|": "filter_selection",
     "S": "sed_selection",
     "c": "change_selection",
@@ -126,6 +129,7 @@
     "right": "move_right",
     "up": "move_up",
     "down": "move_down",
+    "ctrl-g": "toggle_diagnostics_visibility",
     "printable": "self_insert"
   },
   "command": {
