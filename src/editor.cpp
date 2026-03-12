@@ -2761,6 +2761,12 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
         case EditorAction::InsertNewline:
             core.insert_newline();
             break;
+        case EditorAction::InsertSoftTab:
+            core.insert_soft_tab(state.config.shiftwidth);
+            break;
+        case EditorAction::InsertOutdent:
+            core.outdent_before_cursor(state.config.shiftwidth);
+            break;
         case EditorAction::Backspace:
             core.backspace_character();
             break;

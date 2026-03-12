@@ -104,6 +104,8 @@
   "insert": {
     "esc": "enter_normal_mode",
     "enter": "insert_newline",
+    "tab": "insert_soft_tab",
+    "shift-tab": "insert_outdent",
     "backspace": "backspace",
     "left": "move_left",
     "right": "move_right",

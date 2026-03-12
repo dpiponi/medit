@@ -47,6 +47,8 @@ enum class EditorAction {
     Suspend,
     EnterNormalMode,
     InsertNewline,
+    InsertSoftTab,
+    InsertOutdent,
     Backspace,
     CommandExecute,
     CommandBackspace,

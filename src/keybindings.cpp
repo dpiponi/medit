@@ -120,6 +120,8 @@ constexpr const char *kEmbeddedDefaultKeybindings = R"json(
   "insert": {
     "esc": "enter_normal_mode",
     "enter": "insert_newline",
+    "tab": "insert_soft_tab",
+    "shift-tab": "insert_outdent",
     "backspace": "backspace",
     "left": "move_left",
     "right": "move_right",
@@ -198,6 +200,8 @@ std::optional<EditorAction> action_from_name(const std::string &name) {
         {"suspend", EditorAction::Suspend},
         {"enter_normal_mode", EditorAction::EnterNormalMode},
         {"insert_newline", EditorAction::InsertNewline},
+        {"insert_soft_tab", EditorAction::InsertSoftTab},
+        {"insert_outdent", EditorAction::InsertOutdent},
         {"backspace", EditorAction::Backspace},
         {"command_execute", EditorAction::CommandExecute},
         {"command_backspace", EditorAction::CommandBackspace},

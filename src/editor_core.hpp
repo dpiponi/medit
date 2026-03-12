@@ -223,8 +223,10 @@ class EditorCore {
     std::optional<Range> a_word_range() const;
 
     void insert_codepoint(char32_t codepoint);
+    bool insert_soft_tab(std::size_t width);
     void insert_newline();
     void backspace_character();
+    bool outdent_before_cursor(std::size_t width);
     void delete_character_under_cursor();
     void delete_current_line();
     void open_line_below();

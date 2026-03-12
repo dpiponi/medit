@@ -1552,8 +1552,50 @@ std::u32string EditorCore::raw_delete_range(Range range) {
     return deleted_text;
 }
 
+bool leading_whitespace_only(const std::u32string &line, std::size_t column) {
+    for (std::size_t index = 0; index < column; ++index) {
+        if (line[index] != U' ' && line[index] != U'\t') {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::size_t indentation_columns(const std::u32string &line, std::size_t column, std::size_t width) {
+    std::size_t columns = 0;
+    for (std::size_t index = 0; index < column; ++index) {
+        if (line[index] == U'\t') {
+            std::size_t remainder = columns % width;
+            columns += remainder == 0 ? width : width - remainder;
+        } else {
+            ++columns;
+        }
+    }
+    return columns;
+}
+
 void EditorCore::insert_codepoint(char32_t codepoint) {
     apply_command(std::make_unique<InsertCodepointCommand>(cursor_, codepoint));
+}
+
+bool EditorCore::insert_soft_tab(std::size_t width) {
+    if (width == 0) {
+        return false;
+    }
+    Position insert_at = cursor_;
+    const std::u32string &line = lines_[cursor_.row];
+    if (!leading_whitespace_only(line, cursor_.column)) {
+        insert_codepoint(U'\t');
+        return true;
+    }
+    std::size_t columns = indentation_columns(line, cursor_.column, width);
+    std::size_t remainder = columns % width;
+    std::size_t spaces = remainder == 0 ? width : width - remainder;
+    if (!insert_text(insert_at, std::u32string(spaces, U' '))) {
+        return false;
+    }
+    set_cursor({insert_at.row, insert_at.column + spaces});
+    return true;
 }
 
 void EditorCore::insert_newline() {
@@ -1569,6 +1611,30 @@ void EditorCore::backspace_character() {
     if (cursor_.row > 0) {
         apply_command(std::make_unique<BackspaceCommand>(cursor_, lines_[cursor_.row]));
     }
+}
+
+bool EditorCore::outdent_before_cursor(std::size_t width) {
+    if (width == 0 || cursor_.column == 0) {
+        return false;
+    }
+    const std::u32string &line = lines_[cursor_.row];
+    if (!leading_whitespace_only(line, cursor_.column)) {
+        return false;
+    }
+
+    std::size_t current_columns = indentation_columns(line, cursor_.column, width);
+    if (current_columns == 0) {
+        return false;
+    }
+    std::size_t target_columns = ((current_columns - 1) / width) * width;
+    std::size_t target_index = 0;
+    while (target_index < cursor_.column && indentation_columns(line, target_index + 1, width) <= target_columns) {
+        ++target_index;
+    }
+    if (target_index >= cursor_.column) {
+        return false;
+    }
+    return delete_range({{cursor_.row, target_index}, cursor_});
 }
 
 void EditorCore::delete_character_under_cursor() {

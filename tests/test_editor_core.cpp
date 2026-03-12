@@ -96,6 +96,20 @@ void test_newline_backspace_and_join() {
     expect_text(core, "ab", "backspace joined lines");
 }
 
+void test_insert_mode_soft_tab_and_shift_tab() {
+    EditorCore core;
+    expect(core.insert_soft_tab(4), "soft tab at line start should succeed");
+    expect_text(core, "    ", "soft tab inserts spaces to next shiftwidth stop");
+    expect(core.insert_soft_tab(4), "second soft tab should succeed");
+    expect_text(core, "        ", "soft tab advances to the next shiftwidth stop");
+    expect(core.outdent_before_cursor(4), "shift-tab style outdent should succeed");
+    expect_text(core, "    ", "shift-tab outdents to previous shiftwidth stop");
+    expect(core.insert_text({0, 4}, utf8_to_u32("x")), "insert non-whitespace text");
+    core.set_cursor({0, 5});
+    expect(core.insert_soft_tab(4), "soft tab outside indentation should insert a tab");
+    expect_text(core, "    x\t", "soft tab outside leading whitespace inserts a tab");
+}
+
 void test_visual_range_semantics_and_delete() {
     EditorCore core;
     for (char ch : std::string("abcd")) {
@@ -662,6 +676,14 @@ void test_keybinding_dispatch() {
 
     KeyDispatch printable = dispatch_key_sequence(keybindings, "insert", pending, "x", true);
     expect(printable.action.has_value() && *printable.action == EditorAction::SelfInsert, "insert printable binding");
+
+    KeyDispatch insert_tab = dispatch_key_sequence(keybindings, "insert", pending, "tab", false);
+    expect(insert_tab.action.has_value() && *insert_tab.action == EditorAction::InsertSoftTab, "insert tab binding");
+
+    KeyDispatch insert_shift_tab = dispatch_key_sequence(keybindings, "insert", pending, "shift-tab", false);
+    expect(
+        insert_shift_tab.action.has_value() && *insert_shift_tab.action == EditorAction::InsertOutdent,
+        "insert shift-tab binding");
 
     KeyDispatch special = dispatch_key_sequence(keybindings, "normal", pending, "pagedown", false);
     expect(special.action.has_value() && *special.action == EditorAction::PageDown, "pagedown binding");
@@ -1463,6 +1485,7 @@ int main() {
     try {
         test_insert_unicode_and_undo();
         test_newline_backspace_and_join();
+        test_insert_mode_soft_tab_and_shift_tab();
         test_visual_range_semantics_and_delete();
         test_linewise_selection_range_and_delete();
         test_linewise_delete_and_paste();
