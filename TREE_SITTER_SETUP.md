@@ -30,10 +30,12 @@ make bootstrap-tree-sitter
 That will:
 
 - fetch pinned tree-sitter sources into `build/tree-sitter/sources/`
-- build a local runtime into `.config/medit/libtree-sitter.so` or `.dylib`
-- build bundled grammar shared libraries into `.config/medit/grammars/`
-- copy bundled highlight queries into `.config/medit/queries/`
-- regenerate `.config/medit/syntax.json`
+- build a local runtime into your live runtime config tree at `./.config/medit/libtree-sitter.so` or `.dylib`
+- build bundled grammar shared libraries into `./.config/medit/grammars/`
+- copy bundled highlight queries into `./.config/medit/queries/`
+- regenerate `./.config/medit/syntax.json`
+
+The checked-in `config/` tree remains an example/template only. `medit` reads `./.config/` or `~/.config/`, not `config/`.
 
 To build only one bundled language:
 

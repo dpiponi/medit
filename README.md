@@ -6,7 +6,8 @@
 
 - Application sources live in `src/`
 - Tests live in `tests/`
-- Local project config lives in `.config/`
+- Checked-in example config lives in `config/`
+- Personal runtime config lives in `./.config/` or `~/.config/`
 
 ## Features
 
@@ -31,7 +32,7 @@ To provision the pinned local tree-sitter runtime and bundled grammars for a fre
 make bootstrap-tree-sitter
 ```
 
-That builds local assets under `.config/medit/` and regenerates `.config/medit/syntax.json`. To build only one bundled language, use a target like:
+That builds local runtime assets under your live runtime config tree at `./.config/medit/` and regenerates `./.config/medit/syntax.json`. The checked-in `config/` tree remains just an example/template. To build only one bundled language, use a target like:
 
 ```sh
 make bootstrap-tree-sitter-python
@@ -60,12 +61,14 @@ Starting `./medit` with no file arguments opens a project file picker first. `me
 
 ## Config
 
+The repo ships an example config tree in `config/`. Copy that to `./.config/` or `~/.config/` before editing it for your own setup. `medit` does not read `config/` directly.
+
 `medit` looks for a runtime config file using this lookup order:
 
 1. `./.config/meditrc`
 2. `~/.config/meditrc`
 
-If `meditrc` exists, it selects the keybindings JSON, colors JSON, optional LSP rules JSON, and optional syntax rules JSON to load from `.config/medit/` unless you give absolute paths.
+If `meditrc` exists, it selects the keybindings JSON, colors JSON, optional LSP rules JSON, and optional syntax rules JSON to load from `./.config/medit/` or `~/.config/medit/` unless you give absolute paths.
 
 LSP can be configured per file extension through an LSP rules file:
 
@@ -81,7 +84,7 @@ shiftwidth = 4
 autoindent = true
 ```
 
-Example [lsp.json](/home/dan/de/.config/medit/lsp.json):
+Example [lsp.json](/home/dan/de/config/medit/lsp.json):
 
 ```json
 {
@@ -150,7 +153,7 @@ For reproducible fresh-checkout setup, the repo now ships a pinned tree-sitter m
 - query path
 - optional scanner path
 
-Then run `make bootstrap-tree-sitter` to rebuild local grammar libraries, queries, and `syntax.json`.
+Then run `make bootstrap-tree-sitter` to rebuild local grammar libraries, queries, and your live `./.config/medit/syntax.json`.
 
 `right_justify_diagnostics = true` makes inline diagnostic annotations render against the right edge of the text area instead of starting from the left.
 
@@ -188,7 +191,7 @@ Syntax language entries in `syntax.json` can also override editor behavior per f
 
 Those per-language editor settings override the global `meditrc` values for matching buffers.
 
-`log = debug.log` enables append-only debug logging to `.config/medit/debug.log` relative to the loaded `meditrc` unless you use an absolute path. This is useful for debugging picker, file-open, and config reload issues without copying transient status messages.
+`log = debug.log` enables append-only debug logging to `./.config/medit/debug.log` or `~/.config/medit/debug.log` relative to the loaded `meditrc` unless you use an absolute path. This is useful for debugging picker, file-open, and config reload issues without copying transient status messages.
 
 Clipboard settings:
 
@@ -199,18 +202,27 @@ Clipboard settings:
 - `clipboard_file = /path/to/clipboard.json` overrides the shared clipboard file path
 - `clipboard_osc52 = true|false` enables or disables OSC52 clipboard writes in `auto` mode
 
-The checked-in local config is:
+The checked-in example config is:
 
-- [`.config/meditrc`](/home/dan/de/.config/meditrc)
-- [`.config/medit/keybindings.json`](/home/dan/de/.config/medit/keybindings.json)
-- [`.config/medit/colors.json`](/home/dan/de/.config/medit/colors.json)
-- [`.config/medit/lsp.json`](/home/dan/de/.config/medit/lsp.json)
-- [`.config/medit/neon.json`](/home/dan/de/.config/medit/neon.json)
-- [`.config/medit/forest.json`](/home/dan/de/.config/medit/forest.json)
+- [`config/meditrc`](/home/dan/de/config/meditrc)
+- [`config/medit/keybindings.json`](/home/dan/de/config/medit/keybindings.json)
+- [`config/medit/colors.json`](/home/dan/de/config/medit/colors.json)
+- [`config/medit/lsp.json`](/home/dan/de/config/medit/lsp.json)
+- [`config/medit/syntax.json`](/home/dan/de/config/medit/syntax.json)
+- [`config/medit/neon.json`](/home/dan/de/config/medit/neon.json)
+- [`config/medit/forest.json`](/home/dan/de/config/medit/forest.json)
 
 If `meditrc` is absent, `medit` falls back to default file names in `./.config/medit/` and then `~/.config/medit/`. If those files are also absent, it falls back to embedded defaults.
 
-To switch themes, update `colors = ...` in [`.config/meditrc`](/home/dan/de/.config/meditrc), for example:
+A typical first-time setup is:
+
+```sh
+cp -R config .config
+```
+
+Then edit `./.config/meditrc` and the JSON files under `./.config/medit/` for your own environment.
+
+To switch themes, update `colors = ...` in your `meditrc`, for example:
 
 ```ini
 colors = neon.json
@@ -245,6 +257,13 @@ colors = forest.json
 - `gx` show a diagnostics summary
 - `PageUp`, `PageDown` move by a screen
 - `Ctrl-U`, `Ctrl-D` move by a half screen
+- `Ctrl-W s` split the current window horizontally
+- `Ctrl-W v` split the current window vertically
+- `Ctrl-W c` close the current window
+- `Ctrl-W o` close all other windows
+- `Ctrl-W h`, `Ctrl-W j`, `Ctrl-W k`, `Ctrl-W l` move focus between windows
+- `Ctrl-W` plus the arrow keys also moves focus between windows
+- Split windows are independent views onto buffers, so editing in one view immediately updates every other window showing that buffer
 - `Ctrl-Z` suspend to the shell and resume with `fg` on platforms with job control support
 - Left mouse click moves the cursor to the clicked buffer position
 - `gg` jump to the top of the file

@@ -1,0 +1,97 @@
+{
+  "languages": [
+    {
+      "name": "cpp",
+      "patterns": ["*.c", "*.cc", "*.cpp", "*.cxx", "*.h", "*.hh", "*.hpp", "*.hxx"],
+      "grammar_path": "grammars/libtree-sitter-cpp.so",
+      "symbol_name": "tree_sitter_cpp",
+      "highlights_path": "queries/cpp/highlights.scm",
+      "editor": {
+        "shiftwidth": 4,
+        "tabstop": 8,
+        "softtabstop": 4,
+        "expandtab": true,
+        "autoindent": true,
+        "show_diagnostics_in_insert_mode": false
+      }
+    },
+    {
+      "name": "python",
+      "patterns": ["*.py", "*.pyi", "*.pyw"],
+      "grammar_path": "grammars/libtree-sitter-python.so",
+      "symbol_name": "tree_sitter_python",
+      "highlights_path": "queries/python/highlights.scm",
+      "editor": {
+        "shiftwidth": 4,
+        "tabstop": 8,
+        "softtabstop": 4,
+        "expandtab": true,
+        "autoindent": true,
+        "show_diagnostics_in_insert_mode": false
+      }
+    },
+    {
+      "name": "json",
+      "patterns": ["*.json", "*.jsonc"],
+      "grammar_path": "grammars/libtree-sitter-json.so",
+      "symbol_name": "tree_sitter_json",
+      "highlights_path": "queries/json/highlights.scm"
+    },
+    {
+      "name": "markdown",
+      "patterns": ["*.md", "*.markdown"],
+      "grammar_path": "grammars/libtree-sitter-markdown.so",
+      "symbol_name": "tree_sitter_markdown",
+      "highlights_path": "queries/markdown/highlights.scm"
+    },
+    {
+      "name": "make",
+      "patterns": ["Makefile", "makefile", "GNUmakefile", "*.mk", "*.mak", "*.make"],
+      "grammar_path": "grammars/libtree-sitter-make.so",
+      "symbol_name": "tree_sitter_make",
+      "highlights_path": "queries/make/highlights.scm",
+      "editor": {
+        "shiftwidth": 8,
+        "tabstop": 8,
+        "softtabstop": 8,
+        "expandtab": false,
+        "autoindent": true
+      }
+    },
+    {
+      "name": "bash",
+      "patterns": ["*.sh", "*.bash", ".bashrc", ".bash_profile", ".profile"],
+      "grammar_path": "grammars/libtree-sitter-bash.so",
+      "symbol_name": "tree_sitter_bash",
+      "highlights_path": "queries/bash/highlights.scm"
+    },
+    {
+      "name": "zsh",
+      "patterns": ["*.zsh", ".zshrc", ".zprofile", ".zshenv"],
+      "grammar_path": "grammars/libtree-sitter-zsh.so",
+      "symbol_name": "tree_sitter_zsh",
+      "highlights_path": "queries/zsh/highlights.scm"
+    },
+    {
+      "name": "haskell",
+      "patterns": ["*.hs", "*.lhs"],
+      "grammar_path": "grammars/libtree-sitter-haskell.so",
+      "symbol_name": "tree_sitter_haskell",
+      "highlights_path": "queries/haskell/highlights.scm"
+    },
+    {
+      "name": "toml",
+      "patterns": ["*.toml"],
+      "grammar_path": "grammars/libtree-sitter-toml.so",
+      "symbol_name": "tree_sitter_toml",
+      "highlights_path": "queries/toml/highlights.scm"
+    },
+    {
+      "name": "tmux",
+      "patterns": ["*.tmux", ".tmux.conf"],
+      "grammar_path": "grammars/libtree-sitter-tmux.so",
+      "symbol_name": "tree_sitter_tmux",
+      "highlights_path": "queries/tmux/highlights.scm"
+    }
+  ]
+}

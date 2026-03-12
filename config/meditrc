@@ -1,0 +1,12 @@
+# Copy this file to ./.config/meditrc or ~/.config/meditrc.
+# Paths are resolved relative to .config/medit/ unless absolute.
+keybindings = keybindings.json
+colors = forest.json
+lsp = lsp.json
+syntax_config = syntax.json
+
+right_justify_diagnostics = true
+
+shiftwidth = 4
+autoindent = true
+show_diagnostics_in_insert_mode = false
