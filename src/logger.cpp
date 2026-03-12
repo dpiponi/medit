@@ -1,6 +1,7 @@
 #include "logger.hpp"
 
 #include <chrono>
+#include <format>
 #include <fstream>
 #include <iomanip>
 #include <mutex>
@@ -39,7 +40,7 @@ void configure_logger(const std::optional<std::filesystem::path> &path) {
     std::filesystem::create_directories(logger_path->parent_path(), error);
     std::ofstream output(*logger_path, std::ios::app);
     if (output) {
-        output << "[" << timestamp_now() << "] logger configured: " << logger_path->string() << "\n";
+        output << std::format("[{}] logger configured: {}\n", timestamp_now(), logger_path->string());
     }
 }
 
@@ -55,5 +56,5 @@ void log_debug(const std::string &message) {
     if (!output) {
         return;
     }
-    output << "[" << timestamp_now() << "] " << message << "\n";
+    output << std::format("[{}] {}\n", timestamp_now(), message);
 }

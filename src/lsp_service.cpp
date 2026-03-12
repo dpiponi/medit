@@ -402,8 +402,6 @@ void LspService::stop() {
         return;
     }
     stopping_ = true;
-    send_shutdown();
-    send_exit();
     shutdown_process();
     running_ = false;
     initialized_ = false;
@@ -696,6 +694,8 @@ bool LspService::spawn_process() {
     stdin_fd_ = stdin_pipe[1];
     stdout_fd_ = stdout_pipe[0];
     stderr_fd_ = stderr_pipe[0];
+    fcntl(stdout_fd_, F_SETFL, fcntl(stdout_fd_, F_GETFL, 0) | O_NONBLOCK);
+    fcntl(stderr_fd_, F_SETFL, fcntl(stderr_fd_, F_GETFL, 0) | O_NONBLOCK);
     return true;
 }
 
@@ -706,22 +706,30 @@ void LspService::shutdown_process() {
         stdin_fd_ = -1;
     }
     if (pid > 0) {
-        bool exited = false;
-        for (int attempt = 0; attempt < 10; ++attempt) {
-            int status = 0;
-            pid_t result = waitpid(pid, &status, WNOHANG);
-            if (result == pid) {
-                exited = true;
-                break;
+        auto wait_for_exit = [pid](int attempts, std::chrono::milliseconds delay) {
+            for (int attempt = 0; attempt < attempts; ++attempt) {
+                int status = 0;
+                pid_t result = waitpid(pid, &status, WNOHANG);
+                if (result == pid || result < 0) {
+                    return true;
+                }
+                std::this_thread::sleep_for(delay);
             }
-            if (result < 0) {
-                exited = true;
-                break;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
+            return false;
+        };
+
+        bool exited = wait_for_exit(2, std::chrono::milliseconds(10));
         if (!exited) {
             kill(pid, SIGTERM);
+            exited = wait_for_exit(10, std::chrono::milliseconds(10));
+        }
+        if (!exited) {
+            kill(pid, SIGKILL);
+            exited = wait_for_exit(10, std::chrono::milliseconds(10));
+        }
+        if (!exited) {
+            int status = 0;
+            waitpid(pid, &status, 0);
         }
     }
     if (stdout_fd_ >= 0) {
@@ -739,7 +747,6 @@ void LspService::shutdown_process() {
         stderr_thread_.join();
     }
     if (pid > 0) {
-        waitpid(pid, nullptr, 0);
         child_pid_ = -1;
     }
 }
@@ -748,6 +755,13 @@ void LspService::reader_loop() {
     char chunk[4096];
     while (stdout_fd_ >= 0) {
         ssize_t read_count = read(stdout_fd_, chunk, sizeof(chunk));
+        if (read_count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            if (stopping_) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
         if (read_count <= 0) {
             break;
         }
@@ -765,6 +779,13 @@ void LspService::stderr_loop() {
     char chunk[4096];
     while (stderr_fd_ >= 0) {
         ssize_t read_count = read(stderr_fd_, chunk, sizeof(chunk));
+        if (read_count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            if (stopping_) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
         if (read_count <= 0) {
             break;
         }
