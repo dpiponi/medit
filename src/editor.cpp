@@ -2759,7 +2759,11 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             enter_normal_mode(state);
             break;
         case EditorAction::InsertNewline:
-            core.insert_newline();
+            if (state.config.autoindent) {
+                core.insert_newline_with_autoindent();
+            } else {
+                core.insert_newline();
+            }
             break;
         case EditorAction::InsertSoftTab:
             core.insert_soft_tab(state.config.shiftwidth);

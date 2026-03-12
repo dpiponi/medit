@@ -225,6 +225,7 @@ class EditorCore {
     void insert_codepoint(char32_t codepoint);
     bool insert_soft_tab(std::size_t width);
     void insert_newline();
+    void insert_newline_with_autoindent();
     void backspace_character();
     bool outdent_before_cursor(std::size_t width);
     void delete_character_under_cursor();

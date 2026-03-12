@@ -1574,6 +1574,14 @@ std::size_t indentation_columns(const std::u32string &line, std::size_t column, 
     return columns;
 }
 
+std::u32string leading_indentation_prefix(const std::u32string &line) {
+    std::size_t prefix_length = 0;
+    while (prefix_length < line.size() && (line[prefix_length] == U' ' || line[prefix_length] == U'\t')) {
+        ++prefix_length;
+    }
+    return line.substr(0, prefix_length);
+}
+
 void EditorCore::insert_codepoint(char32_t codepoint) {
     apply_command(std::make_unique<InsertCodepointCommand>(cursor_, codepoint));
 }
@@ -1600,6 +1608,19 @@ bool EditorCore::insert_soft_tab(std::size_t width) {
 
 void EditorCore::insert_newline() {
     apply_command(std::make_unique<SplitLineCommand>(cursor_));
+}
+
+void EditorCore::insert_newline_with_autoindent() {
+    begin_compound_edit();
+    insert_newline();
+    if (cursor_.row > 0) {
+        Position insert_at = cursor_;
+        std::u32string prefix = leading_indentation_prefix(lines_[cursor_.row - 1]);
+        if (!prefix.empty() && insert_text(insert_at, prefix)) {
+            set_cursor({insert_at.row, insert_at.column + prefix.size()});
+        }
+    }
+    end_compound_edit();
 }
 
 void EditorCore::backspace_character() {

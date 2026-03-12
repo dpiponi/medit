@@ -44,6 +44,7 @@ struct EditorConfig {
     std::optional<std::string> syntax_name;
     bool right_justify_diagnostics = false;
     std::size_t shiftwidth = 4;
+    bool autoindent = false;
 };
 
 EditorConfig load_editor_config();

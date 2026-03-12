@@ -110,6 +110,16 @@ void test_insert_mode_soft_tab_and_shift_tab() {
     expect_text(core, "    x\t", "soft tab outside leading whitespace inserts a tab");
 }
 
+void test_autoindent_newline() {
+    EditorCore core;
+    expect(core.insert_text({0, 0}, utf8_to_u32("    alpha")), "seed autoindent buffer");
+    core.set_cursor({0, 9});
+    core.insert_newline_with_autoindent();
+    expect_text(core, "    alpha\n    ", "autoindent copies leading indentation to the new line");
+    expect(core.undo(), "undo autoindent newline");
+    expect_text(core, "    alpha", "undo autoindent newline restores the original line");
+}
+
 void test_visual_range_semantics_and_delete() {
     EditorCore core;
     for (char ch : std::string("abcd")) {
@@ -1486,6 +1496,7 @@ int main() {
         test_insert_unicode_and_undo();
         test_newline_backspace_and_join();
         test_insert_mode_soft_tab_and_shift_tab();
+        test_autoindent_newline();
         test_visual_range_semantics_and_delete();
         test_linewise_selection_range_and_delete();
         test_linewise_delete_and_paste();

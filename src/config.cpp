@@ -366,6 +366,8 @@ EditorConfig load_editor_config_from_path(const std::filesystem::path &path) {
             config.clipboard.osc52 = parse_bool_value(value);
         } else if (key == "shiftwidth") {
             config.shiftwidth = parse_positive_size_value(value, key);
+        } else if (key == "autoindent") {
+            config.autoindent = parse_bool_value(value);
         } else {
             throw std::runtime_error("unknown config key: " + key);
         }

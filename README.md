@@ -78,6 +78,7 @@ right_justify_diagnostics = true
 clipboard = auto
 clipboard_osc52 = true
 shiftwidth = 4
+autoindent = true
 ```
 
 Example [lsp.json](/home/dan/de/.config/medit/lsp.json):
@@ -154,6 +155,8 @@ Then run `make bootstrap-tree-sitter` to rebuild local grammar libraries, querie
 `right_justify_diagnostics = true` makes inline diagnostic annotations render against the right edge of the text area instead of starting from the left.
 
 `shiftwidth = 4` sets how many spaces `>` and `<` add or remove when indenting and outdenting lines.
+
+`autoindent = true` makes Enter copy the leading whitespace from the line above onto the new line.
 
 `log = debug.log` enables append-only debug logging to `.config/medit/debug.log` relative to the loaded `meditrc` unless you use an absolute path. This is useful for debugging picker, file-open, and config reload issues without copying transient status messages.
 
