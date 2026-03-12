@@ -3192,22 +3192,10 @@ void open_startup_files(EditorState &state, int argc, char **argv) {
         return;
     }
 
-    std::size_t first_buffer_id = state.session.active_buffer_id();
-    bool opened_any = false;
     std::string last_failure;
     for (int index = 1; index < argc; ++index) {
         std::string path = argv[index];
-        if (!opened_any) {
-            if (active_core(state).load_file(path)) {
-                opened_any = true;
-                set_status(state, "Opened " + path);
-            } else {
-                last_failure = "Could not open file: " + path;
-            }
-            continue;
-        }
-
-        EditorBuffer *buffer = state.session.open_file(path, false);
+        EditorBuffer *buffer = state.session.open_file(path, index == 1);
         if (buffer) {
             state.buffer_ui.try_emplace(buffer->id);
             set_status(state, "Opened " + path);
@@ -3216,7 +3204,6 @@ void open_startup_files(EditorState &state, int argc, char **argv) {
         }
     }
 
-    state.session.switch_to_id(first_buffer_id);
     active_buffer_ui(state);
     if (!last_failure.empty()) {
         set_status(state, last_failure);

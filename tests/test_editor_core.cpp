@@ -1499,6 +1499,22 @@ void test_editor_session_open_multiple_files() {
     std::filesystem::remove_all(temp_dir);
 }
 
+void test_editor_session_open_missing_startup_file() {
+    std::filesystem::path temp_dir = std::filesystem::temp_directory_path() / "medit_startup_missing_file";
+    std::filesystem::remove_all(temp_dir);
+    std::filesystem::create_directories(temp_dir);
+
+    std::filesystem::path path = temp_dir / "missing.txt";
+    EditorSession session;
+    EditorBuffer *buffer = session.open_file(path.string(), true);
+    expect(buffer != nullptr, "missing startup file should open as a named empty buffer");
+    expect(buffer->core.file_path().has_value(), "missing startup file should keep its path");
+    expect(*buffer->core.file_path() == path.string(), "missing startup file should keep requested file path");
+    expect_text(buffer->core, "", "missing startup file buffer should start empty");
+
+    std::filesystem::remove_all(temp_dir);
+}
+
 }  // namespace
 
 int main() {
@@ -1551,6 +1567,7 @@ int main() {
         test_editor_session_open_and_close_rules();
         test_editor_session_open_missing_file_creates_named_buffer();
         test_editor_session_open_multiple_files();
+        test_editor_session_open_missing_startup_file();
     } catch (const std::exception &error) {
         std::cerr << "test failure: " << error.what() << '\n';
         return 1;
