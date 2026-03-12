@@ -1139,8 +1139,10 @@ void test_lsp_config_rejects_duplicate_patterns() {
 
 void test_infer_language_id() {
     EditorConfig config;
-    config.lsp_servers.push_back({"python", "pyright-langserver --stdio", "python", {"*.py", "*.pyi", "*.pyw"}});
-    config.lsp_servers.push_back({"json", "vscode-json-languageserver --stdio", "json", {"*.json", "*.jsonc"}});
+    config.lsp_servers.push_back(
+        {"python", "pyright-langserver --stdio", "python", {"*.py", "*.pyi", "*.pyw"}, {}});
+    config.lsp_servers.push_back(
+        {"json", "vscode-json-languageserver --stdio", "json", {"*.json", "*.jsonc"}, {}});
 
     expect(infer_language_id(config, std::optional<std::string>("test.py")) == "python", "python pattern should infer python");
     expect(infer_language_id(config, std::optional<std::string>("settings.json")) == "json", "json pattern should infer json");
@@ -1446,12 +1448,15 @@ class RecordingService : public EditorService {
     }
 
     void handle_editor_event(const EditorEvent &event) override {
+        EditorCommand recorded;
+        recorded.type = EditorCommandType::SetStatusMessage;
+        recorded.message = "recorded";
         received_events.push_back(event);
         queued_events.push_back(
             {ServiceEventType::Notification,
              name(),
              event.type == EditorEventType::DocumentChanged ? "document_changed" : "editor_event",
-             EditorCommand{EditorCommandType::SetStatusMessage, std::nullopt, {}, {}, std::nullopt, "", "recorded"},
+             recorded,
              event.document_uri,
              event.document_version,
              event.range,

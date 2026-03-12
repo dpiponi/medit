@@ -2064,7 +2064,6 @@ std::optional<std::filesystem::path> resolve_direct_file_reference(
 }
 
 std::vector<std::filesystem::path> search_workspace_for_file(
-    const EditorState &state,
     const std::filesystem::path &workspace_root,
     const std::string &token) {
     std::optional<std::string> finder = first_available_executable({"fdfind", "fd"});
@@ -2108,7 +2107,7 @@ void open_file_under_cursor(EditorState &state) {
     }
 
     std::filesystem::path workspace_root = workspace_root_for_buffer(state, core);
-    std::vector<std::filesystem::path> matches = search_workspace_for_file(state, workspace_root, *token);
+    std::vector<std::filesystem::path> matches = search_workspace_for_file(workspace_root, *token);
     if (matches.empty()) {
         if (!first_available_executable({"fdfind", "fd"})) {
             set_status(state, "Missing executable: fdfind/fd");

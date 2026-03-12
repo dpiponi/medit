@@ -7,6 +7,7 @@
 #include "string_utils.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstring>
 #include <filesystem>
 #include <ranges>
@@ -22,6 +23,22 @@
 #endif
 
 namespace {
+
+#if defined(__unix__) || defined(__APPLE__)
+void ensure_sigpipe_ignored() {
+    static std::once_flag once;
+    std::call_once(once, []() {
+        struct sigaction action {};
+        action.sa_handler = SIG_IGN;
+        sigemptyset(&action.sa_mask);
+        sigaction(SIGPIPE, &action, nullptr);
+    });
+}
+
+bool is_broken_pipe_error(int error_code) {
+    return error_code == EPIPE || error_code == ECONNRESET;
+}
+#endif
 
 std::string json_escape(const std::string &text) {
     std::string escaped;
@@ -364,6 +381,7 @@ void LspService::start() {
         return;
     }
 #if defined(__unix__) || defined(__APPLE__)
+    ensure_sigpipe_ignored();
     if (std::optional<std::string> missing = missing_executable_in_command(config_.command)) {
         queue_status("LSP executable not found: " + *missing);
         log_debug("external command kind=lsp-server missing executable=" + *missing + " command=" + config_.command);
@@ -772,7 +790,9 @@ void LspService::stderr_loop() {
 
 bool LspService::write_payload(const std::string &payload) {
     if (stdin_fd_ < 0) {
-        queue_status("LSP write failed");
+        if (!stopping_) {
+            queue_status("LSP write failed");
+        }
         return false;
     }
     std::string framed = encode_lsp_message(payload);
@@ -781,7 +801,24 @@ bool LspService::write_payload(const std::string &payload) {
     while (remaining > 0) {
         ssize_t wrote = write(stdin_fd_, data, remaining);
         if (wrote <= 0) {
-            queue_status("LSP write failed");
+#if defined(__unix__) || defined(__APPLE__)
+            int error_code = errno;
+            if (is_broken_pipe_error(error_code)) {
+                close(stdin_fd_);
+                stdin_fd_ = -1;
+                pending_requests_.clear();
+                pending_document_changes_.clear();
+                pending_change_times_.clear();
+                pending_document_texts_.clear();
+                if (!stopping_) {
+                    queue_status("LSP pipe closed");
+                }
+                return false;
+            }
+#endif
+            if (!stopping_) {
+                queue_status("LSP write failed");
+            }
             return false;
         }
         data += wrote;
