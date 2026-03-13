@@ -10,3 +10,6 @@ right_justify_diagnostics = true
 shiftwidth = 4
 autoindent = true
 show_diagnostics_in_insert_mode = false
+
+# Optional local control socket for the MCP bridge.
+# control_socket = /tmp/medit.sock

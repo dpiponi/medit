@@ -1,8 +1,10 @@
 #include "config.hpp"
+#include "control_server.hpp"
 #include "editor_commands.hpp"
 #include "editor_core.hpp"
 #include "editor_session.hpp"
 #include "editor_windows.hpp"
+#include "json.hpp"
 #include "keybindings.hpp"
 #include "logger.hpp"
 #include "lsp_service.hpp"
@@ -214,7 +216,11 @@ struct EditorState {
     std::vector<RecordedInput> last_repeatable_command;
     std::vector<JumpLocation> jump_back_stack;
     std::vector<JumpLocation> jump_forward_stack;
+    EditorControlServer control_server;
 };
+
+Position displayed_cursor(const EditorState &state, std::size_t window_id);
+std::optional<Range> displayed_selection_range(const EditorState &state, std::size_t window_id);
 
 EditorWindow &active_window(EditorState &state) {
     return *state.windows.active_window();
@@ -238,6 +244,52 @@ EditorBuffer &active_buffer(EditorState &state) {
 
 const EditorBuffer &active_buffer(const EditorState &state) {
     return window_buffer(state, state.windows.active_window_id());
+}
+
+std::string buffer_text_utf8(const EditorBuffer &buffer) {
+    std::string text;
+    const auto &lines = buffer.core.lines();
+    for (std::size_t row = 0; row < lines.size(); ++row) {
+        if (row > 0) {
+            text.push_back('\n');
+        }
+        text += u32_to_utf8(lines[row]);
+    }
+    return text;
+}
+
+JsonValue json_position(Position position) {
+    return JsonValue{{"row", position.row}, {"column", position.column}};
+}
+
+JsonValue json_range(const Range &range) {
+    return JsonValue{{"start", json_position(range.start)}, {"end", json_position(range.end)}};
+}
+
+JsonValue json_buffer_summary(const EditorState &state, const EditorBuffer &buffer) {
+    bool active = buffer.id == active_buffer(state).id;
+    JsonValue result = {
+        {"id", buffer.id},
+        {"document_uri", buffer.core.document_uri()},
+        {"file_path", buffer.core.file_path() ? JsonValue(*buffer.core.file_path()) : JsonValue(nullptr)},
+        {"display_name", buffer.core.display_file_name()},
+        {"dirty", buffer.core.is_dirty()},
+        {"line_count", buffer.core.line_count()},
+        {"document_version", buffer.core.document_version()},
+        {"active", active},
+    };
+    if (active) {
+        result["cursor"] = json_position(displayed_cursor(state, state.windows.active_window_id()));
+        if (std::optional<Range> selection = displayed_selection_range(state, state.windows.active_window_id())) {
+            result["selection"] = json_range(*selection);
+        } else {
+            result["selection"] = nullptr;
+        }
+    } else {
+        result["cursor"] = nullptr;
+        result["selection"] = nullptr;
+    }
+    return result;
 }
 
 EditorCore &active_core(EditorState &state) {
@@ -5074,6 +5126,201 @@ void render_frame(EditorState &state) {
     draw_editor(state);
 }
 
+JsonValue success_control_result(JsonValue result) {
+    return JsonValue{{"ok", true}, {"result", std::move(result)}};
+}
+
+JsonValue error_control_result(const std::string &message) {
+    return JsonValue{{"ok", false}, {"error", message}};
+}
+
+std::optional<std::size_t> parse_optional_buffer_id(const JsonValue &params) {
+    auto found = params.find("buffer_id");
+    if (found == params.end() || found->is_null()) {
+        return std::nullopt;
+    }
+    if (!found->is_number_unsigned()) {
+        throw std::runtime_error("buffer_id must be an unsigned integer");
+    }
+    return found->get<std::size_t>();
+}
+
+EditorBuffer *control_target_buffer(EditorState &state, const JsonValue &params) {
+    std::optional<std::size_t> buffer_id = parse_optional_buffer_id(params);
+    if (!buffer_id) {
+        return &active_buffer(state);
+    }
+    return state.session.find_buffer_by_id(*buffer_id);
+}
+
+Position json_to_position(const JsonValue &value) {
+    if (!value.is_object()) {
+        throw std::runtime_error("position must be an object");
+    }
+    auto row = value.find("row");
+    auto column = value.find("column");
+    if (row == value.end() || column == value.end() || !row->is_number_unsigned() || !column->is_number_unsigned()) {
+        throw std::runtime_error("position must contain unsigned row and column");
+    }
+    return {row->get<std::size_t>(), column->get<std::size_t>()};
+}
+
+Range json_to_range(const JsonValue &value) {
+    if (!value.is_object()) {
+        throw std::runtime_error("range must be an object");
+    }
+    auto start = value.find("start");
+    auto end = value.find("end");
+    if (start == value.end() || end == value.end()) {
+        throw std::runtime_error("range must contain start and end");
+    }
+    return {json_to_position(*start), json_to_position(*end)};
+}
+
+std::string handle_control_request(EditorState &state, std::string_view request_text) {
+    try {
+        JsonValue request = parse_json(std::string(request_text));
+        if (!request.is_object()) {
+            return error_control_result("request must be an object").dump();
+        }
+        std::string method = request.value("method", "");
+        JsonValue params = request.contains("params") ? request["params"] : JsonValue::object();
+        if (!params.is_object()) {
+            return error_control_result("params must be an object").dump();
+        }
+
+        if (method == "status") {
+            JsonValue result = {
+                {"active_buffer_id", active_buffer(state).id},
+                {"active_window_id", state.windows.active_window_id()},
+                {"buffer_count", state.session.buffer_count()},
+                {"window_count", state.windows.window_count()},
+                {"mode", mode_name(state.mode)},
+                {"status_message", state.status_message},
+                {"control_socket", state.config.control_socket_path ? JsonValue(state.config.control_socket_path->string())
+                                                                   : JsonValue(nullptr)},
+                {"runtime", state.runtime.status_summary()},
+            };
+            return success_control_result(std::move(result)).dump();
+        }
+
+        if (method == "list_buffers") {
+            JsonValue buffers = JsonValue::array();
+            for (const EditorBuffer &buffer : state.session.buffers()) {
+                buffers.push_back(json_buffer_summary(state, buffer));
+            }
+            return success_control_result(JsonValue{{"buffers", std::move(buffers)}}).dump();
+        }
+
+        if (method == "list_windows") {
+            JsonValue windows = JsonValue::array();
+            for (const EditorWindow &window : state.windows.windows()) {
+                windows.push_back(
+                    {{"id", window.id},
+                     {"buffer_id", window.buffer_id},
+                     {"active", window.id == state.windows.active_window_id()}});
+            }
+            return success_control_result(JsonValue{{"windows", std::move(windows)}}).dump();
+        }
+
+        if (method == "get_buffer") {
+            EditorBuffer *buffer = control_target_buffer(state, params);
+            if (!buffer) {
+                return error_control_result("buffer not found").dump();
+            }
+            JsonValue result = json_buffer_summary(state, *buffer);
+            result["text"] = buffer_text_utf8(*buffer);
+            return success_control_result(std::move(result)).dump();
+        }
+
+        if (method == "get_selection") {
+            std::optional<Range> selection = displayed_selection_range(state, state.windows.active_window_id());
+            if (!selection) {
+                return success_control_result(JsonValue{{"selection", nullptr}, {"text", ""}}).dump();
+            }
+            std::u32string text = active_core(state).read_text(*selection);
+            return success_control_result(JsonValue{{"selection", json_range(*selection)}, {"text", u32_to_utf8(text)}}).dump();
+        }
+
+        if (method == "open_file") {
+            std::string path = params.value("path", "");
+            if (path.empty()) {
+                return error_control_result("path is required").dump();
+            }
+            EditorBuffer *buffer = state.session.open_file(path, true);
+            if (!buffer) {
+                return error_control_result("could not open file").dump();
+            }
+            show_buffer_in_active_window(state, buffer->id);
+            return success_control_result(json_buffer_summary(state, *buffer)).dump();
+        }
+
+        if (method == "switch_buffer") {
+            std::optional<std::size_t> buffer_id = parse_optional_buffer_id(params);
+            if (!buffer_id) {
+                return error_control_result("buffer_id is required").dump();
+            }
+            if (!state.session.switch_to_id(*buffer_id)) {
+                return error_control_result("buffer not found").dump();
+            }
+            show_buffer_in_active_window(state, *buffer_id);
+            return success_control_result(json_buffer_summary(state, active_buffer(state))).dump();
+        }
+
+        if (method == "apply_text_edits") {
+            EditorBuffer *buffer = control_target_buffer(state, params);
+            if (!buffer) {
+                return error_control_result("buffer not found").dump();
+            }
+            auto edits = params.find("edits");
+            if (edits == params.end() || !edits->is_array()) {
+                return error_control_result("edits array is required").dump();
+            }
+            std::vector<TextEdit> parsed_edits;
+            for (const JsonValue &edit : *edits) {
+                if (!edit.is_object()) {
+                    return error_control_result("edit entries must be objects").dump();
+                }
+                auto range = edit.find("range");
+                auto text = edit.find("text");
+                if (range == edit.end() || text == edit.end() || !text->is_string()) {
+                    return error_control_result("each edit must contain range and text").dump();
+                }
+                parsed_edits.push_back({json_to_range(*range), utf8_to_u32(text->get<std::string>())});
+            }
+            if (!buffer->core.apply_text_edits(parsed_edits)) {
+                return error_control_result("failed to apply edits").dump();
+            }
+            if (buffer->id == active_buffer(state).id) {
+                sync_window_view_from_core(state, state.windows.active_window_id());
+            }
+            return success_control_result(json_buffer_summary(state, *buffer)).dump();
+        }
+
+        if (method == "save_buffer") {
+            EditorBuffer *buffer = control_target_buffer(state, params);
+            if (!buffer) {
+                return error_control_result("buffer not found").dump();
+            }
+            bool ok = false;
+            std::string path = params.value("path", "");
+            if (!path.empty()) {
+                ok = buffer->core.save_current_file_as(path);
+            } else {
+                ok = buffer->core.save_current_file();
+            }
+            if (!ok) {
+                return error_control_result(buffer->core.file_path() ? "save failed" : "no file name").dump();
+            }
+            return success_control_result(json_buffer_summary(state, *buffer)).dump();
+        }
+
+        return error_control_result("unknown control method: " + method).dump();
+    } catch (const std::exception &error) {
+        return error_control_result(error.what()).dump();
+    }
+}
+
 void run_editor(EditorState &state) {
     while (!state.should_quit) {
         for (EditorBuffer &buffer : state.session.buffers()) {
@@ -5081,6 +5328,7 @@ void run_editor(EditorState &state) {
         }
         state.runtime.poll_services();
         handle_service_events(state);
+        state.control_server.poll([&state](std::string_view request) { return handle_control_request(state, request); });
         render_frame(state);
         update_input_timeout(state);
         handle_input(state);
@@ -5148,6 +5396,17 @@ int main(int argc, char **argv) {
         if (argc <= 1) {
             open_startup_file_picker(state);
         }
+        if (state.config.control_socket_path) {
+            std::string control_error;
+            if (state.control_server.start(*state.config.control_socket_path, control_error)) {
+                log_debug("control socket started path=" + state.config.control_socket_path->string());
+            } else {
+                set_status(state, "Control socket failed: " + control_error);
+                log_debug(
+                    "control socket start failed path=" + state.config.control_socket_path->string() +
+                    " error=" + control_error);
+            }
+        }
         if (!state.config.lsp_servers.empty()) {
             for (const LspServerConfig &server : state.config.lsp_servers) {
                 state.runtime.add_service(std::make_unique<LspService>(server));
@@ -5157,10 +5416,12 @@ int main(int argc, char **argv) {
         state.runtime.start_services();
         run_editor(state);
         state.runtime.stop_services();
+        state.control_server.stop();
         teardown_terminal();
         return 0;
     } catch (const std::exception &error) {
         state.runtime.stop_services();
+        state.control_server.stop();
         teardown_terminal();
         std::fprintf(stderr, "medit: %s\n", error.what());
         return 1;

@@ -414,6 +414,11 @@ EditorConfig load_editor_config_from_path(const std::filesystem::path &path) {
             config.syntax_config_path = resolve_config_reference(path, value);
         } else if (key == "log" || key == "log_file") {
             config.log_path = resolve_config_reference(path, value);
+        } else if (key == "control_socket") {
+            config.control_socket_path = value;
+            if (!config.control_socket_path->is_absolute()) {
+                config.control_socket_path = resolve_config_reference(path, value);
+            }
         } else if (key == "lsp_command") {
             config.lsp_command = value;
         } else if (key == "lsp_language_id") {

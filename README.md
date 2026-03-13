@@ -204,6 +204,24 @@ Clipboard settings:
 - `clipboard_file = /path/to/clipboard.json` overrides the shared clipboard file path
 - `clipboard_osc52 = true|false` enables or disables OSC52 clipboard writes in `auto` mode
 
+Control bridge settings:
+
+- `control_socket = /path/to/medit.sock` enables a local Unix-domain control socket for external tools and the MCP bridge
+
+To let Codex or another MCP client talk to a running `medit` instance:
+
+1. Enable a control socket in your live `meditrc`, for example:
+   ```ini
+   control_socket = /tmp/medit.sock
+   ```
+2. Start `medit`
+3. Start the bridge:
+   ```sh
+   python3 tools/medit_mcp.py --socket /tmp/medit.sock
+   ```
+
+The bridge exposes tools for buffer/window inspection, reading buffer text and selection, opening files, switching buffers, applying text edits, and saving buffers.
+
 The checked-in example config is:
 
 - [`config/meditrc`](/home/dan/de/config/meditrc)
