@@ -135,6 +135,17 @@ void test_autoindent_open_line_below() {
     expect_text(core, "    alpha", "undo autoindented open line below restores the original line");
 }
 
+void test_autoindent_open_line_above() {
+    EditorCore core;
+    expect(core.insert_text({0, 0}, utf8_to_u32("    alpha")), "seed open-line-above autoindent buffer");
+    core.set_cursor({0, 2});
+    core.open_line_above_with_autoindent();
+    expect_text(core, "    \n    alpha", "open line above copies leading indentation");
+    expect_cursor(core, {0, 4}, "open line above with autoindent moves cursor after indentation");
+    expect(core.undo(), "undo autoindented open line above");
+    expect_text(core, "    alpha", "undo autoindented open line above restores the original line");
+}
+
 void test_open_line_below_at_eof_then_newline() {
     EditorCore core;
     expect(core.insert_text({0, 0}, utf8_to_u32("one\ntwo")), "seed eof open-line-below buffer");
@@ -1769,6 +1780,7 @@ int main() {
         test_insert_mode_soft_tab_and_shift_tab();
         test_autoindent_newline();
         test_autoindent_open_line_below();
+        test_autoindent_open_line_above();
         test_open_line_below_at_eof_then_newline();
         test_visual_range_semantics_and_delete();
         test_linewise_selection_range_and_delete();

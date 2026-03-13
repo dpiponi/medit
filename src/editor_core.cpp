@@ -1898,6 +1898,19 @@ void EditorCore::open_line_above() {
     set_cursor({cursor_.row, 0});
 }
 
+void EditorCore::open_line_above_with_autoindent() {
+    std::u32string prefix = leading_indentation_prefix(lines_[cursor_.row]);
+    begin_compound_edit();
+    open_line_above();
+    if (!prefix.empty()) {
+        Position insert_at = cursor_;
+        if (insert_text(insert_at, prefix)) {
+            set_cursor({insert_at.row, insert_at.column + prefix.size()});
+        }
+    }
+    end_compound_edit();
+}
+
 bool EditorCore::yank_selection() {
     std::optional<Range> selected = selection_range();
     if (!selected || positions_equal(selected->start, selected->end)) {

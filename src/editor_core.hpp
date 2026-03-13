@@ -247,6 +247,7 @@ class EditorCore {
     void open_line_below();
     void open_line_below_with_autoindent();
     void open_line_above();
+    void open_line_above_with_autoindent();
     bool indent_lines(std::size_t start_row, std::size_t end_row, std::size_t shiftwidth, bool expandtab, std::size_t tabstop);
     bool outdent_lines(std::size_t start_row, std::size_t end_row, std::size_t shiftwidth, std::size_t tabstop);
     std::size_t substitute_regex(

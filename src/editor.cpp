@@ -266,6 +266,16 @@ JsonValue json_range(const Range &range) {
     return JsonValue{{"start", json_position(range.start)}, {"end", json_position(range.end)}};
 }
 
+const char *selection_mode_name(SelectionMode mode) {
+    switch (mode) {
+        case SelectionMode::Character:
+            return "character";
+        case SelectionMode::Line:
+            return "line";
+    }
+    return "character";
+}
+
 JsonValue json_buffer_summary(const EditorState &state, const EditorBuffer &buffer) {
     bool active = buffer.id == active_buffer(state).id;
     JsonValue result = {
@@ -282,12 +292,15 @@ JsonValue json_buffer_summary(const EditorState &state, const EditorBuffer &buff
         result["cursor"] = json_position(displayed_cursor(state, state.windows.active_window_id()));
         if (std::optional<Range> selection = displayed_selection_range(state, state.windows.active_window_id())) {
             result["selection"] = json_range(*selection);
+            result["selection_mode"] = selection_mode_name(buffer.core.selection_mode());
         } else {
             result["selection"] = nullptr;
+            result["selection_mode"] = nullptr;
         }
     } else {
         result["cursor"] = nullptr;
         result["selection"] = nullptr;
+        result["selection_mode"] = nullptr;
     }
     return result;
 }
@@ -5146,12 +5159,62 @@ std::optional<std::size_t> parse_optional_buffer_id(const JsonValue &params) {
     return found->get<std::size_t>();
 }
 
+std::optional<std::size_t> parse_optional_window_id(const JsonValue &params) {
+    auto found = params.find("window_id");
+    if (found == params.end() || found->is_null()) {
+        return std::nullopt;
+    }
+    if (!found->is_number_unsigned()) {
+        throw std::runtime_error("window_id must be an unsigned integer");
+    }
+    return found->get<std::size_t>();
+}
+
 EditorBuffer *control_target_buffer(EditorState &state, const JsonValue &params) {
     std::optional<std::size_t> buffer_id = parse_optional_buffer_id(params);
     if (!buffer_id) {
         return &active_buffer(state);
     }
     return state.session.find_buffer_by_id(*buffer_id);
+}
+
+SelectionMode json_to_selection_mode(const JsonValue &value) {
+    if (!value.is_string()) {
+        throw std::runtime_error("selection mode must be a string");
+    }
+    const std::string mode = value.get<std::string>();
+    if (mode == "character") {
+        return SelectionMode::Character;
+    }
+    if (mode == "line") {
+        return SelectionMode::Line;
+    }
+    throw std::runtime_error("selection mode must be 'character' or 'line'");
+}
+
+WindowSplitDirection json_to_split_direction(const JsonValue &value) {
+    if (!value.is_string()) {
+        throw std::runtime_error("direction must be a string");
+    }
+    const std::string direction = value.get<std::string>();
+    if (direction == "horizontal") {
+        return WindowSplitDirection::Horizontal;
+    }
+    if (direction == "vertical") {
+        return WindowSplitDirection::Vertical;
+    }
+    throw std::runtime_error("direction must be 'horizontal' or 'vertical'");
+}
+
+std::string json_to_open_line_direction(const JsonValue &value) {
+    if (!value.is_string()) {
+        throw std::runtime_error("direction must be a string");
+    }
+    const std::string direction = value.get<std::string>();
+    if (direction != "above" && direction != "below") {
+        throw std::runtime_error("direction must be 'above' or 'below'");
+    }
+    return direction;
 }
 
 Position json_to_position(const JsonValue &value) {
@@ -5237,10 +5300,81 @@ std::string handle_control_request(EditorState &state, std::string_view request_
         if (method == "get_selection") {
             std::optional<Range> selection = displayed_selection_range(state, state.windows.active_window_id());
             if (!selection) {
-                return success_control_result(JsonValue{{"selection", nullptr}, {"text", ""}}).dump();
+                return success_control_result(
+                           JsonValue{{"selection", nullptr}, {"selection_mode", nullptr}, {"text", ""}})
+                    .dump();
             }
             std::u32string text = active_core(state).read_text(*selection);
-            return success_control_result(JsonValue{{"selection", json_range(*selection)}, {"text", u32_to_utf8(text)}}).dump();
+            return success_control_result(JsonValue{
+                {"selection", json_range(*selection)},
+                {"selection_mode", selection_mode_name(active_core(state).selection_mode())},
+                {"text", u32_to_utf8(text)},
+            })
+                .dump();
+        }
+
+        if (method == "get_cursor") {
+            std::optional<Range> selection = displayed_selection_range(state, state.windows.active_window_id());
+            JsonValue result = {
+                {"window_id", state.windows.active_window_id()},
+                {"buffer_id", active_window(state).buffer_id},
+                {"cursor", json_position(displayed_cursor(state, state.windows.active_window_id()))},
+                {"selection", selection ? json_range(*selection) : JsonValue(nullptr)},
+                {"selection_mode", selection ? JsonValue(selection_mode_name(active_core(state).selection_mode()))
+                                             : JsonValue(nullptr)},
+            };
+            return success_control_result(std::move(result)).dump();
+        }
+
+        if (method == "set_cursor") {
+            EditorBuffer *buffer = control_target_buffer(state, params);
+            auto position = params.find("position");
+            if (!buffer) {
+                return error_control_result("buffer not found").dump();
+            }
+            if (position == params.end()) {
+                return error_control_result("position is required").dump();
+            }
+            buffer->core.set_cursor(json_to_position(*position));
+            if (buffer->id == active_window(state).buffer_id) {
+                sync_window_view_from_core(state, state.windows.active_window_id());
+            }
+            return success_control_result(json_buffer_summary(state, *buffer)).dump();
+        }
+
+        if (method == "set_selection") {
+            EditorBuffer *buffer = control_target_buffer(state, params);
+            auto range = params.find("range");
+            auto mode = params.find("mode");
+            if (!buffer) {
+                return error_control_result("buffer not found").dump();
+            }
+            if (range == params.end()) {
+                return error_control_result("range is required").dump();
+            }
+            SelectionMode selection_mode = SelectionMode::Character;
+            if (mode != params.end()) {
+                selection_mode = json_to_selection_mode(*mode);
+            }
+            if (!buffer->core.set_selection_range(json_to_range(*range), selection_mode)) {
+                return error_control_result("failed to set selection").dump();
+            }
+            if (buffer->id == active_window(state).buffer_id) {
+                sync_window_view_from_core(state, state.windows.active_window_id());
+            }
+            return success_control_result(json_buffer_summary(state, *buffer)).dump();
+        }
+
+        if (method == "clear_selection") {
+            EditorBuffer *buffer = control_target_buffer(state, params);
+            if (!buffer) {
+                return error_control_result("buffer not found").dump();
+            }
+            buffer->core.clear_selection();
+            if (buffer->id == active_window(state).buffer_id) {
+                sync_window_view_from_core(state, state.windows.active_window_id());
+            }
+            return success_control_result(json_buffer_summary(state, *buffer)).dump();
         }
 
         if (method == "open_file") {
@@ -5297,6 +5431,141 @@ std::string handle_control_request(EditorState &state, std::string_view request_
                 sync_window_view_from_core(state, state.windows.active_window_id());
             }
             return success_control_result(json_buffer_summary(state, *buffer)).dump();
+        }
+
+        if (method == "open_line") {
+            EditorBuffer *buffer = control_target_buffer(state, params);
+            auto direction = params.find("direction");
+            if (!buffer) {
+                return error_control_result("buffer not found").dump();
+            }
+            if (direction == params.end()) {
+                return error_control_result("direction is required").dump();
+            }
+            const std::string open_direction = json_to_open_line_direction(*direction);
+            bool autoindent = effective_autoindent(state.config, buffer->core.file_path());
+            auto autoindent_value = params.find("autoindent");
+            if (autoindent_value != params.end()) {
+                if (!autoindent_value->is_boolean()) {
+                    return error_control_result("autoindent must be a boolean").dump();
+                }
+                autoindent = autoindent_value->get<bool>();
+            }
+            if (open_direction == "below") {
+                if (autoindent) {
+                    buffer->core.open_line_below_with_autoindent();
+                } else {
+                    buffer->core.open_line_below();
+                }
+            } else {
+                if (autoindent) {
+                    buffer->core.open_line_above_with_autoindent();
+                } else {
+                    buffer->core.open_line_above();
+                }
+            }
+            if (buffer->id == active_window(state).buffer_id) {
+                sync_window_view_from_core(state, state.windows.active_window_id());
+            }
+            return success_control_result(json_buffer_summary(state, *buffer)).dump();
+        }
+
+        if (method == "close_buffer") {
+            std::optional<std::size_t> buffer_id = parse_optional_buffer_id(params);
+            const bool force = params.value("force", false);
+            const std::size_t target_buffer_id = buffer_id.value_or(active_window(state).buffer_id);
+            EditorBuffer *target = state.session.find_buffer_by_id(target_buffer_id);
+            if (!target) {
+                return error_control_result("buffer not found").dump();
+            }
+            const std::string closed_name = target->core.display_file_name();
+            state.session.switch_to_id(target_buffer_id);
+            std::vector<EditorEvent> closed_events;
+            if (!state.session.close_active_buffer(force, &closed_events)) {
+                return error_control_result("unsaved changes; pass force=true to close").dump();
+            }
+            for (const EditorEvent &event : closed_events) {
+                state.runtime.dispatch_editor_event(event);
+            }
+            state.buffer_ui.erase(target_buffer_id);
+            state.syntax_ui.erase(target_buffer_id);
+            const std::size_t replacement_buffer_id = state.session.active_buffer_id();
+            state.windows.replace_buffer_id(target_buffer_id, replacement_buffer_id);
+            for (const EditorWindow &window : state.windows.windows()) {
+                if (window.buffer_id == replacement_buffer_id) {
+                    window_ui(state, window.id) = EditorState::WindowUiState{};
+                }
+            }
+            sync_active_window_buffer(state);
+            active_buffer_ui(state);
+            set_status(state, std::format("Closed {}", closed_name));
+            return success_control_result(JsonValue{
+                {"closed_buffer_id", target_buffer_id},
+                {"active_buffer", json_buffer_summary(state, active_buffer(state))},
+            })
+                .dump();
+        }
+
+        if (method == "focus_window") {
+            std::optional<std::size_t> window_id = parse_optional_window_id(params);
+            if (!window_id) {
+                return error_control_result("window_id is required").dump();
+            }
+            if (!state.windows.find_window(*window_id)) {
+                return error_control_result("window not found").dump();
+            }
+            focus_window(state, *window_id);
+            return success_control_result(JsonValue{
+                {"window_id", state.windows.active_window_id()},
+                {"buffer", json_buffer_summary(state, active_buffer(state))},
+            })
+                .dump();
+        }
+
+        if (method == "split_window") {
+            auto direction = params.find("direction");
+            if (direction == params.end()) {
+                return error_control_result("direction is required").dump();
+            }
+            if (!split_active_window(state, json_to_split_direction(*direction))) {
+                return error_control_result("could not split window").dump();
+            }
+            return success_control_result(JsonValue{
+                {"window_id", state.windows.active_window_id()},
+                {"buffer", json_buffer_summary(state, active_buffer(state))},
+            })
+                .dump();
+        }
+
+        if (method == "close_window") {
+            std::optional<std::size_t> window_id = parse_optional_window_id(params);
+            const std::size_t closing_window_id = window_id.value_or(state.windows.active_window_id());
+            if (!state.windows.find_window(closing_window_id)) {
+                return error_control_result("window not found").dump();
+            }
+            focus_window(state, closing_window_id);
+            if (!close_active_window(state) && !state.should_quit) {
+                return error_control_result("could not close window").dump();
+            }
+            return success_control_result(JsonValue{
+                {"closed_window_id", closing_window_id},
+                {"active_window_id", state.windows.active_window_id()},
+                {"window_count", state.windows.window_count()},
+                {"should_quit", state.should_quit},
+            })
+                .dump();
+        }
+
+        if (method == "close_other_windows") {
+            if (!close_other_windows(state)) {
+                return error_control_result("no other windows").dump();
+            }
+            return success_control_result(JsonValue{
+                {"active_window_id", state.windows.active_window_id()},
+                {"window_count", state.windows.window_count()},
+                {"buffer", json_buffer_summary(state, active_buffer(state))},
+            })
+                .dump();
         }
 
         if (method == "save_buffer") {

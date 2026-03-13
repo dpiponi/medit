@@ -43,6 +43,28 @@ def main() -> int:
     list_windows_parser = subparsers.add_parser("list-windows", help="List open windows")
     add_socket_argument(list_windows_parser)
 
+    get_cursor_parser = subparsers.add_parser("get-cursor", help="Read active cursor and selection state")
+    add_socket_argument(get_cursor_parser)
+
+    set_cursor_parser = subparsers.add_parser("set-cursor", help="Set the cursor position")
+    add_socket_argument(set_cursor_parser)
+    set_cursor_parser.add_argument("--buffer-id", type=int)
+    set_cursor_parser.add_argument("row", type=int)
+    set_cursor_parser.add_argument("column", type=int)
+
+    set_selection_parser = subparsers.add_parser("set-selection", help="Set the selection range")
+    add_socket_argument(set_selection_parser)
+    set_selection_parser.add_argument("--buffer-id", type=int)
+    set_selection_parser.add_argument("--mode", choices=["character", "line"])
+    set_selection_parser.add_argument("start_row", type=int)
+    set_selection_parser.add_argument("start_column", type=int)
+    set_selection_parser.add_argument("end_row", type=int)
+    set_selection_parser.add_argument("end_column", type=int)
+
+    clear_selection_parser = subparsers.add_parser("clear-selection", help="Clear the selection")
+    add_socket_argument(clear_selection_parser)
+    clear_selection_parser.add_argument("--buffer-id", type=int)
+
     get_buffer_parser = subparsers.add_parser("get-buffer", help="Read a buffer")
     add_socket_argument(get_buffer_parser)
     get_buffer_parser.add_argument("--buffer-id", type=int)
@@ -54,6 +76,26 @@ def main() -> int:
     add_socket_argument(open_file_parser)
     open_file_parser.add_argument("path")
 
+    close_buffer_parser = subparsers.add_parser("close-buffer", help="Close a buffer")
+    add_socket_argument(close_buffer_parser)
+    close_buffer_parser.add_argument("--buffer-id", type=int)
+    close_buffer_parser.add_argument("--force", action="store_true")
+
+    focus_window_parser = subparsers.add_parser("focus-window", help="Focus a window")
+    add_socket_argument(focus_window_parser)
+    focus_window_parser.add_argument("window_id", type=int)
+
+    split_window_parser = subparsers.add_parser("split-window", help="Split the active window")
+    add_socket_argument(split_window_parser)
+    split_window_parser.add_argument("direction", choices=["horizontal", "vertical"])
+
+    close_window_parser = subparsers.add_parser("close-window", help="Close a window")
+    add_socket_argument(close_window_parser)
+    close_window_parser.add_argument("--window-id", type=int)
+
+    close_other_windows_parser = subparsers.add_parser("close-other-windows", help="Close all non-active windows")
+    add_socket_argument(close_other_windows_parser)
+
     switch_buffer_parser = subparsers.add_parser("switch-buffer", help="Switch active window to a buffer")
     add_socket_argument(switch_buffer_parser)
     switch_buffer_parser.add_argument("buffer_id", type=int)
@@ -62,6 +104,12 @@ def main() -> int:
     add_socket_argument(apply_edits_parser)
     apply_edits_parser.add_argument("--buffer-id", type=int)
     apply_edits_parser.add_argument("edits", nargs="?", help="Path to JSON edits file, or omit to read stdin")
+
+    open_line_parser = subparsers.add_parser("open-line", help="Open a blank line above or below the cursor")
+    add_socket_argument(open_line_parser)
+    open_line_parser.add_argument("direction", choices=["above", "below"])
+    open_line_parser.add_argument("--buffer-id", type=int)
+    open_line_parser.add_argument("--autoindent", choices=["true", "false"])
 
     save_buffer_parser = subparsers.add_parser("save-buffer", help="Save a buffer")
     add_socket_argument(save_buffer_parser)
@@ -84,6 +132,27 @@ def main() -> int:
         method = "list_buffers"
     elif args.command == "list-windows":
         method = "list_windows"
+    elif args.command == "get-cursor":
+        method = "get_cursor"
+    elif args.command == "set-cursor":
+        method = "set_cursor"
+        if args.buffer_id is not None:
+            params["buffer_id"] = args.buffer_id
+        params["position"] = {"row": args.row, "column": args.column}
+    elif args.command == "set-selection":
+        method = "set_selection"
+        if args.buffer_id is not None:
+            params["buffer_id"] = args.buffer_id
+        if args.mode is not None:
+            params["mode"] = args.mode
+        params["range"] = {
+            "start": {"row": args.start_row, "column": args.start_column},
+            "end": {"row": args.end_row, "column": args.end_column},
+        }
+    elif args.command == "clear-selection":
+        method = "clear_selection"
+        if args.buffer_id is not None:
+            params["buffer_id"] = args.buffer_id
     elif args.command == "get-buffer":
         method = "get_buffer"
         if args.buffer_id is not None:
@@ -93,6 +162,24 @@ def main() -> int:
     elif args.command == "open-file":
         method = "open_file"
         params["path"] = args.path
+    elif args.command == "close-buffer":
+        method = "close_buffer"
+        if args.buffer_id is not None:
+            params["buffer_id"] = args.buffer_id
+        if args.force:
+            params["force"] = True
+    elif args.command == "focus-window":
+        method = "focus_window"
+        params["window_id"] = args.window_id
+    elif args.command == "split-window":
+        method = "split_window"
+        params["direction"] = args.direction
+    elif args.command == "close-window":
+        method = "close_window"
+        if args.window_id is not None:
+            params["window_id"] = args.window_id
+    elif args.command == "close-other-windows":
+        method = "close_other_windows"
     elif args.command == "switch-buffer":
         method = "switch_buffer"
         params["buffer_id"] = args.buffer_id
@@ -102,6 +189,13 @@ def main() -> int:
             params["buffer_id"] = args.buffer_id
         source = sys.stdin.read() if args.edits is None else open(args.edits, "r", encoding="utf-8").read()
         params["edits"] = json.loads(source)
+    elif args.command == "open-line":
+        method = "open_line"
+        params["direction"] = args.direction
+        if args.buffer_id is not None:
+            params["buffer_id"] = args.buffer_id
+        if args.autoindent is not None:
+            params["autoindent"] = args.autoindent == "true"
     elif args.command == "save-buffer":
         method = "save_buffer"
         if args.buffer_id is not None:
