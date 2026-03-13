@@ -147,6 +147,7 @@
   "command": {
     "esc": "enter_normal_mode",
     "enter": "command_execute",
+    "tab": "show_command_completion",
     "backspace": "command_backspace",
     "up": "command_history_previous",
     "down": "command_history_next",

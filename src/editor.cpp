@@ -13,6 +13,7 @@
 #include "theme.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <clocale>
 #include <csignal>
@@ -95,6 +96,16 @@ struct VisualRowsCache {
 };
 
 struct EditorState {
+    enum class PopupApplyTarget {
+        BufferText,
+        CommandBuffer,
+    };
+
+    enum class PopupFilterMode {
+        ContainsLabelOrDetail,
+        PrefixLabelOnly,
+    };
+
     struct PromptHistory {
         std::vector<std::u32string> entries;
         std::optional<std::size_t> browse_index;
@@ -161,6 +172,8 @@ struct EditorState {
         std::size_t selected_index = 0;
         std::size_t scroll_offset = 0;
         Mode originating_mode = Mode::Normal;
+        PopupApplyTarget apply_target = PopupApplyTarget::BufferText;
+        PopupFilterMode filter_mode = PopupFilterMode::ContainsLabelOrDetail;
     };
 
     EditorSession session;
@@ -518,17 +531,25 @@ void show_popup(EditorState &state, std::string title, std::u32string text) {
     state.popup.originating_mode = state.mode;
 }
 
-void show_menu_popup(EditorState &state, std::string title, std::vector<PopupMenuItem> items) {
+void show_menu_popup(
+    EditorState &state,
+    std::string title,
+    std::vector<PopupMenuItem> items,
+    EditorState::PopupApplyTarget apply_target = EditorState::PopupApplyTarget::BufferText,
+    std::u32string initial_filter = U"",
+    EditorState::PopupFilterMode filter_mode = EditorState::PopupFilterMode::ContainsLabelOrDetail) {
     state.popup.visible = true;
     state.popup.kind = PopupKind::Menu;
     state.popup.title = std::move(title);
     state.popup.text.clear();
     state.popup.items = std::move(items);
-    state.popup.filter.clear();
+    state.popup.filter = std::move(initial_filter);
     state.popup.filtered_indices.clear();
     state.popup.selected_index = 0;
     state.popup.scroll_offset = 0;
     state.popup.originating_mode = state.mode;
+    state.popup.apply_target = apply_target;
+    state.popup.filter_mode = filter_mode;
     rebuild_popup_filter(state);
 }
 
@@ -542,6 +563,8 @@ void dismiss_popup(EditorState &state) {
     state.popup.filtered_indices.clear();
     state.popup.selected_index = 0;
     state.popup.scroll_offset = 0;
+    state.popup.apply_target = EditorState::PopupApplyTarget::BufferText;
+    state.popup.filter_mode = EditorState::PopupFilterMode::ContainsLabelOrDetail;
 }
 
 bool popup_accepts_input(const EditorState &state) {
@@ -562,11 +585,19 @@ void rebuild_popup_filter(EditorState &state) {
     std::string lowered_filter = ascii_lowercase(filter);
     for (std::size_t index = 0; index < state.popup.items.size(); ++index) {
         const PopupMenuItem &item = state.popup.items[index];
-        std::string haystack = item.label;
-        if (!item.detail.empty()) {
-            haystack += " " + item.detail;
+        bool matches = lowered_filter.empty();
+        if (!matches) {
+            if (state.popup.filter_mode == EditorState::PopupFilterMode::PrefixLabelOnly) {
+                matches = ascii_lowercase(item.label).starts_with(lowered_filter);
+            } else {
+                std::string haystack = item.label;
+                if (!item.detail.empty()) {
+                    haystack += " " + item.detail;
+                }
+                matches = ascii_lowercase(haystack).contains(lowered_filter);
+            }
         }
-        if (lowered_filter.empty() || ascii_lowercase(haystack).contains(lowered_filter)) {
+        if (matches) {
             state.popup.filtered_indices.push_back(index);
         }
     }
@@ -616,6 +647,14 @@ void apply_popup_selection(EditorState &state) {
     }
     PopupMenuItem item = state.popup.items[state.popup.filtered_indices[state.popup.selected_index]];
     Mode originating_mode = state.popup.originating_mode;
+    EditorState::PopupApplyTarget apply_target = state.popup.apply_target;
+    dismiss_popup(state);
+    if (apply_target == EditorState::PopupApplyTarget::CommandBuffer) {
+        state.command_buffer = utf8_to_u32(item.insert_text);
+        set_status(state, ":" + item.insert_text);
+        return;
+    }
+
     EditorCore &core = active_core(state);
     std::u32string text = utf8_to_u32(item.insert_text);
     Position start = item.replace_range ? item.replace_range->start : core.cursor();
@@ -632,7 +671,6 @@ void apply_popup_selection(EditorState &state) {
     } else {
         set_status(state, "Completion failed");
     }
-    dismiss_popup(state);
     if (originating_mode == Mode::Insert) {
         begin_insert_session(state);
     }
@@ -2404,6 +2442,55 @@ struct SubstituteCommand {
     bool global = false;
 };
 
+enum class NamedEditorCommand {
+    Write,
+    Quit,
+    ForceQuit,
+    WriteQuit,
+    WriteIfChangedQuit,
+    Edit,
+    Buffers,
+    Buffer,
+    NextBuffer,
+    PreviousBuffer,
+    DeleteBuffer,
+    ForceDeleteBuffer,
+    FindFile,
+    Grep,
+    PickTheme,
+    ReloadConfig,
+    Diagnostics,
+    LspStatus,
+};
+
+struct NamedEditorCommandInfo {
+    std::string_view name;
+    std::string_view detail;
+    std::string_view completion_text;
+    NamedEditorCommand command;
+};
+
+constexpr std::array<NamedEditorCommandInfo, 18> kNamedEditorCommands{{
+    {"w", "write current buffer", "w", NamedEditorCommand::Write},
+    {"q", "quit", "q", NamedEditorCommand::Quit},
+    {"q!", "force quit", "q!", NamedEditorCommand::ForceQuit},
+    {"wq", "write and quit", "wq", NamedEditorCommand::WriteQuit},
+    {"x", "write and quit if modified", "x", NamedEditorCommand::WriteIfChangedQuit},
+    {"e", "edit file in active window", "e ", NamedEditorCommand::Edit},
+    {"buffers", "list open buffers", "buffers", NamedEditorCommand::Buffers},
+    {"buffer", "switch to buffer", "buffer ", NamedEditorCommand::Buffer},
+    {"bnext", "next buffer", "bnext", NamedEditorCommand::NextBuffer},
+    {"bprev", "previous buffer", "bprev", NamedEditorCommand::PreviousBuffer},
+    {"bd", "close current buffer", "bd", NamedEditorCommand::DeleteBuffer},
+    {"bd!", "force close current buffer", "bd!", NamedEditorCommand::ForceDeleteBuffer},
+    {"find-file", "pick file with fzf", "find-file", NamedEditorCommand::FindFile},
+    {"grep", "grep with rg and fzf", "grep ", NamedEditorCommand::Grep},
+    {"pick-theme", "pick a color theme", "pick-theme", NamedEditorCommand::PickTheme},
+    {"reload-config", "reload medit configuration", "reload-config", NamedEditorCommand::ReloadConfig},
+    {"diagnostics", "show diagnostics summary", "diagnostics", NamedEditorCommand::Diagnostics},
+    {"lsp-status", "show language server status", "lsp-status", NamedEditorCommand::LspStatus},
+}};
+
 bool parse_substitute_component(
     std::string_view command,
     std::size_t &index,
@@ -2491,6 +2578,117 @@ void handle_substitute_command(EditorState &state, const SubstituteCommand &comm
             substitutions == 1 ? "" : "s"));
 }
 
+std::vector<PopupMenuItem> command_completion_items() {
+    std::vector<PopupMenuItem> items;
+    items.reserve(kNamedEditorCommands.size() + 2);
+    for (const NamedEditorCommandInfo &command : kNamedEditorCommands) {
+        items.push_back(
+            {std::string(command.name), std::string(command.detail), std::string(command.completion_text), std::nullopt});
+    }
+    items.push_back({"s", "substitute on current line", "s/", std::nullopt});
+    items.push_back({"%s", "substitute in whole buffer", "%s/", std::nullopt});
+    return items;
+}
+
+std::optional<NamedEditorCommand> named_editor_command_from_verb(std::string_view verb) {
+    auto found = std::ranges::find_if(
+        kNamedEditorCommands,
+        [verb](const NamedEditorCommandInfo &command) { return command.name == verb; });
+    if (found == kNamedEditorCommands.end()) {
+        return std::nullopt;
+    }
+    return found->command;
+}
+
+void execute_named_editor_command(
+    EditorState &state,
+    NamedEditorCommand command,
+    const std::string &argument) {
+    switch (command) {
+        case NamedEditorCommand::Write:
+            handle_write_command(state, argument);
+            break;
+        case NamedEditorCommand::Quit:
+            handle_quit_command(state, false);
+            break;
+        case NamedEditorCommand::ForceQuit:
+            handle_quit_command(state, true);
+            break;
+        case NamedEditorCommand::WriteQuit:
+            handle_write_quit_command(state, argument);
+            break;
+        case NamedEditorCommand::WriteIfChangedQuit:
+            handle_write_quit_command(state, argument);
+            break;
+        case NamedEditorCommand::Edit:
+            handle_edit_command(state, argument);
+            break;
+        case NamedEditorCommand::Buffers:
+            set_status(state, buffers_summary(state));
+            break;
+        case NamedEditorCommand::Buffer:
+            handle_buffer_switch_command(state, argument);
+            break;
+        case NamedEditorCommand::NextBuffer:
+            state.session.next_buffer();
+            set_status(state, std::format("Switched to {}", active_core(state).display_file_name()));
+            break;
+        case NamedEditorCommand::PreviousBuffer:
+            state.session.previous_buffer();
+            set_status(state, std::format("Switched to {}", active_core(state).display_file_name()));
+            break;
+        case NamedEditorCommand::DeleteBuffer:
+            handle_buffer_delete_command(state, false);
+            break;
+        case NamedEditorCommand::ForceDeleteBuffer:
+            handle_buffer_delete_command(state, true);
+            break;
+        case NamedEditorCommand::FindFile:
+            handle_find_file_command(state);
+            break;
+        case NamedEditorCommand::Grep:
+            handle_grep_command(state, argument);
+            break;
+        case NamedEditorCommand::PickTheme:
+            handle_pick_theme_command(state);
+            break;
+        case NamedEditorCommand::ReloadConfig:
+            {
+            std::string error_message;
+            if (reload_editor_configuration(state, error_message)) {
+                set_status(state, "Reloaded config");
+            } else {
+                set_status(state, "Config reload failed: " + error_message);
+            }
+            break;
+            }
+        case NamedEditorCommand::Diagnostics:
+            show_diagnostics_summary(state);
+            break;
+        case NamedEditorCommand::LspStatus:
+            show_lsp_status(state);
+            break;
+    }
+}
+
+void show_command_completion(EditorState &state) {
+    if (state.mode != Mode::Command || state.command_prompt_kind != CommandPromptKind::EditorCommand) {
+        return;
+    }
+    std::string command = u32_to_utf8(state.command_buffer);
+    if (command.contains(' ') || command.contains('\t')) {
+        set_status(state, "Complete the command name only");
+        return;
+    }
+    show_menu_popup(
+        state,
+        "Commands",
+        command_completion_items(),
+        EditorState::PopupApplyTarget::CommandBuffer,
+        state.command_buffer,
+        EditorState::PopupFilterMode::PrefixLabelOnly);
+}
+
 void execute_command(EditorState &state) {
     if (state.command_prompt_kind == CommandPromptKind::FilterSelection) {
         execute_filter_command(state);
@@ -2526,47 +2724,8 @@ void execute_command(EditorState &state) {
         set_status(state, substitute_error);
     } else if (std::ranges::all_of(verb, [](unsigned char ch) { return std::isdigit(ch) != 0; })) {
         handle_goto_line_command(state, verb);
-    } else if (verb == "w") {
-        handle_write_command(state, argument);
-    } else if (verb == "q") {
-        handle_quit_command(state, false);
-    } else if (verb == "q!") {
-        handle_quit_command(state, true);
-    } else if (verb == "wq" || verb == "x") {
-        handle_write_quit_command(state, argument);
-    } else if (verb == "e") {
-        handle_edit_command(state, argument);
-    } else if (verb == "buffers") {
-        set_status(state, buffers_summary(state));
-    } else if (verb == "buffer") {
-        handle_buffer_switch_command(state, argument);
-    } else if (verb == "bnext") {
-        state.session.next_buffer();
-        set_status(state, std::format("Switched to {}", active_core(state).display_file_name()));
-    } else if (verb == "bprev") {
-        state.session.previous_buffer();
-        set_status(state, std::format("Switched to {}", active_core(state).display_file_name()));
-    } else if (verb == "bd") {
-        handle_buffer_delete_command(state, false);
-    } else if (verb == "bd!") {
-        handle_buffer_delete_command(state, true);
-    } else if (verb == "find-file") {
-        handle_find_file_command(state);
-    } else if (verb == "grep") {
-        handle_grep_command(state, argument);
-    } else if (verb == "pick-theme") {
-        handle_pick_theme_command(state);
-    } else if (verb == "reload-config") {
-        std::string error_message;
-        if (reload_editor_configuration(state, error_message)) {
-            set_status(state, "Reloaded config");
-        } else {
-            set_status(state, "Config reload failed: " + error_message);
-        }
-    } else if (verb == "diagnostics") {
-        show_diagnostics_summary(state);
-    } else if (verb == "lsp-status") {
-        show_lsp_status(state);
+    } else if (std::optional<NamedEditorCommand> named = named_editor_command_from_verb(verb)) {
+        execute_named_editor_command(state, *named, argument);
     } else {
         set_status(state, "Unknown command: " + verb);
     }
@@ -4320,6 +4479,9 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             break;
         case EditorAction::CommandHistoryNext:
             browse_prompt_history(state, false);
+            break;
+        case EditorAction::ShowCommandCompletion:
+            show_command_completion(state);
             break;
         case EditorAction::SelfInsert:
             begin_insert_session(state);

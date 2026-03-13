@@ -160,6 +160,7 @@ constexpr const char *kEmbeddedDefaultKeybindings = R"json(
   "command": {
     "esc": "enter_normal_mode",
     "enter": "command_execute",
+    "tab": "show_command_completion",
     "backspace": "command_backspace",
     "up": "command_history_previous",
     "down": "command_history_next",
@@ -247,6 +248,7 @@ std::optional<EditorAction> action_from_name(const std::string &name) {
         {"command_backspace", EditorAction::CommandBackspace},
         {"command_history_previous", EditorAction::CommandHistoryPrevious},
         {"command_history_next", EditorAction::CommandHistoryNext},
+        {"show_command_completion", EditorAction::ShowCommandCompletion},
         {"self_insert", EditorAction::SelfInsert},
         {"command_insert", EditorAction::CommandInsert},
         {"search_execute", EditorAction::SearchExecute},

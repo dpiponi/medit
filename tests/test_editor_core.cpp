@@ -813,6 +813,12 @@ void test_keybinding_dispatch() {
             *command_history_next.action == EditorAction::CommandHistoryNext,
         "command down should browse next history");
 
+    KeyDispatch command_completion = dispatch_key_sequence(keybindings, "command", pending, "tab", false);
+    expect(
+        command_completion.action.has_value() &&
+            *command_completion.action == EditorAction::ShowCommandCompletion,
+        "command tab should show command completion");
+
     KeyDispatch find = dispatch_key_sequence(keybindings, "normal", pending, "f", false);
     expect(find.action.has_value() && *find.action == EditorAction::FindForward, "f should map to find forward");
 
