@@ -218,6 +218,8 @@ The checked-in example config is:
 - [`config/medit/themes/seaside.json`](/home/dan/de/config/medit/themes/seaside.json)
 - [`config/medit/themes/luxor.json`](/home/dan/de/config/medit/themes/luxor.json)
 - [`config/medit/themes/matrix.json`](/home/dan/de/config/medit/themes/matrix.json)
+- [`config/medit/themes/assassin.json`](/home/dan/de/config/medit/themes/assassin.json)
+- [`config/medit/themes/ghost.json`](/home/dan/de/config/medit/themes/ghost.json)
 
 If `meditrc` is absent, `medit` falls back to default file names in `./.config/medit/` and then `~/.config/medit/`. If those files are also absent, it falls back to embedded defaults.
 
@@ -322,6 +324,7 @@ On terminals with extended color support, `medit` uses those palette entries dir
 - `:q!` force quit
 - `:wq` or `:x` write and quit
 - `:42` jump to line 42
+- `Tab` in `:` command mode opens command completion
 - `:s/pat/repl/`, `:s/pat/repl/g`, and `:%s/pat/repl/g` substitute on the current line or whole buffer
 - `:e filename` open another file in a new buffer and switch to it
 - `:buffers` list open buffers
