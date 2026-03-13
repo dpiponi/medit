@@ -222,6 +222,14 @@ To let Codex or another MCP client talk to a running `medit` instance:
 
 The bridge exposes tools for buffer/window inspection, reading buffer text and selection, opening files, switching buffers, applying text edits, and saving buffers.
 
+For direct local scripting without MCP, use the companion CLI:
+
+```sh
+python3 tools/medit_ctl.py --socket /tmp/medit.sock status
+python3 tools/medit_ctl.py --socket /tmp/medit.sock get-buffer
+python3 tools/medit_ctl.py --socket /tmp/medit.sock raw status
+```
+
 The checked-in example config is:
 
 - [`config/meditrc`](/home/dan/de/config/meditrc)
