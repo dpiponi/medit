@@ -42,6 +42,11 @@ EditorCommandResult apply_editor_command(EditorCore &core, const EditorCommand &
                 result.applied = true;
             }
             return result;
+        case EditorCommandType::SetSelectionRange:
+            if (command.selection_range) {
+                result.applied = core.set_selection_range(*command.selection_range, SelectionMode::Character);
+            }
+            return result;
         case EditorCommandType::OpenLocation:
         case EditorCommandType::ShowPopup:
         case EditorCommandType::ClearPopup:

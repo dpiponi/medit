@@ -82,5 +82,6 @@ class LspService : public EditorService {
     void send_definition_request(const ServiceRequest &request);
     void send_hover_request(const ServiceRequest &request);
     void send_completion_request(const ServiceRequest &request);
+    void send_selection_range_request(const ServiceRequest &request);
     void handle_message(const std::string &payload);
 };

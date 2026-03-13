@@ -13,6 +13,7 @@ enum class EditorCommandType {
     ClearAnnotations,
     MoveCursor,
     OpenLocation,
+    SetSelectionRange,
     ShowPopup,
     ClearPopup,
     SetStatusMessage,
@@ -36,6 +37,8 @@ struct EditorCommand {
     std::vector<Diagnostic> diagnostics;
     std::vector<InlineAnnotation> annotations;
     std::optional<Position> position;
+    std::optional<Range> selection_range;
+    std::vector<Range> selection_ranges;
     std::string title;
     std::string message;
     PopupKind popup_kind = PopupKind::Text;

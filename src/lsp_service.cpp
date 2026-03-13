@@ -326,6 +326,43 @@ std::vector<PopupMenuItem> completion_items_from_result(
     return parsed;
 }
 
+std::vector<Range> selection_ranges_from_result(const JsonValue &result, const EditorCore &core) {
+    if (!result.is_array() || result.empty()) {
+        return {};
+    }
+    const JsonValue &first = result.front();
+    if (!first.is_object()) {
+        return {};
+    }
+
+    std::vector<Range> ranges;
+    const JsonValue *current = &first;
+    while (current != nullptr && current->is_object()) {
+        auto range_value = current->find("range");
+        if (range_value != current->end() && range_value->is_object()) {
+            auto start = range_value->find("start");
+            auto end = range_value->find("end");
+            if (start != range_value->end() && end != range_value->end() && start->is_object() && end->is_object()) {
+                Range range{position_from_lsp(*start, core), position_from_lsp(*end, core)};
+                if (!positions_equal(range.start, range.end)) {
+                    ranges.push_back(normalized_range(range));
+                }
+            }
+        }
+
+        auto parent = current->find("parent");
+        if (parent == current->end() || !parent->is_object()) {
+            break;
+        }
+        current = &*parent;
+    }
+
+    ranges.erase(std::unique(ranges.begin(), ranges.end(), [](const Range &left, const Range &right) {
+        return positions_equal(left.start, right.start) && positions_equal(left.end, right.end);
+    }), ranges.end());
+    return ranges;
+}
+
 }  // namespace
 
 std::string encode_lsp_message(const std::string &payload) {
@@ -496,6 +533,8 @@ void LspService::handle_request(const ServiceRequest &request) {
             queue_status("Hover unavailable");
         } else if (request.type == ServiceRequestType::Completion) {
             queue_status("Completion unavailable");
+        } else if (request.type == ServiceRequestType::SelectionRange) {
+            queue_status("Selection range unavailable");
         }
         return;
     }
@@ -506,6 +545,8 @@ void LspService::handle_request(const ServiceRequest &request) {
         send_hover_request(request);
     } else if (request.type == ServiceRequestType::Completion) {
         send_completion_request(request);
+    } else if (request.type == ServiceRequestType::SelectionRange) {
+        send_selection_range_request(request);
     }
 }
 
@@ -1033,6 +1074,26 @@ void LspService::send_completion_request(const ServiceRequest &request) {
     }
 }
 
+void LspService::send_selection_range_request(const ServiceRequest &request) {
+    int request_id = next_request_id_++;
+    pending_requests_[request_id] = request;
+    std::ostringstream payload;
+    payload << "{"
+            << "\"jsonrpc\":\"2.0\","
+            << "\"id\":" << request_id << ","
+            << "\"method\":\"textDocument/selectionRange\","
+            << "\"params\":{"
+            << "\"textDocument\":{\"uri\":" << json_string(request.document_uri) << "},"
+            << "\"positions\":[{\"line\":" << request.utf16_position.row
+            << ",\"character\":" << request.utf16_position.column << "}]"
+            << "}"
+            << "}";
+    if (!write_payload(payload.str())) {
+        pending_requests_.erase(request_id);
+        queue_status("Selection range request failed");
+    }
+}
+
 void LspService::handle_message(const std::string &payload) {
     JsonValue root = parse_json(payload);
     if (!root.is_object()) {
@@ -1073,6 +1134,8 @@ void LspService::handle_message(const std::string &payload) {
                     queue_status("Hover request failed");
                 } else if (request.type == ServiceRequestType::Completion) {
                     queue_status("Completion request failed");
+                } else if (request.type == ServiceRequestType::SelectionRange) {
+                    queue_status("Selection range request failed");
                 }
                 return;
             }
@@ -1149,6 +1212,28 @@ void LspService::handle_message(const std::string &payload) {
                 command.position = text_position_for_utf16(document_text, request.utf16_position);
                 queue_event(
                     {ServiceEventType::Notification, name(), "completion", command, request.document_uri, request.document_version, std::nullopt, U""});
+            } else if (request.type == ServiceRequestType::SelectionRange) {
+                if (result == root.end() || result->is_null()) {
+                    queue_status("No enclosing AST range");
+                    return;
+                }
+                EditorCore conversion_core;
+                std::string file_path = file_path_from_uri(request.document_uri);
+                if (!file_path.empty()) {
+                    conversion_core.load_file(file_path);
+                }
+                std::vector<Range> ranges = selection_ranges_from_result(*result, conversion_core);
+                if (ranges.empty()) {
+                    queue_status("No enclosing AST range");
+                    return;
+                }
+                EditorCommand command;
+                command.type = EditorCommandType::SetSelectionRange;
+                command.document_uri = request.document_uri;
+                command.selection_range = ranges.front();
+                command.selection_ranges = std::move(ranges);
+                command.position = conversion_core.position_for_utf16(request.utf16_position);
+                queue_event({ServiceEventType::Notification, name(), "selection_range", command, request.document_uri, request.document_version, std::nullopt, U""});
             } else if (request.type == ServiceRequestType::WarmHover) {
                 return;
             }

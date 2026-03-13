@@ -19,6 +19,7 @@ enum class ServiceRequestType {
     Hover,
     WarmHover,
     Completion,
+    SelectionRange,
 };
 
 struct ServiceRequest {

@@ -120,6 +120,11 @@ struct EditorState {
         std::optional<std::size_t> current_search_match_index;
         Position search_origin;
         std::optional<std::size_t> selected_diagnostic_index;
+        std::string ast_selection_document_uri;
+        std::size_t ast_selection_document_version = 0;
+        Position ast_selection_cursor;
+        std::vector<Range> ast_selection_ranges;
+        std::size_t ast_selection_index = 0;
     };
 
     struct BufferUiState {
@@ -250,6 +255,14 @@ const EditorState::WindowUiState &window_ui(const EditorState &state, std::size_
     return const_cast<EditorState &>(state).window_ui.try_emplace(window_id).first->second;
 }
 
+void clear_ast_selection_state(EditorState::WindowUiState &ui) {
+    ui.ast_selection_document_uri.clear();
+    ui.ast_selection_document_version = 0;
+    ui.ast_selection_cursor = {};
+    ui.ast_selection_ranges.clear();
+    ui.ast_selection_index = 0;
+}
+
 EditorState::SyntaxUiState &buffer_syntax_ui(EditorState &state, std::size_t buffer_id) {
     return state.syntax_ui.try_emplace(buffer_id).first->second;
 }
@@ -325,7 +338,20 @@ std::optional<Range> displayed_selection_range(const EditorState &state, std::si
 }
 
 void sync_window_view_from_core(EditorState &state, std::size_t window_id) {
-    window_ui(state, window_id).view_state = window_core(state, window_id).view_state();
+    EditorState::WindowUiState &ui = window_ui(state, window_id);
+    EditorViewState previous = ui.view_state;
+    ui.view_state = window_core(state, window_id).view_state();
+    auto same_optional_position = [](const std::optional<Position> &left, const std::optional<Position> &right) {
+        if (!left.has_value() || !right.has_value()) {
+            return !left.has_value() && !right.has_value();
+        }
+        return positions_equal(*left, *right);
+    };
+    if (!positions_equal(previous.cursor, ui.view_state.cursor) ||
+        !same_optional_position(previous.selection_anchor, ui.view_state.selection_anchor) ||
+        previous.selection_mode != ui.view_state.selection_mode) {
+        clear_ast_selection_state(ui);
+    }
 }
 
 void sync_core_view_from_window(EditorState &state, std::size_t window_id) {
@@ -1979,6 +2005,80 @@ void request_completion(EditorState &state) {
     handle_service_events(state);
     set_status(state, "Completion requested");
 }
+
+void request_selection_range(EditorState &state) {
+    EditorCore &core = active_core(state);
+    state.runtime.dispatch_editor_events(core);
+    ServiceRequest request;
+    request.type = ServiceRequestType::SelectionRange;
+    request.document_uri = core.document_uri();
+    request.utf16_position = core.utf16_position_for_position(core.cursor());
+    request.document_version = core.document_version();
+    state.runtime.dispatch_service_request(request);
+    state.runtime.poll_services();
+    handle_service_events(state);
+}
+
+void select_enclosing_ast(EditorState &state) {
+    EditorState::WindowUiState &ui = active_buffer_ui(state);
+    EditorCore &core = active_core(state);
+    bool cache_valid = ui.ast_selection_document_uri == core.document_uri() &&
+        ui.ast_selection_document_version == core.document_version() && !ui.ast_selection_ranges.empty();
+    if (!cache_valid) {
+        request_selection_range(state);
+        return;
+    }
+    if (ui.ast_selection_index + 1 < ui.ast_selection_ranges.size()) {
+        ++ui.ast_selection_index;
+        std::string cached_uri = ui.ast_selection_document_uri;
+        std::size_t cached_version = ui.ast_selection_document_version;
+        Position cached_cursor = ui.ast_selection_cursor;
+        std::vector<Range> cached_ranges = ui.ast_selection_ranges;
+        std::size_t cached_index = ui.ast_selection_index;
+        core.set_selection_range(ui.ast_selection_ranges[ui.ast_selection_index], SelectionMode::Character);
+        state.mode = Mode::Visual;
+        sync_window_view_from_core(state, state.windows.active_window_id());
+        ui.ast_selection_document_uri = std::move(cached_uri);
+        ui.ast_selection_document_version = cached_version;
+        ui.ast_selection_cursor = cached_cursor;
+        ui.ast_selection_ranges = std::move(cached_ranges);
+        ui.ast_selection_index = cached_index;
+        set_status(state, "Selected enclosing AST node");
+    } else {
+        set_status(state, "No enclosing AST range");
+    }
+}
+
+void select_inner_ast(EditorState &state) {
+    EditorState::WindowUiState &ui = active_buffer_ui(state);
+    EditorCore &core = active_core(state);
+    bool cache_valid = ui.ast_selection_document_uri == core.document_uri() &&
+        ui.ast_selection_document_version == core.document_version() && !ui.ast_selection_ranges.empty();
+    if (!cache_valid) {
+        set_status(state, "No smaller AST range");
+        return;
+    }
+    if (ui.ast_selection_index == 0) {
+        set_status(state, "No smaller AST range");
+        return;
+    }
+    --ui.ast_selection_index;
+    std::string cached_uri = ui.ast_selection_document_uri;
+    std::size_t cached_version = ui.ast_selection_document_version;
+    Position cached_cursor = ui.ast_selection_cursor;
+    std::vector<Range> cached_ranges = ui.ast_selection_ranges;
+    std::size_t cached_index = ui.ast_selection_index;
+    core.set_selection_range(ui.ast_selection_ranges[ui.ast_selection_index], SelectionMode::Character);
+    state.mode = Mode::Visual;
+    sync_window_view_from_core(state, state.windows.active_window_id());
+    ui.ast_selection_document_uri = std::move(cached_uri);
+    ui.ast_selection_document_version = cached_version;
+    ui.ast_selection_cursor = cached_cursor;
+    ui.ast_selection_ranges = std::move(cached_ranges);
+    ui.ast_selection_index = cached_index;
+    set_status(state, "Selected inner AST node");
+}
+
 
 std::optional<std::string> token_under_cursor(const EditorCore &core) {
     Position cursor = core.cursor();
@@ -4251,6 +4351,12 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
         case EditorAction::ShowCompletion:
             request_completion(state);
             break;
+        case EditorAction::SelectEnclosingAst:
+            select_enclosing_ast(state);
+            break;
+        case EditorAction::SelectInnerAst:
+            select_inner_ast(state);
+            break;
         case EditorAction::GoToFileUnderCursor:
             open_file_under_cursor(state);
             break;
@@ -4551,6 +4657,28 @@ void handle_input(EditorState &state) {
         return;
     }
 
+    if (!is_special && key == 27) {
+        wint_t next_key = 0;
+        timeout(0);
+        int next_result = get_wch(&next_key);
+        std::optional<int> timeout_ms = state.runtime.idle_wait_timeout_ms();
+        timeout(timeout_ms.has_value() ? *timeout_ms : -1);
+        if (next_result != ERR) {
+            bool next_special = next_result == KEY_CODE_YES;
+            std::optional<std::string> alt_token;
+            if (next_special && next_key == KEY_UP) {
+                alt_token = "alt-up";
+            } else if (next_special && next_key == KEY_DOWN) {
+                alt_token = "alt-down";
+            }
+            if (alt_token) {
+                process_input_token(state, *alt_token, next_key, false);
+                return;
+            }
+            unget_wch(next_key);
+        }
+    }
+
     if (is_special && key == KEY_MOUSE) {
         handle_mouse_input(state);
         return;
@@ -4659,13 +4787,29 @@ void handle_service_events(EditorState &state) {
             dismiss_popup(state);
             continue;
         }
+        if (command.type == EditorCommandType::SetSelectionRange) {
+            if (!command.document_uri || !command.selection_range) {
+                continue;
+            }
+            EditorBuffer *buffer = state.session.find_buffer_by_uri(*command.document_uri);
+            if (!buffer) {
+                continue;
+            }
+            std::optional<std::size_t> window_id = state.windows.find_window_showing_buffer(buffer->id);
+            if (window_id) {
+                focus_window(state, *window_id);
+            } else {
+                show_buffer_in_active_window(state, buffer->id);
+                window_id = state.windows.active_window_id();
+            }
+        }
         EditorCore *target = &active_core(state);
         if (command.document_uri) {
             EditorBuffer *buffer = state.session.find_buffer_by_uri(*command.document_uri);
             if (!buffer) {
                 continue;
             }
-            if (command.type == EditorCommandType::MoveCursor) {
+            if (command.type == EditorCommandType::MoveCursor || command.type == EditorCommandType::SetSelectionRange) {
                 if (std::optional<std::size_t> window_id = state.windows.find_window_showing_buffer(buffer->id)) {
                     focus_window(state, *window_id);
                 } else {
@@ -4675,15 +4819,27 @@ void handle_service_events(EditorState &state) {
             target = &buffer->core;
         }
         EditorCommandResult result = apply_editor_command(*target, command);
-        if (command.type == EditorCommandType::MoveCursor) {
+        if (command.type == EditorCommandType::MoveCursor || command.type == EditorCommandType::SetSelectionRange) {
             if (command.document_uri) {
                 if (EditorBuffer *buffer = state.session.find_buffer_by_uri(*command.document_uri)) {
                     if (std::optional<std::size_t> window_id = state.windows.find_window_showing_buffer(buffer->id)) {
                         sync_window_view_from_core(state, *window_id);
+                        if (command.type == EditorCommandType::SetSelectionRange) {
+                            EditorState::WindowUiState &ui = window_ui(state, *window_id);
+                            ui.ast_selection_document_uri = *command.document_uri;
+                            ui.ast_selection_document_version = event.document_version;
+                            ui.ast_selection_cursor = command.position.value_or(buffer->core.cursor());
+                            ui.ast_selection_ranges = command.selection_ranges;
+                            ui.ast_selection_index = 0;
+                        }
                     }
                 }
             } else if (state.windows.active_window()) {
                 sync_window_view_from_core(state, state.windows.active_window_id());
+            }
+            if (command.type == EditorCommandType::SetSelectionRange) {
+                state.mode = Mode::Visual;
+                set_status(state, "Selected AST node");
             }
         }
         if (result.status_message) {

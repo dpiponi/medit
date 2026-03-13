@@ -76,6 +76,8 @@ enum class EditorAction {
     GoToDefinition,
     ShowHover,
     ShowCompletion,
+    SelectEnclosingAst,
+    SelectInnerAst,
     GoToFileUnderCursor,
     JumpBack,
     JumpForward,
