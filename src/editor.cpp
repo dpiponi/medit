@@ -3669,6 +3669,37 @@ bool select_entire_buffer(EditorState &state) {
     return true;
 }
 
+bool move_cursor_to_selection_boundary(EditorState &state, bool to_end) {
+    EditorCore &core = active_core(state);
+    std::optional<Range> selection = core.selection_range();
+    if (!selection) {
+        return false;
+    }
+
+    SelectionMode mode = core.selection_mode();
+    Position start = selection->start;
+    Position character_end = selection->end;
+    if (character_end.column > 0) {
+        --character_end.column;
+    } else if (character_end.row > 0) {
+        --character_end.row;
+        character_end.column = core.line_length(character_end.row);
+    }
+    Position end = mode == SelectionMode::Line
+        ? Position{
+              selection->end.column == 0 && selection->end.row > selection->start.row ? selection->end.row - 1
+                                                                                       : selection->end.row,
+              0}
+        : character_end;
+
+    EditorViewState view_state = core.view_state();
+    view_state.selection_mode = mode;
+    view_state.cursor = to_end ? end : start;
+    view_state.selection_anchor = to_end ? std::optional<Position>(start) : std::optional<Position>(end);
+    core.restore_view_state(view_state, true);
+    return true;
+}
+
 std::pair<std::size_t, std::size_t> selected_line_span(const EditorCore &core) {
     if (std::optional<Range> selection = core.selection_range()) {
         Range normalized = normalized_range(*selection);
@@ -4439,6 +4470,16 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
         case EditorAction::SelectAll:
             if (!select_entire_buffer(state)) {
                 set_status(state, "Selection empty");
+            }
+            break;
+        case EditorAction::MoveToSelectionStart:
+            if (!move_cursor_to_selection_boundary(state, false)) {
+                set_status(state, "No selection");
+            }
+            break;
+        case EditorAction::MoveToSelectionEnd:
+            if (!move_cursor_to_selection_boundary(state, true)) {
+                set_status(state, "No selection");
             }
             break;
         case EditorAction::SelectInnerWord:

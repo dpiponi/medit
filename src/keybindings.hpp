@@ -92,6 +92,8 @@ enum class EditorAction {
     YankSelection,
     ReplaceSelectionWithYank,
     SelectAll,
+    MoveToSelectionStart,
+    MoveToSelectionEnd,
     SelectInnerWord,
     SelectAroundWord,
 };

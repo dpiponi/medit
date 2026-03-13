@@ -912,6 +912,16 @@ void test_keybinding_dispatch() {
         change.action.has_value() && *change.action == EditorAction::ChangeSelection,
         "visual c should map to change selection");
 
+    KeyDispatch selection_start = dispatch_key_sequence(keybindings, "visual", pending, "o", false);
+    expect(
+        selection_start.action.has_value() && *selection_start.action == EditorAction::MoveToSelectionStart,
+        "visual o should move to selection start");
+
+    KeyDispatch selection_end = dispatch_key_sequence(keybindings, "visual", pending, "O", false);
+    expect(
+        selection_end.action.has_value() && *selection_end.action == EditorAction::MoveToSelectionEnd,
+        "visual O should move to selection end");
+
     KeyDispatch select_all = dispatch_key_sequence(keybindings, "normal", pending, "%", false);
     expect(
         select_all.action.has_value() && *select_all.action == EditorAction::SelectAll,

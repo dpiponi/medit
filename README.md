@@ -305,6 +305,7 @@ On terminals with extended color support, `medit` uses those palette entries dir
 - In visual mode, `p` or `P` replaces the selection with the yanked text
 - In visual mode, `|` runs a Unix command on the selection and replaces it with stdout
 - In visual mode, `S` runs `sed <script>` on the selection and replaces it with stdout, for example `%Ss/a/b/g`
+- In visual mode, `o` moves the cursor to the start of the current selection and `O` moves it to the end
 - In visual mode, `iw` extends the selection to include the inner word at the cursor
 - In visual mode, `aw` extends the selection to include the word plus adjacent spaces at the cursor
 - Search updates dynamically as you type and highlights all matches, with the current match highlighted separately

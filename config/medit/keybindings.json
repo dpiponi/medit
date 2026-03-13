@@ -114,6 +114,8 @@
     "y": "yank_selection",
     "p": "replace_selection_with_yank",
     "P": "replace_selection_with_yank",
+    "o": "move_to_selection_start",
+    "O": "move_to_selection_end",
     "%": "select_all",
     "v": "enter_normal_mode",
     "V": "enter_visual_line_mode",
