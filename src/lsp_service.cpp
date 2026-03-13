@@ -894,7 +894,7 @@ bool LspService::write_payload(const std::string &) { return false; }
 
 void LspService::send_initialize(const std::filesystem::path &workspace_root) {
     initialize_request_id_ = next_request_id_++;
-    std::string root = workspace_root.string();
+    std::string root_uri = file_uri_for_path(workspace_root.string());
     std::ostringstream payload;
     payload << "{"
             << "\"jsonrpc\":\"2.0\","
@@ -902,7 +902,7 @@ void LspService::send_initialize(const std::filesystem::path &workspace_root) {
             << "\"method\":\"initialize\","
             << "\"params\":{"
             << "\"processId\":null,"
-            << "\"rootUri\":" << json_string("file://" + root) << ","
+            << "\"rootUri\":" << json_string(root_uri) << ","
             << "\"capabilities\":{},"
             << "\"clientInfo\":{\"name\":\"medit\"}"
             << "}"
