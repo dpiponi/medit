@@ -1418,7 +1418,8 @@ const std::vector<VisualRow> &visual_rows_for_window(const EditorState &state, s
     const EditorCore &core = window_core(state, window_id);
     bool show_diagnostics = should_render_diagnostics(state, window_id);
     VisualRowsCache &cache = buffer_state.visual_rows_caches[{buffer_cols, show_diagnostics}];
-    if (cache.buffer_cols != buffer_cols || cache.text_revision != core.current_revision() ||
+    bool live_text_may_change = state.insert_session_active;
+    if (live_text_may_change || cache.buffer_cols != buffer_cols || cache.text_revision != core.current_revision() ||
         cache.diagnostics_revision != core.diagnostics_revision() ||
         cache.annotations_revision != core.annotations_revision() ||
         cache.show_diagnostics != show_diagnostics) {
@@ -5264,6 +5265,7 @@ std::string handle_control_request(EditorState &state, std::string_view request_
                 return error_control_result("buffer not found").dump();
             }
             show_buffer_in_active_window(state, *buffer_id);
+            set_status(state, std::format("Switched to {}", active_core(state).display_file_name()));
             return success_control_result(json_buffer_summary(state, active_buffer(state))).dump();
         }
 

@@ -135,6 +135,20 @@ void test_autoindent_open_line_below() {
     expect_text(core, "    alpha", "undo autoindented open line below restores the original line");
 }
 
+void test_open_line_below_at_eof_then_newline() {
+    EditorCore core;
+    expect(core.insert_text({0, 0}, utf8_to_u32("one\ntwo")), "seed eof open-line-below buffer");
+    core.move_to_last_line();
+    core.move_line_start();
+    core.open_line_below();
+    expect_text(core, "one\ntwo\n", "open line below at eof inserts trailing blank line");
+    expect_cursor(core, {2, 0}, "open line below at eof moves cursor to inserted line");
+
+    core.insert_newline();
+    expect_text(core, "one\ntwo\n\n", "newline on inserted eof line adds another blank line");
+    expect_cursor(core, {3, 0}, "newline after eof open line stays at new bottom line");
+}
+
 void test_visual_range_semantics_and_delete() {
     EditorCore core;
     for (char ch : std::string("abcd")) {
@@ -1755,6 +1769,7 @@ int main() {
         test_insert_mode_soft_tab_and_shift_tab();
         test_autoindent_newline();
         test_autoindent_open_line_below();
+        test_open_line_below_at_eof_then_newline();
         test_visual_range_semantics_and_delete();
         test_linewise_selection_range_and_delete();
         test_linewise_delete_and_paste();
