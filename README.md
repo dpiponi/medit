@@ -217,6 +217,7 @@ The checked-in example config is:
 - [`config/medit/themes/tiger.json`](/home/dan/de/config/medit/themes/tiger.json)
 - [`config/medit/themes/seaside.json`](/home/dan/de/config/medit/themes/seaside.json)
 - [`config/medit/themes/luxor.json`](/home/dan/de/config/medit/themes/luxor.json)
+- [`config/medit/themes/matrix.json`](/home/dan/de/config/medit/themes/matrix.json)
 
 If `meditrc` is absent, `medit` falls back to default file names in `./.config/medit/` and then `~/.config/medit/`. If those files are also absent, it falls back to embedded defaults.
 

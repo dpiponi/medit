@@ -426,6 +426,9 @@ enum class ThemeSlot : short {
     SyntaxComment = 20,
     DiagnosticError = 21,
     DiagnosticWarning = 22,
+    DiagnosticMessageError = 23,
+    DiagnosticMessageWarning = 24,
+    DiagnosticSelected = 25,
 };
 
 ThemeSlot theme_slot(StyleRole role);
@@ -800,7 +803,7 @@ void apply_theme_to_terminal(const Theme &theme) {
     start_color();
     use_default_colors();
     int terminal_colors = has_colors() ? COLORS : 0;
-    for (int role_index = 0; role_index <= static_cast<int>(StyleRole::DiagnosticWarning); ++role_index) {
+    for (int role_index = 0; role_index <= static_cast<int>(StyleRole::DiagnosticSelected); ++role_index) {
         StyleRole role = static_cast<StyleRole>(role_index);
         TextStyle style = theme_style(theme, role);
         init_pair(
@@ -2741,6 +2744,12 @@ ThemeSlot theme_slot(StyleRole role) {
             return ThemeSlot::DiagnosticError;
         case StyleRole::DiagnosticWarning:
             return ThemeSlot::DiagnosticWarning;
+        case StyleRole::DiagnosticMessageError:
+            return ThemeSlot::DiagnosticMessageError;
+        case StyleRole::DiagnosticMessageWarning:
+            return ThemeSlot::DiagnosticMessageWarning;
+        case StyleRole::DiagnosticSelected:
+            return ThemeSlot::DiagnosticSelected;
     }
     return ThemeSlot::Default;
 }
@@ -2914,9 +2923,9 @@ void draw_line_number(
 StyleRole annotation_role(const InlineAnnotation &annotation) {
     switch (annotation.severity) {
         case AnnotationSeverity::Error:
-            return StyleRole::DiagnosticError;
+            return StyleRole::DiagnosticMessageError;
         case AnnotationSeverity::Warning:
-            return StyleRole::DiagnosticWarning;
+            return StyleRole::DiagnosticMessageWarning;
         case AnnotationSeverity::Info:
             return StyleRole::MessageBar;
     }
@@ -2977,14 +2986,14 @@ void draw_buffer_rows(const EditorState &state, std::size_t window_id, const Win
         }
 
         const AnnotationEntryView &annotation = *visual_row.annotation;
-        StyleRole role =
-            annotation.diagnostic_index && buffer_ui.selected_diagnostic_index &&
-                    *annotation.diagnostic_index == *buffer_ui.selected_diagnostic_index
-                ? StyleRole::StatusBar
-                : annotation_role(annotation.annotation);
+        StyleRole role = annotation_role(annotation.annotation);
+        if (annotation.diagnostic_index && buffer_ui.selected_diagnostic_index &&
+            *annotation.diagnostic_index == *buffer_ui.selected_diagnostic_index) {
+            role = StyleRole::DiagnosticSelected;
+        }
         TextStyle style = theme_style(state.theme, role);
         attron(curses_attributes(style, role));
-        mvprintw(screen_row, rect.left, "%*s ", line_number_width, ">");
+        mvprintw(screen_row, rect.left, "%*s ", line_number_width, "");
         std::vector<std::u32string> wrapped =
             wrap_annotation_text(annotation_prefix(annotation.annotation) + annotation.annotation.text, buffer_cols - 2);
         std::u32string text = visual_row.wrap_offset < wrapped.size() ? wrapped[visual_row.wrap_offset] : U"";
@@ -3154,7 +3163,7 @@ void draw_popup(const EditorState &state, int screen_rows, int screen_cols) {
     int popup_width = std::min(screen_cols - 4, static_cast<int>(content_width) + (state.popup.kind == PopupKind::Menu ? 6 : 4));
     int popup_height = 0;
     if (state.popup.kind == PopupKind::Menu) {
-        popup_height = std::min(available_rows, static_cast<int>(wrapped.size()) + 4);
+        popup_height = std::min(available_rows, static_cast<int>(wrapped.size()) + 5);
     } else {
         popup_height = std::min(available_rows, static_cast<int>(wrapped.size()) + 2);
     }

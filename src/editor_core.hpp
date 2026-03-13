@@ -53,6 +53,9 @@ enum class StyleRole {
     SyntaxComment,
     DiagnosticError,
     DiagnosticWarning,
+    DiagnosticMessageError,
+    DiagnosticMessageWarning,
+    DiagnosticSelected,
 };
 
 struct TextStyle {

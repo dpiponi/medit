@@ -20,5 +20,8 @@
   "syntax_string": { "foreground": "color193", "background": "default", "bold": "false", "underline": "false", "reverse": "false" },
   "syntax_comment": { "foreground": "color101", "background": "default", "bold": "false", "underline": "false", "reverse": "false" },
   "diagnostic_error": { "foreground": "color203", "background": "default", "bold": "true", "underline": "true", "reverse": "false" },
-  "diagnostic_warning": { "foreground": "color221", "background": "default", "bold": "true", "underline": "true", "reverse": "false" }
+  "diagnostic_warning": { "foreground": "color221", "background": "default", "bold": "true", "underline": "true", "reverse": "false" },
+  "diagnostic_message_error": { "foreground": "color203", "background": "default", "bold": "true", "underline": "false", "reverse": "false" },
+  "diagnostic_message_warning": { "foreground": "color221", "background": "default", "bold": "true", "underline": "false", "reverse": "false" },
+  "diagnostic_selected": { "foreground": "black", "background": "color221", "bold": "true", "underline": "false", "reverse": "false" }
 }

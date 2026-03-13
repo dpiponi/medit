@@ -34,7 +34,10 @@ constexpr const char *kEmbeddedDefaultTheme = R"json(
   "syntax_string": { "foreground": "green", "background": "default", "bold": "false", "underline": "false", "reverse": "false" },
   "syntax_comment": { "foreground": "blue", "background": "default", "bold": "false", "underline": "false", "reverse": "false" },
   "diagnostic_error": { "foreground": "red", "background": "default", "bold": "false", "underline": "true", "reverse": "false" },
-  "diagnostic_warning": { "foreground": "yellow", "background": "default", "bold": "false", "underline": "true", "reverse": "false" }
+  "diagnostic_warning": { "foreground": "yellow", "background": "default", "bold": "false", "underline": "true", "reverse": "false" },
+  "diagnostic_message_error": { "foreground": "red", "background": "default", "bold": "false", "underline": "false", "reverse": "false" },
+  "diagnostic_message_warning": { "foreground": "yellow", "background": "default", "bold": "false", "underline": "false", "reverse": "false" },
+  "diagnostic_selected": { "foreground": "black", "background": "yellow", "bold": "false", "underline": "false", "reverse": "false" }
 }
 )json";
 
@@ -66,6 +69,9 @@ std::map<std::string, StyleRole> role_names() {
         {"syntax_comment", StyleRole::SyntaxComment},
         {"diagnostic_error", StyleRole::DiagnosticError},
         {"diagnostic_warning", StyleRole::DiagnosticWarning},
+        {"diagnostic_message_error", StyleRole::DiagnosticMessageError},
+        {"diagnostic_message_warning", StyleRole::DiagnosticMessageWarning},
+        {"diagnostic_selected", StyleRole::DiagnosticSelected},
     };
 }
 

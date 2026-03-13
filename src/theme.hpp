@@ -8,7 +8,7 @@
 #include <string>
 
 struct Theme {
-    std::array<TextStyle, static_cast<std::size_t>(StyleRole::DiagnosticWarning) + 1> styles;
+    std::array<TextStyle, static_cast<std::size_t>(StyleRole::DiagnosticSelected) + 1> styles;
     std::string source_path;
 };
 
