@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <algorithm>
 
 enum class SyntaxEngine {
     None,

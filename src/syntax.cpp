@@ -5,6 +5,7 @@
 
 #include <expected>
 #include <cstdint>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <type_traits>
