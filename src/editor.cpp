@@ -1,226 +1,24 @@
-#include "config.hpp"
-#include "control_server.hpp"
-#include "editor_commands.hpp"
-#include "editor_core.hpp"
-#include "editor_session.hpp"
-#include "editor_windows.hpp"
+#include "editor_internal.hpp"
 #include "json.hpp"
-#include "keybindings.hpp"
 #include "logger.hpp"
 #include "lsp_service.hpp"
 #include "process_utils.hpp"
-#include "services.hpp"
-#include "syntax.hpp"
 #include "string_utils.hpp"
-#include "theme.hpp"
 
 #include <algorithm>
-#include <array>
 #include <cctype>
 #include <clocale>
-#include <csignal>
-#include <chrono>
 #include <cstdlib>
 #include <cstdio>
 #include <fstream>
 #include <filesystem>
-#include <format>
-#include <limits>
-#include <memory>
-#include <map>
-#include <curses.h>
-#include <optional>
-#include <ranges>
-#include <regex>
 #include <sstream>
 #include <string>
-#include <utility>
-#include <vector>
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
-#include <termios.h>
 #include <unistd.h>
 #endif
-
-enum class Mode {
-    Normal,
-    Insert,
-    Visual,
-    VisualLine,
-    Command,
-    Search,
-};
-
-enum class PendingMotion {
-    None,
-    FindForward,
-    FindBackward,
-    TillForward,
-    TillBackward,
-};
-
-enum class CommandPromptKind {
-    EditorCommand,
-    FilterSelection,
-    SedSelection,
-};
-
-struct DiagnosticEntryView {
-    std::size_t index = 0;
-    Diagnostic diagnostic;
-};
-
-struct AnnotationEntryView {
-    std::optional<std::size_t> diagnostic_index;
-    InlineAnnotation annotation;
-};
-
-enum class VisualRowKind {
-    SourceLine,
-    Annotation,
-};
-
-struct VisualRow {
-    VisualRowKind kind = VisualRowKind::SourceLine;
-    std::size_t buffer_row = 0;
-    std::size_t wrap_offset = 0;
-    std::optional<AnnotationEntryView> annotation;
-};
-
-struct VisualRowsCache {
-    int buffer_cols = -1;
-    std::size_t text_revision = std::numeric_limits<std::size_t>::max();
-    std::size_t diagnostics_revision = std::numeric_limits<std::size_t>::max();
-    std::size_t annotations_revision = std::numeric_limits<std::size_t>::max();
-    bool show_diagnostics = true;
-    std::vector<VisualRow> rows;
-};
-
-struct EditorState {
-    enum class PopupApplyTarget {
-        BufferText,
-        CommandBuffer,
-    };
-
-    enum class PopupFilterMode {
-        ContainsLabelOrDetail,
-        PrefixLabelOnly,
-    };
-
-    struct PromptHistory {
-        std::vector<std::u32string> entries;
-        std::optional<std::size_t> browse_index;
-        std::u32string draft;
-    };
-
-    struct JumpLocation {
-        std::string document_uri;
-        std::optional<std::string> file_path;
-        Position position;
-    };
-
-    struct RecordedInput {
-        std::string token;
-        wint_t key = 0;
-        bool printable = false;
-    };
-
-    struct WindowUiState {
-        std::size_t row_offset = 0;
-        std::size_t col_offset = 0;
-        EditorViewState view_state;
-        std::optional<std::size_t> current_search_match_index;
-        Position search_origin;
-        std::optional<std::size_t> selected_diagnostic_index;
-        std::string ast_selection_document_uri;
-        std::size_t ast_selection_document_version = 0;
-        Position ast_selection_cursor;
-        std::vector<Range> ast_selection_ranges;
-        std::size_t ast_selection_index = 0;
-    };
-
-    struct BufferUiState {
-        std::u32string active_search_pattern;
-        std::vector<Range> search_matches;
-        bool search_pattern_valid = true;
-        std::string compiled_search_pattern_utf8;
-        std::unique_ptr<std::regex> compiled_search_regex;
-        std::size_t search_matches_version = 0;
-        std::map<std::pair<int, bool>, VisualRowsCache> visual_rows_caches;
-        std::size_t sorted_diagnostics_revision = std::numeric_limits<std::size_t>::max();
-        std::vector<DiagnosticEntryView> sorted_diagnostics;
-        std::map<bool, std::pair<std::size_t, std::vector<AnnotationEntryView>>> sorted_annotations;
-    };
-
-    struct SyntaxUiState {
-        SyntaxSelection syntax_selection;
-        std::vector<std::vector<HighlightSpan>> syntax_highlights;
-        std::size_t syntax_revision = std::numeric_limits<std::size_t>::max();
-        std::size_t pending_syntax_revision = std::numeric_limits<std::size_t>::max();
-        std::chrono::steady_clock::time_point syntax_dirty_since{};
-        std::optional<std::string> syntax_file_path;
-        bool syntax_config_error_reported = false;
-    };
-
-    struct PopupState {
-        bool visible = false;
-        PopupKind kind = PopupKind::Text;
-        std::string title;
-        std::u32string text;
-        std::vector<PopupMenuItem> items;
-        std::u32string filter;
-        std::vector<std::size_t> filtered_indices;
-        std::size_t selected_index = 0;
-        std::size_t scroll_offset = 0;
-        Mode originating_mode = Mode::Normal;
-        PopupApplyTarget apply_target = PopupApplyTarget::BufferText;
-        PopupFilterMode filter_mode = PopupFilterMode::ContainsLabelOrDetail;
-    };
-
-    EditorSession session;
-    EditorRuntime runtime;
-    EditorConfig config;
-    KeyBindings keybindings;
-    Theme theme = load_embedded_theme();
-    WindowManager windows;
-    std::map<std::size_t, WindowUiState> window_ui;
-    std::map<std::size_t, BufferUiState> buffer_ui;
-    std::map<std::size_t, SyntaxUiState> syntax_ui;
-    bool should_quit = false;
-    Mode mode = Mode::Normal;
-    CommandPromptKind command_prompt_kind = CommandPromptKind::EditorCommand;
-    std::u32string command_buffer;
-    PromptHistory editor_command_history;
-    PromptHistory filter_command_history;
-    PromptHistory sed_command_history;
-    PromptHistory search_history;
-    std::u32string search_buffer;
-    std::string status_message = "NORMAL";
-    PopupState popup;
-    bool diagnostics_visible = true;
-    bool insert_session_active = false;
-    std::vector<std::string> pending_tokens;
-    PendingMotion pending_motion = PendingMotion::None;
-    std::string repeat_digits;
-    std::size_t pending_motion_repeat_count = 1;
-    std::size_t pending_replace_count = 0;
-    std::size_t replay_depth = 0;
-    std::size_t group_depth = 0;
-    std::size_t group_repeat_count = 1;
-    std::vector<RecordedInput> group_inputs;
-    bool command_recording = false;
-    bool command_recording_nonrepeatable = false;
-    std::vector<RecordedInput> command_inputs;
-    std::vector<std::pair<std::size_t, std::size_t>> command_buffer_versions;
-    std::vector<RecordedInput> last_repeatable_command;
-    std::vector<JumpLocation> jump_back_stack;
-    std::vector<JumpLocation> jump_forward_stack;
-    EditorControlServer control_server;
-};
-
-Position displayed_cursor(const EditorState &state, std::size_t window_id);
-std::optional<Range> displayed_selection_range(const EditorState &state, std::size_t window_id);
 
 EditorWindow &active_window(EditorState &state) {
     return *state.windows.active_window();
@@ -535,8 +333,6 @@ enum class ThemeSlot : short {
     DiagnosticSelected = 25,
 };
 
-ThemeSlot theme_slot(StyleRole role);
-
 int codepoint_width(char32_t codepoint) {
     wchar_t wide = static_cast<wchar_t>(codepoint);
     int width = wcwidth(wide);
@@ -572,6 +368,36 @@ std::string mode_name(Mode mode) {
             return "SEARCH";
     }
     return "UNKNOWN";
+}
+
+std::string prefixed_message(const char *prefix, const std::string &value) {
+    return std::string(prefix) + value;
+}
+
+std::string count_label(std::size_t count, const char *singular) {
+    return std::to_string(count) + " " + singular + (count == 1 ? "" : "s");
+}
+
+std::string make_status_bar_left_text(
+    const EditorState &state,
+    const EditorCore &core,
+    const std::string &language,
+    const std::string &workspace) {
+    return mode_name(state.mode) +
+           "  " + core.display_file_name() +
+           "  [b " + std::to_string(state.session.index_for_buffer_id(active_window(state).buffer_id).value_or(0) + 1) +
+           "/" + std::to_string(state.session.buffer_count()) +
+           "] [w " + std::to_string(state.windows.active_window_index() + 1) +
+           "/" + std::to_string(state.windows.window_count()) +
+           "]  " + language +
+           "  ws:" + workspace;
+}
+
+std::string make_status_bar_right_text(const EditorCore &core, Position cursor) {
+    return std::string(core.is_dirty() ? " [+]" : "") +
+           "  " + std::to_string(cursor.row + 1) +
+           ":" + std::to_string(cursor.column + 1) +
+           "  rev " + std::to_string(core.current_revision());
 }
 
 void set_status(EditorState &state, const std::string &message) {
@@ -853,173 +679,11 @@ void initialize_locale() {
     setlocale(LC_ALL, "");
 }
 
-struct RgbColor {
-    int red = 0;
-    int green = 0;
-    int blue = 0;
-};
-
-RgbColor xterm_palette_rgb(short color) {
-    static const std::array<RgbColor, 16> ansi = {{
-        {0, 0, 0},
-        {205, 0, 0},
-        {0, 205, 0},
-        {205, 205, 0},
-        {0, 0, 238},
-        {205, 0, 205},
-        {0, 205, 205},
-        {229, 229, 229},
-        {127, 127, 127},
-        {255, 0, 0},
-        {0, 255, 0},
-        {255, 255, 0},
-        {92, 92, 255},
-        {255, 0, 255},
-        {0, 255, 255},
-        {255, 255, 255},
-    }};
-
-    if (color < 0) {
-        return {};
-    }
-    if (color < 16) {
-        return ansi[static_cast<std::size_t>(color)];
-    }
-    if (color >= 16 && color <= 231) {
-        int index = color - 16;
-        int red = index / 36;
-        int green = (index / 6) % 6;
-        int blue = index % 6;
-        auto component = [](int value) { return value == 0 ? 0 : 55 + value * 40; };
-        return {component(red), component(green), component(blue)};
-    }
-    if (color >= 232 && color <= 255) {
-        int gray = 8 + (color - 232) * 10;
-        return {gray, gray, gray};
-    }
-    return ansi[7];
-}
-
-short nearest_supported_color(short color, int terminal_colors) {
-    if (color < 0 || terminal_colors <= 0) {
-        return color;
-    }
-    if (color < terminal_colors) {
-        return color;
-    }
-    int supported = std::min(terminal_colors, 16);
-    RgbColor target = xterm_palette_rgb(color);
-    int best_distance = std::numeric_limits<int>::max();
-    short best = terminal_colors > 8 ? 7 : COLOR_WHITE;
-    for (int candidate = 0; candidate < supported; ++candidate) {
-        RgbColor sample = xterm_palette_rgb(static_cast<short>(candidate));
-        int dr = target.red - sample.red;
-        int dg = target.green - sample.green;
-        int db = target.blue - sample.blue;
-        int distance = dr * dr + dg * dg + db * db;
-        if (distance < best_distance) {
-            best_distance = distance;
-            best = static_cast<short>(candidate);
-        }
-    }
-    if (terminal_colors <= 8 && best >= 8) {
-        return static_cast<short>(best - 8);
-    }
-    return best;
-}
-
-void apply_theme_to_terminal(const Theme &theme) {
-    start_color();
-    use_default_colors();
-    int terminal_colors = has_colors() ? COLORS : 0;
-    for (int role_index = 0; role_index <= static_cast<int>(StyleRole::DiagnosticSelected); ++role_index) {
-        StyleRole role = static_cast<StyleRole>(role_index);
-        TextStyle style = theme_style(theme, role);
-        init_pair(
-            static_cast<short>(theme_slot(role)),
-            nearest_supported_color(style.foreground, terminal_colors),
-            nearest_supported_color(style.background, terminal_colors));
-    }
-}
-
-bool g_terminal_active = false;
-#if defined(__unix__) || defined(__APPLE__)
-bool g_shell_termios_valid = false;
-termios g_shell_termios{};
-#endif
-
-void restore_shell_terminal_state() {
-#if defined(__unix__) || defined(__APPLE__)
-    if (g_shell_termios_valid) {
-        tcsetattr(STDIN_FILENO, TCSANOW, &g_shell_termios);
-    }
-#endif
-}
-
-void setup_terminal(const Theme &theme) {
-#if defined(__unix__) || defined(__APPLE__)
-    g_shell_termios_valid = tcgetattr(STDIN_FILENO, &g_shell_termios) == 0;
-#endif
-    initscr();
-    set_escdelay(25);
-    def_shell_mode();
-    raw();
-    noecho();
-    keypad(stdscr, TRUE);
-    timeout(-1);
-    mouseinterval(150);
-    mousemask(BUTTON1_CLICKED | BUTTON1_DOUBLE_CLICKED | BUTTON1_TRIPLE_CLICKED, nullptr);
-    apply_theme_to_terminal(theme);
-    curs_set(1);
-    def_prog_mode();
-    g_terminal_active = true;
-}
-
-void teardown_terminal() {
-    if (!g_terminal_active) {
-        restore_shell_terminal_state();
-        return;
-    }
-    mousemask(0, nullptr);
-    keypad(stdscr, FALSE);
-    timeout(-1);
-    curs_set(1);
-    nl();
-    noraw();
-    nocbreak();
-    echo();
-    clear();
-    refresh();
-    endwin();
-    reset_shell_mode();
-    restore_shell_terminal_state();
-    g_terminal_active = false;
-}
-
 bool suspend_supported() {
 #if defined(SIGTSTP)
     return true;
 #else
     return false;
-#endif
-}
-
-void suspend_editor(EditorState &state) {
-#if defined(SIGTSTP)
-    state.pending_tokens.clear();
-    state.pending_motion = PendingMotion::None;
-    state.pending_motion_repeat_count = 1;
-    state.repeat_digits.clear();
-    def_prog_mode();
-    endwin();
-    restore_shell_terminal_state();
-    std::raise(SIGTSTP);
-    reset_prog_mode();
-    refresh();
-    clearok(stdscr, TRUE);
-    set_status(state, mode_name(state.mode));
-#else
-    set_status(state, "Suspend not supported");
 #endif
 }
 
@@ -1155,14 +819,14 @@ void handle_write_command(EditorState &state, const std::string &argument) {
     EditorCore &core = active_core(state);
     if (argument.empty()) {
         if (core.save_current_file()) {
-            set_status(state, std::format("Wrote {}", core.display_file_name()));
+            set_status(state, prefixed_message("Wrote ", core.display_file_name()));
         } else {
             set_status(state, core.file_path() ? "Write failed" : "No file name");
         }
         return;
     }
     if (core.save_current_file_as(argument)) {
-        set_status(state, std::format("Wrote {}", argument));
+        set_status(state, prefixed_message("Wrote ", argument));
     } else {
         set_status(state, "Write failed");
     }
@@ -1180,7 +844,7 @@ void handle_edit_command(EditorState &state, const std::string &argument) {
         sync_active_window_buffer(state);
         window_ui(state, state.windows.active_window_id()) = EditorState::WindowUiState{};
         log_debug("edit command opened path=" + argument);
-        set_status(state, std::format("Opened {}", argument));
+        set_status(state, prefixed_message("Opened ", argument));
     } else {
         log_debug("edit command open failed path=" + argument);
         set_status(state, "Could not open file");
@@ -1256,14 +920,7 @@ void show_diagnostics_summary(EditorState &state) {
         set_status(state, "No diagnostics");
         return;
     }
-    set_status(
-        state,
-        std::format(
-            "{} error{}, {} warning{}",
-            errors,
-            errors == 1 ? "" : "s",
-            warnings,
-            warnings == 1 ? "" : "s"));
+    set_status(state, count_label(errors, "error") + ", " + count_label(warnings, "warning"));
 }
 
 void show_lsp_status(EditorState &state) {
@@ -1521,7 +1178,7 @@ void handle_buffer_switch_command(EditorState &state, const std::string &argumen
     }
     if (state.session.find_buffer_by_id(buffer_id)) {
         show_buffer_in_active_window(state, buffer_id);
-        set_status(state, std::format("Switched to {}", active_core(state).display_file_name()));
+        set_status(state, prefixed_message("Switched to ", active_core(state).display_file_name()));
     } else {
         set_status(state, "No such buffer");
     }
@@ -1550,7 +1207,7 @@ void handle_buffer_delete_command(EditorState &state, bool force) {
     }
     sync_active_window_buffer(state);
     active_buffer_ui(state);
-    set_status(state, std::format("Closed {}", closing_name));
+    set_status(state, prefixed_message("Closed ", closing_name));
 }
 
 void handle_goto_line_command(EditorState &state, const std::string &argument) {
@@ -1575,7 +1232,7 @@ void handle_goto_line_command(EditorState &state, const std::string &argument) {
     EditorCore &core = active_core(state);
     std::size_t target_row = std::min(line_number - 1, core.line_count() - 1);
     core.set_cursor({target_row, 0});
-    set_status(state, std::format("Line {}", target_row + 1));
+    set_status(state, "Line " + std::to_string(target_row + 1));
 }
 
 std::string shell_single_quote(const std::string &text) {
@@ -1747,7 +1404,7 @@ void handle_pick_theme_command(EditorState &state) {
         }
         theme_names.push_back("themes/" + entry.path().filename().string());
     }
-    std::ranges::sort(theme_names);
+    std::sort(theme_names.begin(), theme_names.end());
     if (theme_names.empty()) {
         set_status(state, "No themes found");
         return;
@@ -2290,18 +1947,14 @@ std::vector<std::filesystem::path> search_workspace_for_file(
     log_debug("file-under-cursor search root=" + workspace_root.string() + " token=" + token + " pattern=" + pattern);
     std::vector<std::string> lines = run_capture_command(command, std::filesystem::current_path());
     std::vector<std::filesystem::path> matches;
-    auto candidate_paths = lines
-        | std::views::transform([](const std::string &line) {
-              return std::filesystem::path(line).lexically_normal();
-          })
-        | std::views::filter([](const std::filesystem::path &path) {
-              return std::filesystem::exists(path) && std::filesystem::is_regular_file(path);
-          });
-    for (const std::filesystem::path &path : candidate_paths) {
-        matches.push_back(path);
+    for (const std::string &line : lines) {
+        std::filesystem::path path = std::filesystem::path(line).lexically_normal();
+        if (std::filesystem::exists(path) && std::filesystem::is_regular_file(path)) {
+            matches.push_back(std::move(path));
+        }
     }
-    std::ranges::sort(matches);
-    matches.erase(std::ranges::unique(matches).begin(), matches.end());
+    std::sort(matches.begin(), matches.end());
+    matches.erase(std::unique(matches.begin(), matches.end()), matches.end());
     return matches;
 }
 
@@ -2636,12 +2289,7 @@ void handle_substitute_command(EditorState &state, const SubstituteCommand &comm
         set_status(state, "Pattern not found");
         return;
     }
-    set_status(
-        state,
-        std::format(
-            "{} substitution{}",
-            substitutions,
-            substitutions == 1 ? "" : "s"));
+    set_status(state, count_label(substitutions, "substitution"));
 }
 
 std::vector<PopupMenuItem> command_completion_items() {
@@ -2657,8 +2305,9 @@ std::vector<PopupMenuItem> command_completion_items() {
 }
 
 std::optional<NamedEditorCommand> named_editor_command_from_verb(std::string_view verb) {
-    auto found = std::ranges::find_if(
-        kNamedEditorCommands,
+    auto found = std::find_if(
+        kNamedEditorCommands.begin(),
+        kNamedEditorCommands.end(),
         [verb](const NamedEditorCommandInfo &command) { return command.name == verb; });
     if (found == kNamedEditorCommands.end()) {
         return std::nullopt;
@@ -2697,11 +2346,11 @@ void execute_named_editor_command(
             break;
         case NamedEditorCommand::NextBuffer:
             state.session.next_buffer();
-            set_status(state, std::format("Switched to {}", active_core(state).display_file_name()));
+            set_status(state, prefixed_message("Switched to ", active_core(state).display_file_name()));
             break;
         case NamedEditorCommand::PreviousBuffer:
             state.session.previous_buffer();
-            set_status(state, std::format("Switched to {}", active_core(state).display_file_name()));
+            set_status(state, prefixed_message("Switched to ", active_core(state).display_file_name()));
             break;
         case NamedEditorCommand::DeleteBuffer:
             handle_buffer_delete_command(state, false);
@@ -2788,7 +2437,7 @@ void execute_command(EditorState &state) {
         handle_substitute_command(state, substitute);
     } else if (!substitute_error.empty()) {
         set_status(state, substitute_error);
-    } else if (std::ranges::all_of(verb, [](unsigned char ch) { return std::isdigit(ch) != 0; })) {
+    } else if (std::all_of(verb.begin(), verb.end(), [](unsigned char ch) { return std::isdigit(ch) != 0; })) {
         handle_goto_line_command(state, verb);
     } else if (std::optional<NamedEditorCommand> named = named_editor_command_from_verb(verb)) {
         execute_named_editor_command(state, *named, argument);
@@ -2973,6 +2622,7 @@ void navigate_search_match(EditorState &state, bool forward) {
     set_status(state, forward ? "Next match" : "Previous match");
 }
 
+#if 0
 std::size_t display_width_until(const std::u32string &line, std::size_t limit, std::size_t tabstop) {
     std::size_t width = 0;
     std::size_t capped = limit > line.size() ? line.size() : limit;
@@ -3344,22 +2994,8 @@ std::string build_status_text(const EditorState &state) {
         }
     }
 
-    std::string left_text = std::format(
-        "{}  {}  [b {}/{}] [w {}/{}]  {}  ws:{}",
-        mode_name(state.mode),
-        core.display_file_name(),
-        state.session.index_for_buffer_id(active_window(state).buffer_id).value_or(0) + 1,
-        state.session.buffer_count(),
-        state.windows.active_window_index() + 1,
-        state.windows.window_count(),
-        language,
-        workspace);
-    std::string right_text = std::format(
-        "{}  {}:{}  rev {}",
-        core.is_dirty() ? " [+]" : "",
-        cursor.row + 1,
-        cursor.column + 1,
-        core.current_revision());
+    std::string left_text = make_status_bar_left_text(state, core, language, workspace);
+    std::string right_text = make_status_bar_right_text(core, cursor);
     return left_text + right_text;
 }
 
@@ -3378,22 +3014,8 @@ void draw_status_bar(const EditorState &state, int screen_rows, int screen_cols)
             workspace = workspace_root.string();
         }
     }
-    std::string left_text = std::format(
-        "{}  {}  [b {}/{}] [w {}/{}]  {}  ws:{}",
-        mode_name(state.mode),
-        core.display_file_name(),
-        state.session.index_for_buffer_id(active_window(state).buffer_id).value_or(0) + 1,
-        state.session.buffer_count(),
-        state.windows.active_window_index() + 1,
-        state.windows.window_count(),
-        language,
-        workspace);
-    std::string right_text = std::format(
-        "{}  {}:{}  rev {}",
-        core.is_dirty() ? " [+]" : "",
-        cursor.row + 1,
-        cursor.column + 1,
-        core.current_revision());
+    std::string left_text = make_status_bar_left_text(state, core, language, workspace);
+    std::string right_text = make_status_bar_right_text(core, cursor);
     std::size_t total_width = screen_cols > 0 ? static_cast<std::size_t>(screen_cols) : 0;
     std::string status;
     if (right_text.size() >= total_width) {
@@ -3756,6 +3378,8 @@ void refresh_syntax_highlights(EditorState &state, std::size_t window_id) {
         syntax_ui.syntax_config_error_reported = false;
     }
 }
+
+#endif
 
 void append_after_cursor(EditorState &state) {
     EditorCore &core = active_core(state);
@@ -5118,6 +4742,7 @@ void handle_service_events(EditorState &state) {
     }
 }
 
+#if 0
 void render_frame(EditorState &state) {
     normalize_selected_diagnostic(state);
     int screen_rows = 0;
@@ -5139,6 +4764,8 @@ void render_frame(EditorState &state) {
     }
     draw_editor(state);
 }
+
+#endif
 
 JsonValue success_control_result(JsonValue result) {
     return JsonValue{{"ok", true}, {"result", std::move(result)}};
@@ -5438,7 +5065,7 @@ std::string handle_control_request(EditorState &state, std::string_view request_
                 return error_control_result("buffer not found").dump();
             }
             show_buffer_in_active_window(state, *buffer_id);
-            set_status(state, std::format("Switched to {}", active_core(state).display_file_name()));
+            set_status(state, prefixed_message("Switched to ", active_core(state).display_file_name()));
             return success_control_result(json_buffer_summary(state, active_buffer(state))).dump();
         }
 
@@ -5537,7 +5164,7 @@ std::string handle_control_request(EditorState &state, std::string_view request_
             }
             sync_active_window_buffer(state);
             active_buffer_ui(state);
-            set_status(state, std::format("Closed {}", closed_name));
+            set_status(state, prefixed_message("Closed ", closed_name));
             return success_control_result(JsonValue{
                 {"closed_buffer_id", target_buffer_id},
                 {"active_buffer", json_buffer_summary(state, active_buffer(state))},
