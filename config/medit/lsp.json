@@ -29,6 +29,16 @@
         "markers": ["pyrightconfig.json", "pyproject.toml", "setup.py", "setup.cfg", ".git"],
         "fallback": "file_directory"
       }
+    },
+    {
+      "name": "make",
+      "command": "autotools-language-server",
+      "language_id": "make",
+      "patterns": ["Makefile", "makefile", "GNUmakefile", "*.mk", "*.mak", "*.make"],
+      "workspace": {
+        "markers": ["configure.ac", "configure.in", "Makefile.am", "Makefile", ".git"],
+        "fallback": "file_directory"
+      }
     }
   ]
 }

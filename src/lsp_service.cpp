@@ -7,6 +7,7 @@
 #include "string_utils.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstring>
 #include <filesystem>
@@ -37,6 +38,13 @@ void ensure_sigpipe_ignored() {
 
 bool is_broken_pipe_error(int error_code) {
     return error_code == EPIPE || error_code == ECONNRESET;
+}
+
+void close_fd_if_open(int &fd) {
+    if (fd >= 0) {
+        close(fd);
+        fd = -1;
+    }
 }
 #endif
 
@@ -400,6 +408,24 @@ std::vector<std::string> extract_lsp_messages(std::string &buffer) {
     return messages;
 }
 
+void close_lsp_launch_pipes(
+    std::array<int, 2> &stdin_pipe,
+    std::array<int, 2> &stdout_pipe,
+    std::array<int, 2> &stderr_pipe) {
+#if defined(__unix__) || defined(__APPLE__)
+    close_fd_if_open(stdin_pipe[0]);
+    close_fd_if_open(stdin_pipe[1]);
+    close_fd_if_open(stdout_pipe[0]);
+    close_fd_if_open(stdout_pipe[1]);
+    close_fd_if_open(stderr_pipe[0]);
+    close_fd_if_open(stderr_pipe[1]);
+#else
+    (void)stdin_pipe;
+    (void)stdout_pipe;
+    (void)stderr_pipe;
+#endif
+}
+
 LspService::LspService(LspServerConfig config) : config_(std::move(config)) {}
 
 LspService::~LspService() {
@@ -702,10 +728,11 @@ void LspService::ensure_initialized_for_event(const EditorEvent &event) {
 
 #if defined(__unix__) || defined(__APPLE__)
 bool LspService::spawn_process() {
-    int stdin_pipe[2];
-    int stdout_pipe[2];
-    int stderr_pipe[2];
-    if (pipe(stdin_pipe) != 0 || pipe(stdout_pipe) != 0 || pipe(stderr_pipe) != 0) {
+    std::array<int, 2> stdin_pipe{-1, -1};
+    std::array<int, 2> stdout_pipe{-1, -1};
+    std::array<int, 2> stderr_pipe{-1, -1};
+    if (pipe(stdin_pipe.data()) != 0 || pipe(stdout_pipe.data()) != 0 || pipe(stderr_pipe.data()) != 0) {
+        close_lsp_launch_pipes(stdin_pipe, stdout_pipe, stderr_pipe);
         log_debug("external command kind=lsp-server pipe-setup failed command=" + config_.command);
         return false;
     }
@@ -713,6 +740,7 @@ bool LspService::spawn_process() {
     log_debug("external command kind=lsp-server spawn command=" + config_.command);
     int pid = fork();
     if (pid < 0) {
+        close_lsp_launch_pipes(stdin_pipe, stdout_pipe, stderr_pipe);
         log_debug("external command kind=lsp-server fork failed command=" + config_.command);
         return false;
     }
@@ -723,6 +751,9 @@ bool LspService::spawn_process() {
         close(stdin_pipe[1]);
         close(stdout_pipe[0]);
         close(stderr_pipe[0]);
+        close(stdin_pipe[0]);
+        close(stdout_pipe[1]);
+        close(stderr_pipe[1]);
         execl("/bin/sh", "sh", "-lc", config_.command.c_str(), nullptr);
         _exit(127);
     }

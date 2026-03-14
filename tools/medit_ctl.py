@@ -69,6 +69,12 @@ def main() -> int:
     add_socket_argument(get_buffer_parser)
     get_buffer_parser.add_argument("--buffer-id", type=int)
 
+    get_lines_parser = subparsers.add_parser("get-lines", help="Read a range of buffer lines as records")
+    add_socket_argument(get_lines_parser)
+    get_lines_parser.add_argument("--buffer-id", type=int)
+    get_lines_parser.add_argument("--start-row", type=int)
+    get_lines_parser.add_argument("--end-row", type=int)
+
     get_selection_parser = subparsers.add_parser("get-selection", help="Read current selection")
     add_socket_argument(get_selection_parser)
 
@@ -157,6 +163,14 @@ def main() -> int:
         method = "get_buffer"
         if args.buffer_id is not None:
             params["buffer_id"] = args.buffer_id
+    elif args.command == "get-lines":
+        method = "get_lines"
+        if args.buffer_id is not None:
+            params["buffer_id"] = args.buffer_id
+        if args.start_row is not None:
+            params["start_row"] = args.start_row
+        if args.end_row is not None:
+            params["end_row"] = args.end_row
     elif args.command == "get-selection":
         method = "get_selection"
     elif args.command == "open-file":

@@ -4,6 +4,7 @@
 #include "services.hpp"
 
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <map>
 #include <set>
@@ -15,6 +16,10 @@
 
 std::string encode_lsp_message(const std::string &payload);
 std::vector<std::string> extract_lsp_messages(std::string &buffer);
+void close_lsp_launch_pipes(
+    std::array<int, 2> &stdin_pipe,
+    std::array<int, 2> &stdout_pipe,
+    std::array<int, 2> &stderr_pipe);
 
 class LspService : public EditorService {
   public:

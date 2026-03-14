@@ -95,7 +95,7 @@ Example [lsp.json](/home/dan/de/config/medit/lsp.json):
       "name": "cpp",
       "command": "clangd --background-index",
       "language_id": "cpp",
-      "patterns": ["*.cpp", "*.hpp", "Makefile"],
+      "patterns": ["*.cpp", "*.hpp"],
       "workspace": {
         "markers": ["compile_commands.json", ".clangd", "CMakeLists.txt", ".git"],
         "fallback": "file_directory"
@@ -120,6 +120,16 @@ Example [lsp.json](/home/dan/de/config/medit/lsp.json):
         "markers": ["pyrightconfig.json", "pyproject.toml", "setup.py", "setup.cfg", ".git"],
         "fallback": "file_directory"
       }
+    },
+    {
+      "name": "make",
+      "command": "autotools-language-server",
+      "language_id": "make",
+      "patterns": ["Makefile", "makefile", "GNUmakefile", "*.mk", "*.mak", "*.make"],
+      "workspace": {
+        "markers": ["configure.ac", "configure.in", "Makefile.am", "Makefile", ".git"],
+        "fallback": "file_directory"
+      }
     }
   ]
 }
@@ -127,6 +137,12 @@ Example [lsp.json](/home/dan/de/config/medit/lsp.json):
 
 Each open buffer picks the first matching server by filename glob pattern and sends that server the configured language id. The old `lsp_command` and `lsp_language_id` keys still work as a single catch-all fallback.
 The workspace root for each server is found by walking upward from the opened file and looking for the configured `workspace.markers`, then falling back according to `workspace.fallback`.
+
+For Makefiles, install the server separately before using the shipped config, for example:
+
+```sh
+python3 -m pip install autotools-language-server
+```
 
 Tree-sitter syntax can be configured per language through a syntax rules file:
 

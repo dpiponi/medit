@@ -5170,6 +5170,17 @@ std::optional<std::size_t> parse_optional_window_id(const JsonValue &params) {
     return found->get<std::size_t>();
 }
 
+std::optional<std::size_t> parse_optional_row_param(const JsonValue &params, const char *name) {
+    auto found = params.find(name);
+    if (found == params.end() || found->is_null()) {
+        return std::nullopt;
+    }
+    if (!found->is_number_unsigned()) {
+        throw std::runtime_error(std::string(name) + " must be an unsigned integer");
+    }
+    return found->get<std::size_t>();
+}
+
 EditorBuffer *control_target_buffer(EditorState &state, const JsonValue &params) {
     std::optional<std::size_t> buffer_id = parse_optional_buffer_id(params);
     if (!buffer_id) {
@@ -5295,6 +5306,34 @@ std::string handle_control_request(EditorState &state, std::string_view request_
             JsonValue result = json_buffer_summary(state, *buffer);
             result["text"] = buffer_text_utf8(*buffer);
             return success_control_result(std::move(result)).dump();
+        }
+
+        if (method == "get_lines") {
+            EditorBuffer *buffer = control_target_buffer(state, params);
+            if (!buffer) {
+                return error_control_result("buffer not found").dump();
+            }
+            const std::size_t total_lines = buffer->core.line_count();
+            const std::size_t start_row = parse_optional_row_param(params, "start_row").value_or(0);
+            const std::size_t end_row = parse_optional_row_param(params, "end_row").value_or(total_lines);
+            if (start_row > total_lines) {
+                return error_control_result("start_row is out of range").dump();
+            }
+            if (end_row > total_lines) {
+                return error_control_result("end_row is out of range").dump();
+            }
+            if (end_row < start_row) {
+                return error_control_result("end_row must be greater than or equal to start_row").dump();
+            }
+
+            JsonValue lines = JsonValue::array();
+            for (std::size_t row = start_row; row < end_row; ++row) {
+                lines.push_back(JsonValue{
+                    {"row", row},
+                    {"text", u32_to_utf8(buffer->core.lines()[row])},
+                });
+            }
+            return success_control_result(std::move(lines)).dump();
         }
 
         if (method == "get_selection") {

@@ -64,6 +64,22 @@ def medit_get_buffer(buffer_id: int | None = None) -> dict[str, Any]:
     return send_editor_request("get_buffer", params)
 
 
+@mcp.tool(name="medit_get_lines")
+def medit_get_lines(
+    start_row: int | None = None,
+    end_row: int | None = None,
+    buffer_id: int | None = None,
+) -> list[dict[str, Any]]:
+    params: dict[str, Any] = {}
+    if start_row is not None:
+        params["start_row"] = start_row
+    if end_row is not None:
+        params["end_row"] = end_row
+    if buffer_id is not None:
+        params["buffer_id"] = buffer_id
+    return send_editor_request("get_lines", params)
+
+
 @mcp.tool(name="medit_get_cursor")
 def medit_get_cursor() -> dict[str, Any]:
     return send_editor_request("get_cursor", {})

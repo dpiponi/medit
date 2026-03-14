@@ -13,6 +13,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -1313,6 +1314,30 @@ void test_lsp_message_framing() {
     expect(buffer.empty(), "lsp framing should consume buffer");
 }
 
+void test_lsp_launch_pipe_cleanup() {
+#if defined(__unix__) || defined(__APPLE__)
+    std::array<int, 2> stdin_pipe{-1, -1};
+    std::array<int, 2> stdout_pipe{-1, -1};
+    std::array<int, 2> stderr_pipe{-1, -1};
+    expect(pipe(stdin_pipe.data()) == 0, "stdin pipe should open");
+    expect(pipe(stdout_pipe.data()) == 0, "stdout pipe should open");
+    expect(pipe(stderr_pipe.data()) == 0, "stderr pipe should open");
+
+    close_lsp_launch_pipes(stdin_pipe, stdout_pipe, stderr_pipe);
+
+    for (int fd : {stdin_pipe[0], stdin_pipe[1], stdout_pipe[0], stdout_pipe[1], stderr_pipe[0], stderr_pipe[1]}) {
+        expect(fd == -1, "cleanup helper should poison closed pipe descriptors");
+    }
+
+    errno = 0;
+    expect(fcntl(stdin_pipe[0], F_GETFD) == -1 && errno == EBADF, "closed stdin read end should report EBADF");
+    errno = 0;
+    expect(fcntl(stdout_pipe[1], F_GETFD) == -1 && errno == EBADF, "closed stdout write end should report EBADF");
+    errno = 0;
+    expect(fcntl(stderr_pipe[0], F_GETFD) == -1 && errno == EBADF, "closed stderr read end should report EBADF");
+#endif
+}
+
 void test_lsp_service_roundtrip() {
 #if defined(__unix__) || defined(__APPLE__)
     char dir_template[] = "/tmp/medit-lsp-XXXXXX";
@@ -1817,6 +1842,7 @@ int main() {
         test_file_uri_normalization();
         test_string_utilities();
         test_lsp_message_framing();
+        test_lsp_launch_pipe_cleanup();
         test_lsp_service_roundtrip();
         test_lsp_service_reports_startup_failures();
         test_editor_runtime_service_boundary();
