@@ -46,6 +46,12 @@ void close_fd_if_open(int &fd) {
         fd = -1;
     }
 }
+
+void close_fd_if_not_stdio(int fd) {
+    if (fd >= 0 && fd != STDIN_FILENO && fd != STDOUT_FILENO && fd != STDERR_FILENO) {
+        close(fd);
+    }
+}
 #endif
 
 std::string json_escape(const std::string &text) {
@@ -751,10 +757,10 @@ bool LspService::spawn_process() {
         close(stdin_pipe[1]);
         close(stdout_pipe[0]);
         close(stderr_pipe[0]);
-        close(stdin_pipe[0]);
-        close(stdout_pipe[1]);
-        close(stderr_pipe[1]);
-        execl("/bin/sh", "sh", "-lc", config_.command.c_str(), nullptr);
+        close_fd_if_not_stdio(stdin_pipe[0]);
+        close_fd_if_not_stdio(stdout_pipe[1]);
+        close_fd_if_not_stdio(stderr_pipe[1]);
+        execl("/bin/sh", "sh", "-c", config_.command.c_str(), nullptr);
         _exit(127);
     }
 
