@@ -60,6 +60,15 @@ void expect_event_type(const EditorEvent &event, EditorEventType expected, const
     expect(event.type == expected, message);
 }
 
+const KeyHint *find_key_hint(const std::vector<KeyHint> &hints, const std::string &token) {
+    for (const KeyHint &hint : hints) {
+        if (hint.token == token) {
+            return &hint;
+        }
+    }
+    return nullptr;
+}
+
 bool line_has_span(
     const std::vector<HighlightSpan> &spans,
     std::size_t start,
@@ -773,6 +782,11 @@ void test_keybinding_dispatch() {
         insert_completion.action.has_value() && *insert_completion.action == EditorAction::ShowCompletion,
         "insert ctrl-p should map to completion");
 
+    KeyDispatch show_hints = dispatch_key_sequence(keybindings, "normal", pending, "?", false);
+    expect(
+        show_hints.action.has_value() && *show_hints.action == EditorAction::ShowKeyHints,
+        "? should map to key hints");
+
     KeyDispatch special = dispatch_key_sequence(keybindings, "normal", pending, "pagedown", false);
     expect(special.action.has_value() && *special.action == EditorAction::PageDown, "pagedown binding");
 
@@ -1135,6 +1149,33 @@ void test_keybinding_dispatch() {
         search_history_next.action.has_value() &&
             *search_history_next.action == EditorAction::SearchHistoryNext,
         "search down should browse next history");
+}
+
+void test_keybinding_hints() {
+    KeyBindings keybindings = load_embedded_keybindings();
+
+    std::vector<KeyHint> root_hints = key_hints_for_prefix(keybindings, "normal", {});
+    const KeyHint *g_hint = find_key_hint(root_hints, "g");
+    expect(g_hint != nullptr, "root hints should include g prefix");
+    expect(g_hint->detail.find("d goto definition") != std::string::npos, "g hints should list gd");
+    expect(g_hint->detail.find("k show hover") != std::string::npos, "g hints should list gk");
+
+    const KeyHint *window_hint = find_key_hint(root_hints, "ctrl-w");
+    expect(window_hint != nullptr, "root hints should include ctrl-w prefix");
+    expect(window_hint->detail.find("s split horizontal") != std::string::npos, "ctrl-w hints should list split");
+    expect(window_hint->detail.find("l focus window right") != std::string::npos, "ctrl-w hints should list focus");
+
+    std::vector<KeyHint> g_hints = key_hints_for_prefix(keybindings, "normal", {"g"});
+    expect(g_hints.size() >= 6, "g prefix should expose multiple completions");
+    const KeyHint *definition_hint = find_key_hint(g_hints, "d");
+    expect(definition_hint != nullptr, "g hints should include d");
+    expect(definition_hint->detail == "goto definition", "gd hint should describe definition jump");
+
+    const KeyHint *hover_hint = find_key_hint(g_hints, "k");
+    expect(hover_hint != nullptr && hover_hint->detail == "show hover", "gk hint should describe hover");
+
+    std::vector<KeyHint> no_hints = key_hints_for_prefix(keybindings, "insert", {"g"});
+    expect(no_hints.empty(), "unknown insert prefix should have no hints");
 }
 
 void test_config_file_selects_keybindings_and_colors() {
@@ -1993,6 +2034,7 @@ int main() {
         test_editor_command_entry_points();
         test_compound_edit_undo();
         test_keybinding_dispatch();
+        test_keybinding_hints();
         test_config_file_selects_keybindings_and_colors();
         test_lsp_config_rejects_duplicate_patterns();
         test_infer_language_id();

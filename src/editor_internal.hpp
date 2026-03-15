@@ -156,6 +156,7 @@ struct EditorState {
         Mode originating_mode = Mode::Normal;
         PopupApplyTarget apply_target = PopupApplyTarget::BufferText;
         PopupFilterMode filter_mode = PopupFilterMode::ContainsLabelOrDetail;
+        bool sticky = false;
     };
 
     EditorSession session;
@@ -311,6 +312,13 @@ void show_menu_popup(
     EditorState::PopupApplyTarget apply_target = EditorState::PopupApplyTarget::BufferText,
     std::u32string initial_filter = U"",
     EditorState::PopupFilterMode filter_mode = EditorState::PopupFilterMode::ContainsLabelOrDetail);
+void show_key_hints_popup(
+    EditorState &state,
+    std::string title,
+    std::vector<PopupMenuItem> items,
+    bool sticky);
+bool popup_accepts_input(const EditorState &state);
+void dismiss_popup(EditorState &state);
 bool split_active_window(EditorState &state, WindowSplitDirection direction);
 bool close_active_window(EditorState &state);
 bool close_other_windows(EditorState &state);

@@ -3,11 +3,13 @@
 #include "json.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <map>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -71,6 +73,7 @@ constexpr const char *kEmbeddedDefaultKeybindings = R"json(
     "N": "visual_search_next",
     "b": "search_previous",
     "B": "visual_search_previous",
+    "?": "show_key_hints",
     "g d": "goto_definition",
     "g k": "show_hover",
     "alt-up": "select_enclosing_ast",
@@ -149,6 +152,7 @@ constexpr const char *kEmbeddedDefaultKeybindings = R"json(
     "N": "visual_search_next",
     "b": "search_previous",
     "B": "visual_search_previous",
+    "?": "show_key_hints",
     "g d": "goto_definition",
     "g k": "show_hover",
     "alt-up": "select_enclosing_ast",
@@ -234,7 +238,7 @@ std::vector<std::string> split_key_sequence(const std::string &spec) {
     return tokens;
 }
 
-std::optional<EditorAction> action_from_name(const std::string &name) {
+const std::map<std::string, EditorAction> &action_map() {
     static const std::map<std::string, EditorAction> kActions = {
         {"move_left", EditorAction::MoveLeft},
         {"visual_move_left", EditorAction::VisualMoveLeft},
@@ -339,9 +343,61 @@ std::optional<EditorAction> action_from_name(const std::string &name) {
         {"move_to_selection_end", EditorAction::MoveToSelectionEnd},
         {"select_inner_word", EditorAction::SelectInnerWord},
         {"select_around_word", EditorAction::SelectAroundWord},
+        {"show_key_hints", EditorAction::ShowKeyHints},
     };
-    auto found = kActions.find(name);
-    if (found == kActions.end()) {
+    return kActions;
+}
+
+std::string action_name(EditorAction action) {
+    for (const auto &[name, value] : action_map()) {
+        if (value == action) {
+            return name;
+        }
+    }
+    return "action";
+}
+
+std::string humanize_action_name(const std::string &name) {
+    std::string result;
+    result.reserve(name.size());
+    for (char ch : name) {
+        result.push_back(ch == '_' ? ' ' : ch);
+    }
+    return result;
+}
+
+std::string join_tokens(const std::vector<std::string> &tokens, std::size_t start_index) {
+    std::string result;
+    for (std::size_t index = start_index; index < tokens.size(); ++index) {
+        if (!result.empty()) {
+            result += ' ';
+        }
+        result += tokens[index];
+    }
+    return result;
+}
+
+std::string describe_binding(const KeyBinding &binding) {
+    if (binding.action) {
+        return humanize_action_name(action_name(*binding.action));
+    }
+    return "exec " + join_tokens(binding.expansion, 0);
+}
+
+std::string summarize_descriptions(const std::vector<std::string> &parts) {
+    std::string summary;
+    for (std::size_t index = 0; index < parts.size(); ++index) {
+        if (!summary.empty()) {
+            summary += ", ";
+        }
+        summary += parts[index];
+    }
+    return summary;
+}
+
+std::optional<EditorAction> action_from_name(const std::string &name) {
+    auto found = action_map().find(name);
+    if (found == action_map().end()) {
         return std::nullopt;
     }
     return found->second;
@@ -474,6 +530,60 @@ void remove_action_bindings(KeyBindings &keybindings, EditorAction action) {
             keybindings.bindings.end(),
             [action](const KeyBinding &binding) { return binding.action == action; }),
         keybindings.bindings.end());
+}
+
+std::vector<KeyHint> key_hints_for_prefix(
+    const KeyBindings &keybindings,
+    const std::string &mode,
+    const std::vector<std::string> &prefix) {
+    struct HintAggregate {
+        std::string token;
+        std::vector<std::string> details;
+    };
+
+    std::vector<HintAggregate> aggregates;
+    std::unordered_map<std::string, std::size_t> aggregate_index;
+
+    for (const KeyBinding &binding : keybindings.bindings) {
+        if (binding.mode != mode || binding.sequence.empty()) {
+            continue;
+        }
+        if (binding.sequence.size() == 1 && binding.sequence[0] == "printable") {
+            continue;
+        }
+        if (!sequence_matches_prefix(binding.sequence, prefix) || binding.sequence.size() <= prefix.size()) {
+            continue;
+        }
+
+        const std::string &token = binding.sequence[prefix.size()];
+        std::size_t index = 0;
+        auto found = aggregate_index.find(token);
+        if (found == aggregate_index.end()) {
+            index = aggregates.size();
+            aggregate_index.emplace(token, index);
+            aggregates.push_back({token, {}});
+        } else {
+            index = found->second;
+        }
+
+        std::string detail;
+        if (binding.sequence.size() == prefix.size() + 1) {
+            detail = describe_binding(binding);
+        } else {
+            detail = join_tokens(binding.sequence, prefix.size() + 1) + " " + describe_binding(binding);
+        }
+        if (std::find(aggregates[index].details.begin(), aggregates[index].details.end(), detail) ==
+            aggregates[index].details.end()) {
+            aggregates[index].details.push_back(std::move(detail));
+        }
+    }
+
+    std::vector<KeyHint> hints;
+    hints.reserve(aggregates.size());
+    for (const HintAggregate &aggregate : aggregates) {
+        hints.push_back({aggregate.token, summarize_descriptions(aggregate.details)});
+    }
+    return hints;
 }
 
 KeyDispatch dispatch_key_sequence(

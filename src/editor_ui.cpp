@@ -666,7 +666,7 @@ void draw_popup(const EditorState &state, int screen_rows, int screen_cols) {
     std::string popup_title = state.popup.title;
     std::string filter_text = state.popup.kind == PopupKind::Menu ? u32_to_utf8(state.popup.filter) : "";
     std::vector<std::u32string> wrapped;
-    if (state.popup.kind == PopupKind::Menu) {
+    if (state.popup.kind == PopupKind::Menu || state.popup.kind == PopupKind::KeyHints) {
         std::size_t filtered_size = state.popup.filtered_indices.size();
         std::size_t max_offset = filtered_size > menu_visible_rows ? filtered_size - menu_visible_rows : 0;
         menu_scroll_offset = std::min(state.popup.scroll_offset, max_offset);
@@ -700,12 +700,18 @@ void draw_popup(const EditorState &state, int screen_rows, int screen_cols) {
         std::u32string prompt_line = utf8_to_u32(filter_text.empty() ? " filter..." : filter_text);
         content_width = std::max<std::size_t>(content_width, display_width(prompt_line, 8) + 4);
         content_width = std::max<std::size_t>(content_width, 28);
+    } else if (state.popup.kind == PopupKind::KeyHints) {
+        content_width = std::max<std::size_t>(content_width, 28);
     }
 
-    int popup_width = std::min(screen_cols - 4, static_cast<int>(content_width) + (state.popup.kind == PopupKind::Menu ? 6 : 4));
+    int popup_width = std::min(
+        screen_cols - 4,
+        static_cast<int>(content_width) + ((state.popup.kind == PopupKind::Menu || state.popup.kind == PopupKind::KeyHints) ? 6 : 4));
     int popup_height = 0;
     if (state.popup.kind == PopupKind::Menu) {
         popup_height = std::min(available_rows, static_cast<int>(wrapped.size()) + 5);
+    } else if (state.popup.kind == PopupKind::KeyHints) {
+        popup_height = std::min(available_rows, static_cast<int>(wrapped.size()) + 4);
     } else {
         popup_height = std::min(available_rows, static_cast<int>(wrapped.size()) + 2);
     }
@@ -761,16 +767,36 @@ void draw_popup(const EditorState &state, int screen_rows, int screen_cols) {
         mvaddnstr(top + 2, left + 3, prompt.c_str(), std::max(0, popup_width - 5));
         attrset(static_cast<attr_t>(line_number_attrs));
         mvhline(top + 3, left + 1, ACS_HLINE, popup_width - 2);
+    } else if (state.popup.kind == PopupKind::KeyHints) {
+        attrset(static_cast<attr_t>(header_attrs));
+        mvhline(top + 1, left + 1, ' ', popup_width - 2);
+        if (!popup_title.empty()) {
+            std::string title = "  " + popup_title + "  ";
+            mvaddnstr(top + 1, left + 2, title.c_str(), std::max(0, popup_width - 4));
+        }
+        attrset(static_cast<attr_t>(line_number_attrs));
+        mvhline(top + 2, left + 1, ACS_HLINE, popup_width - 2);
     } else if (!popup_title.empty()) {
         std::string title = " " + popup_title + " ";
         mvaddnstr(top, left + 1, title.c_str(), std::max(0, popup_width - 2));
     }
 
     attrset(static_cast<attr_t>(body_attrs));
-    int content_top = state.popup.kind == PopupKind::Menu ? top + 4 : top + 1;
-    int content_left = state.popup.kind == PopupKind::Menu ? left + 3 : left + 2;
-    int content_width_chars = state.popup.kind == PopupKind::Menu ? popup_width - 5 : popup_width - 4;
-    int content_rows = state.popup.kind == PopupKind::Menu ? popup_height - 5 : popup_height - 2;
+    int content_top = top + 1;
+    int content_left = left + 2;
+    int content_width_chars = popup_width - 4;
+    int content_rows = popup_height - 2;
+    if (state.popup.kind == PopupKind::Menu) {
+        content_top = top + 4;
+        content_left = left + 3;
+        content_width_chars = popup_width - 5;
+        content_rows = popup_height - 5;
+    } else if (state.popup.kind == PopupKind::KeyHints) {
+        content_top = top + 3;
+        content_left = left + 3;
+        content_width_chars = popup_width - 5;
+        content_rows = popup_height - 4;
+    }
     for (int row = 0; row < content_rows && row < static_cast<int>(wrapped.size()); ++row) {
         attrset(static_cast<attr_t>(body_attrs));
         clear_rect_line(content_top + row, left + 1, popup_width - 2);
@@ -779,13 +805,11 @@ void draw_popup(const EditorState &state, int screen_rows, int screen_cols) {
             attrset(static_cast<attr_t>(selected_attrs));
             mvhline(content_top + row, left + 1, ' ', popup_width - 2);
             mvaddch(content_top + row, left + 2, ACS_RARROW);
-        } else {
+        } else if (state.popup.kind == PopupKind::Menu || state.popup.kind == PopupKind::KeyHints) {
             attrset(static_cast<attr_t>(body_attrs));
-            if (state.popup.kind == PopupKind::Menu) {
-                attrset(static_cast<attr_t>(line_number_attrs));
-                mvaddch(content_top + row, left + 2, ACS_BULLET);
-                attrset(static_cast<attr_t>(body_attrs));
-            }
+            attrset(static_cast<attr_t>(line_number_attrs));
+            mvaddch(content_top + row, left + 2, ACS_BULLET);
+            attrset(static_cast<attr_t>(body_attrs));
         }
         mvaddnwstr(
             content_top + row,
@@ -794,7 +818,8 @@ void draw_popup(const EditorState &state, int screen_rows, int screen_cols) {
             content_width_chars);
     }
 
-    if (state.popup.kind == PopupKind::Menu && state.popup.filtered_indices.size() > menu_visible_rows && content_rows > 0) {
+    if ((state.popup.kind == PopupKind::Menu || state.popup.kind == PopupKind::KeyHints) &&
+        state.popup.filtered_indices.size() > menu_visible_rows && content_rows > 0) {
         std::size_t total = state.popup.filtered_indices.size();
         std::size_t thumb_size = std::max<std::size_t>(1, (content_rows * content_rows) / total);
         std::size_t max_scroll = total > menu_visible_rows ? total - menu_visible_rows : 0;

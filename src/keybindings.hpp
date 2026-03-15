@@ -91,6 +91,7 @@ enum class EditorAction {
     GoToDefinition,
     ShowHover,
     ShowCompletion,
+    ShowKeyHints,
     SelectEnclosingAst,
     SelectInnerAst,
     GoToFileUnderCursor,
@@ -132,11 +133,20 @@ struct KeyDispatch {
     std::vector<std::string> expansion;
 };
 
+struct KeyHint {
+    std::string token;
+    std::string detail;
+};
+
 KeyBindings load_keybindings();
 KeyBindings load_keybindings(const EditorConfig &config);
 KeyBindings load_keybindings_from_path(const std::filesystem::path &path);
 KeyBindings load_embedded_keybindings();
 void remove_action_bindings(KeyBindings &keybindings, EditorAction action);
+std::vector<KeyHint> key_hints_for_prefix(
+    const KeyBindings &keybindings,
+    const std::string &mode,
+    const std::vector<std::string> &prefix);
 KeyDispatch dispatch_key_sequence(
     const KeyBindings &keybindings,
     const std::string &mode,

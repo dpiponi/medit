@@ -334,6 +334,54 @@ std::string mode_key(const EditorState &state) {
     return "normal";
 }
 
+std::string joined_key_sequence(const std::vector<std::string> &tokens) {
+    std::string result;
+    for (std::size_t index = 0; index < tokens.size(); ++index) {
+        if (!result.empty()) {
+            result += ' ';
+        }
+        result += tokens[index];
+    }
+    return result;
+}
+
+std::string key_hint_popup_title(const EditorState &state) {
+    if (state.pending_tokens.empty()) {
+        return mode_name(state.mode) + " keys";
+    }
+    return mode_name(state.mode) + " after " + joined_key_sequence(state.pending_tokens);
+}
+
+std::vector<PopupMenuItem> key_hint_popup_items(const EditorState &state) {
+    std::vector<KeyHint> hints = key_hints_for_prefix(state.keybindings, mode_key(state), state.pending_tokens);
+    std::vector<PopupMenuItem> items;
+    items.reserve(hints.size());
+    for (const KeyHint &hint : hints) {
+        items.push_back({hint.token, hint.detail, {}, std::nullopt});
+    }
+    return items;
+}
+
+bool popup_is_key_hints(const EditorState &state) {
+    return state.popup.visible && state.popup.kind == PopupKind::KeyHints;
+}
+
+void refresh_key_hint_popup(EditorState &state, bool sticky) {
+    std::vector<PopupMenuItem> items = key_hint_popup_items(state);
+    if (items.empty()) {
+        dismiss_popup(state);
+        return;
+    }
+    show_key_hints_popup(state, key_hint_popup_title(state), std::move(items), sticky);
+}
+
+void sync_key_hint_popup(EditorState &state) {
+    if (!popup_is_key_hints(state)) {
+        return;
+    }
+    refresh_key_hint_popup(state, state.popup.sticky);
+}
+
 bool is_printable_input(wint_t key, bool is_special) {
     if (is_special) {
         return false;
@@ -1028,6 +1076,15 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
         case EditorAction::ShowCompletion:
             request_completion(state);
             break;
+        case EditorAction::ShowKeyHints:
+            if (popup_is_key_hints(state) && state.popup.sticky) {
+                dismiss_popup(state);
+                set_status(state, mode_name(state.mode));
+            } else {
+                refresh_key_hint_popup(state, true);
+                set_status(state, "Key hints");
+            }
+            break;
         case EditorAction::SelectEnclosingAst:
             select_enclosing_ast(state);
             break;
@@ -1277,10 +1334,15 @@ void process_input_token(EditorState &state, const std::string &token, wint_t ke
 
     KeyDispatch dispatch = dispatch_key_sequence(state.keybindings, mode_key(state), state.pending_tokens, token, printable);
     if (dispatch.waiting_for_more) {
+        refresh_key_hint_popup(state, popup_is_key_hints(state) && state.popup.sticky);
         set_status(state, u32_to_utf8(utf8_to_u32(token)));
         return;
     }
+    if (popup_is_key_hints(state) && !state.popup.sticky) {
+        dismiss_popup(state);
+    }
     execute_dispatch(state, dispatch, key);
+    sync_key_hint_popup(state);
     finalize_command_recording(state);
 }
 
@@ -1292,7 +1354,7 @@ void handle_keymap_input(EditorState &state, wint_t key, bool is_special) {
     if (handle_popup_input(state, *token)) {
         return;
     }
-    if (state.popup.visible) {
+    if (state.popup.visible && state.popup.kind != PopupKind::KeyHints) {
         dismiss_popup(state);
     }
     process_input_token(state, *token, key, is_printable_input(key, is_special));

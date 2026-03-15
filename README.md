@@ -21,6 +21,7 @@ The repo vendors `nlohmann::json` under `third_party/nlohmann/`, so a fresh chec
 - Runtime service boundary for future background integrations like LSP clients
 - Optional single-server LSP stdio transport configured through `meditrc`
 - Clipboard integration that uses the system clipboard when available and otherwise shares clipboard contents between `medit` instances through a shared file
+- Key-hint popup in modal modes: press `?` to toggle available bindings, and partial sequences like `g` show valid completions automatically
 
 ## Build
 

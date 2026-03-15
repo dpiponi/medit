@@ -22,6 +22,7 @@ enum class EditorCommandType {
 enum class PopupKind {
     Text,
     Menu,
+    KeyHints,
 };
 
 struct PopupMenuItem {

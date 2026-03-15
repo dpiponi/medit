@@ -441,7 +441,32 @@ void show_menu_popup(
     state.popup.originating_mode = state.mode;
     state.popup.apply_target = apply_target;
     state.popup.filter_mode = filter_mode;
+    state.popup.sticky = false;
     rebuild_popup_filter(state);
+}
+
+void show_key_hints_popup(
+    EditorState &state,
+    std::string title,
+    std::vector<PopupMenuItem> items,
+    bool sticky) {
+    state.popup.visible = true;
+    state.popup.kind = PopupKind::KeyHints;
+    state.popup.title = std::move(title);
+    state.popup.text.clear();
+    state.popup.items = std::move(items);
+    state.popup.filter.clear();
+    state.popup.filtered_indices.clear();
+    state.popup.filtered_indices.reserve(state.popup.items.size());
+    for (std::size_t index = 0; index < state.popup.items.size(); ++index) {
+        state.popup.filtered_indices.push_back(index);
+    }
+    state.popup.selected_index = 0;
+    state.popup.scroll_offset = 0;
+    state.popup.originating_mode = state.mode;
+    state.popup.apply_target = EditorState::PopupApplyTarget::BufferText;
+    state.popup.filter_mode = EditorState::PopupFilterMode::ContainsLabelOrDetail;
+    state.popup.sticky = sticky;
 }
 
 void dismiss_popup(EditorState &state) {
@@ -456,6 +481,7 @@ void dismiss_popup(EditorState &state) {
     state.popup.scroll_offset = 0;
     state.popup.apply_target = EditorState::PopupApplyTarget::BufferText;
     state.popup.filter_mode = EditorState::PopupFilterMode::ContainsLabelOrDetail;
+    state.popup.sticky = false;
 }
 
 bool popup_accepts_input(const EditorState &state) {
