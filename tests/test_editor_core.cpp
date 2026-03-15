@@ -752,8 +752,10 @@ void test_keybinding_dispatch() {
     KeyDispatch second = dispatch_key_sequence(keybindings, "normal", pending, "g", false);
     expect(second.action.has_value() && *second.action == EditorAction::GotoTop, "gg should map to goto top");
 
-    KeyDispatch hover = dispatch_key_sequence(keybindings, "normal", pending, "K", false);
-    expect(hover.action.has_value() && *hover.action == EditorAction::ShowHover, "K should map to hover");
+    KeyDispatch hover_first = dispatch_key_sequence(keybindings, "normal", pending, "g", false);
+    expect(hover_first.matched && hover_first.waiting_for_more, "g should wait for gk");
+    KeyDispatch hover_second = dispatch_key_sequence(keybindings, "normal", pending, "k", false);
+    expect(hover_second.action.has_value() && *hover_second.action == EditorAction::ShowHover, "gk should map to hover");
 
     KeyDispatch printable = dispatch_key_sequence(keybindings, "insert", pending, "x", true);
     expect(printable.action.has_value() && *printable.action == EditorAction::SelfInsert, "insert printable binding");
@@ -773,6 +775,42 @@ void test_keybinding_dispatch() {
 
     KeyDispatch special = dispatch_key_sequence(keybindings, "normal", pending, "pagedown", false);
     expect(special.action.has_value() && *special.action == EditorAction::PageDown, "pagedown binding");
+
+    KeyDispatch shift_left = dispatch_key_sequence(keybindings, "normal", pending, "shift-left", false);
+    expect(
+        shift_left.action.has_value() && *shift_left.action == EditorAction::VisualMoveLeft,
+        "shift-left should map to visual left");
+
+    KeyDispatch shift_right = dispatch_key_sequence(keybindings, "normal", pending, "shift-right", false);
+    expect(
+        shift_right.action.has_value() && *shift_right.action == EditorAction::VisualMoveRight,
+        "shift-right should map to visual right");
+
+    KeyDispatch shift_up = dispatch_key_sequence(keybindings, "normal", pending, "shift-up", false);
+    expect(
+        shift_up.action.has_value() && *shift_up.action == EditorAction::VisualMoveUp,
+        "shift-up should map to visual up");
+
+    KeyDispatch shift_down = dispatch_key_sequence(keybindings, "normal", pending, "shift-down", false);
+    expect(
+        shift_down.action.has_value() && *shift_down.action == EditorAction::VisualMoveDown,
+        "shift-down should map to visual down");
+
+    KeyDispatch home = dispatch_key_sequence(keybindings, "normal", pending, "home", false);
+    expect(home.action.has_value() && *home.action == EditorAction::MoveLineStart, "home should map to line start");
+
+    KeyDispatch shift_home = dispatch_key_sequence(keybindings, "normal", pending, "shift-home", false);
+    expect(
+        shift_home.action.has_value() && *shift_home.action == EditorAction::VisualMoveLineStart,
+        "shift-home should map to visual line start");
+
+    KeyDispatch end = dispatch_key_sequence(keybindings, "normal", pending, "end", false);
+    expect(end.action.has_value() && *end.action == EditorAction::MoveLineEnd, "end should map to line end");
+
+    KeyDispatch shift_end = dispatch_key_sequence(keybindings, "normal", pending, "shift-end", false);
+    expect(
+        shift_end.action.has_value() && *shift_end.action == EditorAction::VisualMoveLineEnd,
+        "shift-end should map to visual line end");
 
     KeyDispatch indent = dispatch_key_sequence(keybindings, "normal", pending, ">", false);
     expect(indent.action.has_value() && *indent.action == EditorAction::Indent, "> binding");
@@ -817,6 +855,26 @@ void test_keybinding_dispatch() {
         linewise.action.has_value() && *linewise.action == EditorAction::EnterVisualLineMode,
         "V should map to linewise visual mode");
 
+    KeyDispatch visual_left = dispatch_key_sequence(keybindings, "normal", pending, "H", false);
+    expect(
+        visual_left.action.has_value() && *visual_left.action == EditorAction::VisualMoveLeft,
+        "H should map to visual left");
+
+    KeyDispatch visual_down = dispatch_key_sequence(keybindings, "normal", pending, "J", false);
+    expect(
+        visual_down.action.has_value() && *visual_down.action == EditorAction::VisualMoveDown,
+        "J should map to visual down");
+
+    KeyDispatch visual_up = dispatch_key_sequence(keybindings, "normal", pending, "K", false);
+    expect(
+        visual_up.action.has_value() && *visual_up.action == EditorAction::VisualMoveUp,
+        "K should map to visual up");
+
+    KeyDispatch visual_right = dispatch_key_sequence(keybindings, "normal", pending, "L", false);
+    expect(
+        visual_right.action.has_value() && *visual_right.action == EditorAction::VisualMoveRight,
+        "L should map to visual right");
+
     KeyDispatch filter = dispatch_key_sequence(keybindings, "visual", pending, "|", false);
     expect(
         filter.action.has_value() && *filter.action == EditorAction::FilterSelection,
@@ -848,6 +906,19 @@ void test_keybinding_dispatch() {
     KeyDispatch find = dispatch_key_sequence(keybindings, "normal", pending, "f", false);
     expect(find.action.has_value() && *find.action == EditorAction::FindForward, "f should map to find forward");
 
+    KeyDispatch visual_find = dispatch_key_sequence(keybindings, "normal", pending, "F", false);
+    expect(
+        visual_find.action.has_value() && *visual_find.action == EditorAction::VisualFindForward,
+        "F should map to visual find forward");
+
+    KeyDispatch till = dispatch_key_sequence(keybindings, "normal", pending, "t", false);
+    expect(till.action.has_value() && *till.action == EditorAction::TillForward, "t should map to till forward");
+
+    KeyDispatch visual_till = dispatch_key_sequence(keybindings, "normal", pending, "T", false);
+    expect(
+        visual_till.action.has_value() && *visual_till.action == EditorAction::VisualTillForward,
+        "T should map to visual till forward");
+
     KeyDispatch search = dispatch_key_sequence(keybindings, "normal", pending, "/", false);
     expect(
         search.action.has_value() && *search.action == EditorAction::EnterSearchMode,
@@ -857,6 +928,16 @@ void test_keybinding_dispatch() {
     expect(
         search_prev.action.has_value() && *search_prev.action == EditorAction::SearchPrevious,
         "b should map to previous search result");
+
+    KeyDispatch visual_search_next = dispatch_key_sequence(keybindings, "normal", pending, "N", false);
+    expect(
+        visual_search_next.action.has_value() && *visual_search_next.action == EditorAction::VisualSearchNext,
+        "N should map to visual next search result");
+
+    KeyDispatch visual_search_prev = dispatch_key_sequence(keybindings, "normal", pending, "B", false);
+    expect(
+        visual_search_prev.action.has_value() && *visual_search_prev.action == EditorAction::VisualSearchPrevious,
+        "B should map to visual previous search result");
 
     KeyDispatch replace_char = dispatch_key_sequence(keybindings, "normal", pending, "r", false);
     expect(
@@ -880,12 +961,40 @@ void test_keybinding_dispatch() {
         definition_second.action.has_value() && *definition_second.action == EditorAction::GoToDefinition,
         "gd should map to go to definition");
 
+    KeyDispatch reverse_find_first = dispatch_key_sequence(keybindings, "normal", pending, "g", false);
+    expect(reverse_find_first.matched && reverse_find_first.waiting_for_more, "g should wait for gf backward find");
+    KeyDispatch reverse_find_second = dispatch_key_sequence(keybindings, "normal", pending, "f", false);
+    expect(
+        reverse_find_second.action.has_value() && *reverse_find_second.action == EditorAction::FindBackward,
+        "gf should map to backward find");
+
+    KeyDispatch reverse_visual_find_first = dispatch_key_sequence(keybindings, "normal", pending, "g", false);
+    expect(reverse_visual_find_first.matched && reverse_visual_find_first.waiting_for_more, "g should wait for gF");
+    KeyDispatch reverse_visual_find_second = dispatch_key_sequence(keybindings, "normal", pending, "F", false);
+    expect(
+        reverse_visual_find_second.action.has_value() && *reverse_visual_find_second.action == EditorAction::VisualFindBackward,
+        "gF should map to visual backward find");
+
+    KeyDispatch reverse_till_first = dispatch_key_sequence(keybindings, "normal", pending, "g", false);
+    expect(reverse_till_first.matched && reverse_till_first.waiting_for_more, "g should wait for gt");
+    KeyDispatch reverse_till_second = dispatch_key_sequence(keybindings, "normal", pending, "t", false);
+    expect(
+        reverse_till_second.action.has_value() && *reverse_till_second.action == EditorAction::TillBackward,
+        "gt should map to backward till");
+
+    KeyDispatch reverse_visual_till_first = dispatch_key_sequence(keybindings, "normal", pending, "g", false);
+    expect(reverse_visual_till_first.matched && reverse_visual_till_first.waiting_for_more, "g should wait for gT");
+    KeyDispatch reverse_visual_till_second = dispatch_key_sequence(keybindings, "normal", pending, "T", false);
+    expect(
+        reverse_visual_till_second.action.has_value() && *reverse_visual_till_second.action == EditorAction::VisualTillBackward,
+        "gT should map to visual backward till");
+
     KeyDispatch file_first = dispatch_key_sequence(keybindings, "normal", pending, "g", false);
-    expect(file_first.matched && file_first.waiting_for_more, "g should wait for gf");
-    KeyDispatch file_second = dispatch_key_sequence(keybindings, "normal", pending, "f", false);
+    expect(file_first.matched && file_first.waiting_for_more, "g should wait for gp");
+    KeyDispatch file_second = dispatch_key_sequence(keybindings, "normal", pending, "p", false);
     expect(
         file_second.action.has_value() && *file_second.action == EditorAction::GoToFileUnderCursor,
-        "gf should map to go to file under cursor");
+        "gp should map to go to file under cursor");
 
     KeyDispatch jump_back_first = dispatch_key_sequence(keybindings, "normal", pending, "g", false);
     expect(jump_back_first.matched && jump_back_first.waiting_for_more, "g should wait for go");
@@ -900,6 +1009,27 @@ void test_keybinding_dispatch() {
     expect(
         jump_forward_second.action.has_value() && *jump_forward_second.action == EditorAction::JumpForward,
         "gi should map to jump forward");
+
+    KeyDispatch visual_top_first = dispatch_key_sequence(keybindings, "normal", pending, "g", false);
+    expect(visual_top_first.matched && visual_top_first.waiting_for_more, "g should wait for gG");
+    KeyDispatch visual_top_second = dispatch_key_sequence(keybindings, "normal", pending, "G", false);
+    expect(
+        visual_top_second.action.has_value() && *visual_top_second.action == EditorAction::VisualGotoTop,
+        "gG should map to visual goto top");
+
+    KeyDispatch bottom_first = dispatch_key_sequence(keybindings, "normal", pending, "g", false);
+    expect(bottom_first.matched && bottom_first.waiting_for_more, "g should wait for ge");
+    KeyDispatch bottom_second = dispatch_key_sequence(keybindings, "normal", pending, "e", false);
+    expect(
+        bottom_second.action.has_value() && *bottom_second.action == EditorAction::GotoBottom,
+        "ge should map to goto bottom");
+
+    KeyDispatch visual_bottom_first = dispatch_key_sequence(keybindings, "normal", pending, "g", false);
+    expect(visual_bottom_first.matched && visual_bottom_first.waiting_for_more, "g should wait for gE");
+    KeyDispatch visual_bottom_second = dispatch_key_sequence(keybindings, "normal", pending, "E", false);
+    expect(
+        visual_bottom_second.action.has_value() && *visual_bottom_second.action == EditorAction::VisualGotoBottom,
+        "gE should map to visual goto bottom");
 
     KeyDispatch diag_next_first = dispatch_key_sequence(keybindings, "normal", pending, "]", false);
     expect(diag_next_first.matched && diag_next_first.waiting_for_more, "] should wait for ]d");
@@ -958,6 +1088,36 @@ void test_keybinding_dispatch() {
     expect(
         select_all.action.has_value() && *select_all.action == EditorAction::SelectAll,
         "% should map to select all");
+
+    KeyDispatch visual_line_start = dispatch_key_sequence(keybindings, "normal", pending, ")", false);
+    expect(
+        visual_line_start.action.has_value() && *visual_line_start.action == EditorAction::VisualMoveLineStart,
+        ") should map to visual line start");
+
+    KeyDispatch visual_line_end = dispatch_key_sequence(keybindings, "normal", pending, "^", false);
+    expect(
+        visual_line_end.action.has_value() && *visual_line_end.action == EditorAction::VisualMoveLineEnd,
+        "^ should map to visual line end");
+
+    KeyDispatch visual_mode_home = dispatch_key_sequence(keybindings, "visual", pending, "home", false);
+    expect(
+        visual_mode_home.action.has_value() && *visual_mode_home.action == EditorAction::MoveLineStart,
+        "visual home should map to line start");
+
+    KeyDispatch visual_mode_shift_home = dispatch_key_sequence(keybindings, "visual", pending, "shift-home", false);
+    expect(
+        visual_mode_shift_home.action.has_value() && *visual_mode_shift_home.action == EditorAction::VisualMoveLineStart,
+        "visual shift-home should map to visual line start");
+
+    KeyDispatch visual_mode_end = dispatch_key_sequence(keybindings, "visual", pending, "end", false);
+    expect(
+        visual_mode_end.action.has_value() && *visual_mode_end.action == EditorAction::MoveLineEnd,
+        "visual end should map to line end");
+
+    KeyDispatch visual_mode_shift_end = dispatch_key_sequence(keybindings, "visual", pending, "shift-end", false);
+    expect(
+        visual_mode_shift_end.action.has_value() && *visual_mode_shift_end.action == EditorAction::VisualMoveLineEnd,
+        "visual shift-end should map to visual line end");
 
     KeyDispatch search_insert = dispatch_key_sequence(keybindings, "search", pending, "x", true);
     expect(

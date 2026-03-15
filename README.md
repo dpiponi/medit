@@ -58,6 +58,12 @@ make test
 ./medit [file...]
 ```
 
+To install into your home directory with the default `~/.local/bin` prefix and `~/.config` runtime config location:
+
+```sh
+tools/install_home_local.sh
+```
+
 Passing multiple files opens each one in its own buffer and leaves the first file active.
 Starting `./medit` with no file arguments opens a project file picker first. `medit` prefers `fd`/`fdfind` when available and otherwise falls back to `rg`, then pipes the results through `fzf`. If the picker is canceled or unsupported, `medit` falls back to an empty buffer.
 
@@ -305,13 +311,14 @@ On terminals with extended color support, `medit` uses those palette entries dir
 - `o` open line below
 - `O` open line above
 - `Esc` return to normal mode
-- `h`, `j`, `k`, `l` move
-- `f<char>` move to the next matching character on the line
-- `F<char>` move backward to the previous matching character on the line
-- `t<char>` move up to the next matching character on the line
-- `T<char>` move backward up to the previous matching character on the line
-- `n` jump to the next search match
-- `b` jump to the previous search match
+- `h`, `j`, `k`, `l` move; `H`, `J`, `K`, `L` start or preserve visual selection, then move
+- `Shift-Left`, `Shift-Right`, `Shift-Up`, and `Shift-Down` do the same visual-wrapped cursor moves when your terminal reports them
+- `f<char>` move to the next matching character on the line; `F<char>` starts or preserves visual selection, then does the same move
+- `gf<char>` move backward to the previous matching character on the line; `gF<char>` starts or preserves visual selection, then does the same move
+- `t<char>` move up to the next matching character on the line; `T<char>` starts or preserves visual selection, then does the same move
+- `gt<char>` move backward up to the previous matching character on the line; `gT<char>` starts or preserves visual selection, then does the same move
+- `n` jump to the next search match and `N` starts or preserves visual selection first
+- `b` jump to the previous search match and `B` starts or preserves visual selection first
 - `]d`, `[d` jump to the next and previous diagnostic
 - `Ctrl-G` toggle diagnostic display on and off
 - Inline diagnostic annotations render below relevant code and are skipped by normal cursoring
@@ -327,9 +334,9 @@ On terminals with extended color support, `medit` uses those palette entries dir
 - Split windows are independent views onto buffers, so editing in one view immediately updates every other window showing that buffer
 - `Ctrl-Z` suspend to the shell and resume with `fg` on platforms with job control support
 - Left mouse click moves the cursor to the clicked buffer position
-- `gg` jump to the top of the file
-- `G` jump to the bottom of the file
-- `0`, `$` move to line start/end
+- `gg` jump to the top of the file and `gG` starts or preserves visual selection first
+- `ge` jump to the bottom of the file and `gE` starts or preserves visual selection first
+- `0`, `$` move to line start/end; `)` and `^` start or preserve visual selection first
 - `>`, `<` indent or outdent the current line, or all selected lines in visual mode, by `shiftwidth`
 - In insert or visual mode, `>` and `<` keep the visual selection active so you can repeat them
 - In insert mode, `Tab` in leading indentation advances to the next `softtabstop` column
@@ -354,9 +361,9 @@ On terminals with extended color support, `medit` uses those palette entries dir
 - In visual mode, `aw` extends the selection to include the word plus adjacent spaces at the cursor
 - Search updates dynamically as you type and highlights all matches, with the current match highlighted separately
 - `g d` jump to the LSP definition of the symbol under the cursor, switching to an open buffer or opening the target file in a new buffer
-- `K` request LSP hover information for the symbol under the cursor and show it in a temporary popup
+- `gk` request LSP hover information for the symbol under the cursor and show it in a temporary popup
 - `Ctrl-P` in insert mode requests LSP code completion at the cursor and shows it in a selectable popup
-- `g f` opens the file reference under the cursor, first by direct relative path and then by searching from the workspace root with `fdfind` or `fd`
+- `gp` opens the file reference under the cursor, first by direct relative path and then by searching from the workspace root with `fdfind` or `fd`
 - `g o` jump back through definition history and `g i` jump forward again
 - `u` undo last edit
 - `Ctrl-R` redo last undone edit
