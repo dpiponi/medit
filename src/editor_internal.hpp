@@ -239,6 +239,7 @@ int codepoint_width(char32_t codepoint);
 std::size_t codepoint_display_width(char32_t codepoint, std::size_t visual_column, std::size_t tabstop);
 std::string mode_name(Mode mode);
 std::string prefixed_message(const char *prefix, const std::string &value);
+std::string count_label(std::size_t count, const char *singular);
 std::string make_status_bar_left_text(
     const EditorState &state,
     const EditorCore &core,
@@ -282,6 +283,12 @@ void enter_sed_command_mode(EditorState &state);
 void enter_search_mode(EditorState &state);
 bool can_quit_without_force(const EditorState &state);
 void quit_editor(EditorState &state);
+std::string shell_single_quote(const std::string &text);
+void handle_edit_command(EditorState &state, const std::string &argument);
+bool reload_editor_configuration(EditorState &state, std::string &error_message);
+void show_lsp_status(EditorState &state);
+void show_tree_sitter_status(EditorState &state);
+void open_startup_file_picker(EditorState &state, const std::optional<std::filesystem::path> &root = std::nullopt);
 void request_definition(EditorState &state);
 void request_hover(EditorState &state);
 void request_completion(EditorState &state);
