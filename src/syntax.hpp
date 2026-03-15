@@ -28,4 +28,5 @@ std::expected<std::vector<std::vector<HighlightSpan>>, std::string> highlight_do
     const std::vector<std::u32string> &lines,
     const EditorConfig &config,
     const SyntaxSelection &selection);
+std::string tree_sitter_status_summary(const EditorConfig &config, const std::optional<std::string> &file_path);
 void invalidate_syntax_runtime_cache();

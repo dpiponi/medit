@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <filesystem>
 
 std::string trim_ascii_whitespace(std::string_view value) {
@@ -47,6 +48,23 @@ std::string ellipsize_middle(std::string_view text, std::size_t max_width) {
     std::size_t prefix = (max_width - 3) / 2;
     std::size_t suffix = max_width - 3 - prefix;
     return std::string(text.substr(0, prefix)) + "..." + std::string(text.substr(text.size() - suffix));
+}
+
+std::string expand_user_path(std::string_view path) {
+    if (path.empty() || path[0] != '~') {
+        return std::string(path);
+    }
+    if (path.size() > 1 && path[1] != '/') {
+        return std::string(path);
+    }
+    const char *home = std::getenv("HOME");
+    if (home == nullptr || *home == '\0') {
+        return std::string(path);
+    }
+    if (path.size() == 1) {
+        return std::string(home);
+    }
+    return std::string(home) + std::string(path.substr(1));
 }
 
 bool glob_match(std::string_view text, std::string_view pattern) {

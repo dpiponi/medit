@@ -8,7 +8,7 @@ Current state before install-script testing:
 - Shared internal declarations/state live in [src/editor_internal.hpp](/home/dan/de/src/editor_internal.hpp).
 - [Makefile](/home/dan/de/Makefile) includes `src/editor_ui.cpp` in `APP_SOURCES`.
 - `make -j2` completed successfully and linked `medit`.
-- `src/editor.cpp` still contains disabled legacy copies of moved UI code behind `#if 0` blocks for cleanup later.
+- The legacy disabled UI copies in `src/editor.cpp` were removed after the split was validated.
 
 Modified or added files relevant to this work:
 
@@ -26,4 +26,4 @@ Install test plan:
 Suggested cleanup after the install test:
 
 - Remove the temporary install roots under `/tmp`.
-- Delete the `#if 0` legacy blocks from [src/editor.cpp](/home/dan/de/src/editor.cpp) once the split is fully trusted.
+- Disabled legacy blocks in [src/editor.cpp](/home/dan/de/src/editor.cpp) have been removed.

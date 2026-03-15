@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <type_traits>
 #include <stdexcept>
 #include <string>
@@ -613,6 +614,18 @@ std::expected<std::vector<std::vector<HighlightSpan>>, std::string> highlight_tr
     return spans_by_line;
 }
 
+std::string syntax_engine_name(SyntaxEngine engine) {
+    switch (engine) {
+        case SyntaxEngine::None:
+            return "none";
+        case SyntaxEngine::LegacyCpp:
+            return "legacy-cpp";
+        case SyntaxEngine::TreeSitter:
+            return "tree-sitter";
+    }
+    return "unknown";
+}
+
 }  // namespace
 
 bool operator==(const SyntaxSelection &left, const SyntaxSelection &right) {
@@ -664,6 +677,58 @@ std::expected<std::vector<std::vector<HighlightSpan>>, std::string> highlight_do
             return std::unexpected("configured syntax language not found: " + selection.language_name);
     }
     return std::vector<std::vector<HighlightSpan>>(lines.size());
+}
+
+std::string tree_sitter_status_summary(const EditorConfig &config, const std::optional<std::string> &file_path) {
+    std::ostringstream status;
+    status << "file: " << (file_path && !file_path->empty() ? *file_path : "(none)") << "\n";
+    status << "configured languages: " << config.syntax_languages.size() << "\n";
+    status << "syntax config: "
+           << (config.syntax_config_path ? config.syntax_config_path->string() : "(default/none)") << "\n";
+
+    SyntaxSelection selection;
+    try {
+        selection = resolve_syntax_selection(config, file_path);
+    } catch (const std::exception &error) {
+        status << "selection error: " << error.what();
+        return status.str();
+    }
+
+    status << "selected engine: " << syntax_engine_name(selection.engine) << "\n";
+    status << "selected language: " << (selection.language_name.empty() ? "(none)" : selection.language_name) << "\n";
+
+    if (selection.engine != SyntaxEngine::TreeSitter) {
+        status << "tree-sitter active: no";
+        return status.str();
+    }
+
+    TreeSitterApi &api = tree_sitter_api();
+    status << "runtime loaded: " << (api.loaded() ? "yes" : "no") << "\n";
+    if (!api.loaded()) {
+        status << "runtime error: " << api.error;
+        return status.str();
+    }
+
+    std::optional<const SyntaxLanguageConfig *> language = syntax_language_by_name(config, selection.language_name);
+    if (!language) {
+        status << "language error: configured syntax language not found";
+        return status.str();
+    }
+
+    status << "grammar path: " << (*language)->grammar_path.string() << "\n";
+    status << "grammar symbol: " << (*language)->symbol_name << "\n";
+    status << "highlights path: " << (*language)->highlights_path.string() << "\n";
+
+    std::expected<LoadedTreeSitterLanguage *, std::string> loaded = load_tree_sitter_language(**language);
+    if (!loaded) {
+        status << "language loaded: no\n";
+        status << "language error: " << loaded.error();
+        return status.str();
+    }
+
+    status << "language loaded: yes\n";
+    status << "capture count: " << (*loaded)->capture_names.size();
+    return status.str();
 }
 
 void invalidate_syntax_runtime_cache() {
