@@ -949,6 +949,7 @@ void execute_command(EditorState &state) {
 
     std::u32string command_text = state.command_buffer;
     std::string command = u32_to_utf8(command_text);
+    log_debug("ex command=" + command);
     std::istringstream parser(command);
     std::string verb;
     parser >> verb;

@@ -348,7 +348,7 @@ const std::map<std::string, EditorAction> &action_map() {
     return kActions;
 }
 
-std::string action_name(EditorAction action) {
+std::string action_name_impl(EditorAction action) {
     for (const auto &[name, value] : action_map()) {
         if (value == action) {
             return name;
@@ -379,7 +379,7 @@ std::string join_tokens(const std::vector<std::string> &tokens, std::size_t star
 
 std::string describe_binding(const KeyBinding &binding) {
     if (binding.action) {
-        return humanize_action_name(action_name(*binding.action));
+        return humanize_action_name(action_name_impl(*binding.action));
     }
     return "exec " + join_tokens(binding.expansion, 0);
 }
@@ -500,6 +500,10 @@ KeyDispatch dispatch_single_attempt(
 }
 
 }  // namespace
+
+std::string action_name(EditorAction action) {
+    return action_name_impl(action);
+}
 
 KeyBindings load_keybindings() {
     return load_keybindings(load_editor_config());

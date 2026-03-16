@@ -2,6 +2,39 @@
 
 #include "logger.hpp"
 
+namespace {
+
+std::string join_logged_tokens(const std::vector<std::string> &tokens) {
+    std::string result;
+    for (std::size_t index = 0; index < tokens.size(); ++index) {
+        if (!result.empty()) {
+            result += ' ';
+        }
+        result += tokens[index];
+    }
+    return result;
+}
+
+std::vector<std::string> logged_tokens(const std::vector<EditorState::RecordedInput> &inputs) {
+    std::vector<std::string> tokens;
+    tokens.reserve(inputs.size());
+    for (const EditorState::RecordedInput &input : inputs) {
+        tokens.push_back(input.token);
+    }
+    return tokens;
+}
+
+void log_input_token(const EditorState &state, const std::string &token, wint_t key, bool printable, bool is_special) {
+    log_debug(
+        "input token=" + token +
+        " key=" + std::to_string(static_cast<long long>(key)) +
+        " printable=" + std::string(printable ? "true" : "false") +
+        " special=" + std::string(is_special ? "true" : "false") +
+        " mode=" + mode_name(state.mode));
+}
+
+}  // namespace
+
 void append_after_cursor(EditorState &state) {
     EditorCore &core = active_core(state);
     Position cursor = core.cursor();
@@ -487,6 +520,7 @@ void finalize_command_recording(EditorState &state) {
     if (!state.command_recording_nonrepeatable && changed &&
         !state.command_inputs.empty()) {
         state.last_repeatable_command = state.command_inputs;
+        log_debug("command recorded inputs=[" + join_logged_tokens(logged_tokens(state.command_inputs)) + "]");
     }
     reset_command_recording(state);
 }
@@ -691,6 +725,9 @@ void replay_group_inputs(EditorState &state, const std::vector<EditorState::Reco
         return;
     }
 
+    log_debug(
+        "command group replay repeat=" + std::to_string(repeat) +
+        " inputs=[" + join_logged_tokens(logged_tokens(inputs)) + "]");
     ++state.replay_depth;
     for (std::size_t iteration = 1; iteration < repeat; ++iteration) {
         for (const EditorState::RecordedInput &input : inputs) {
@@ -712,6 +749,9 @@ bool repeat_last_command(EditorState &state) {
     }
 
     std::size_t repeat = take_repeat_count(state);
+    log_debug(
+        "repeat command repeat=" + std::to_string(repeat) +
+        " inputs=[" + join_logged_tokens(logged_tokens(state.last_repeatable_command)) + "]");
     active_core(state).begin_compound_edit();
     ++state.replay_depth;
     for (std::size_t iteration = 0; iteration < repeat; ++iteration) {
@@ -728,6 +768,10 @@ bool repeat_last_command(EditorState &state) {
 void execute_action(EditorState &state, EditorAction action, wint_t key) {
     EditorCore &core = active_core(state);
     EditorState::BufferUiState &buffer_state = active_buffer_cache(state);
+    log_debug(
+        "action name=" + action_name(action) +
+        " key=" + std::to_string(static_cast<long long>(key)) +
+        " mode=" + mode_name(state.mode));
     switch (action) {
         case EditorAction::MoveLeft:
             core.move_left();
@@ -1247,6 +1291,24 @@ void handle_group_close(EditorState &state) {
 
     std::vector<EditorState::RecordedInput> inputs = state.group_inputs;
     std::size_t repeat = state.group_repeat_count;
+    log_debug(
+        "command group close repeat=" + std::to_string(repeat) +
+        " inputs=[" + join_logged_tokens(logged_tokens(inputs)) + "]");
+
+    if (state.command_recording && state.replay_depth == 0) {
+        auto open = std::find_if(
+            state.command_inputs.rbegin(),
+            state.command_inputs.rend(),
+            [](const EditorState::RecordedInput &input) { return input.token == "("; });
+        if (open != state.command_inputs.rend()) {
+            std::size_t replace_index = static_cast<std::size_t>(std::distance(open, state.command_inputs.rend()) - 1);
+            state.command_inputs.resize(replace_index);
+            state.command_inputs.push_back({"(", '(', false});
+            state.command_inputs.insert(state.command_inputs.end(), inputs.begin(), inputs.end());
+            state.command_inputs.push_back({")", ')', false});
+        }
+    }
+
     state.group_inputs.clear();
     state.group_depth = 0;
     state.group_repeat_count = 1;
@@ -1260,8 +1322,10 @@ void handle_group_open(EditorState &state) {
         state.group_repeat_count = take_repeat_count(state);
         state.group_inputs.clear();
         active_core(state).begin_compound_edit();
+        log_debug("command group open repeat=" + std::to_string(state.group_repeat_count));
     } else {
         record_group_input(state, "(", '(', false);
+        log_debug("command group nested open depth=" + std::to_string(state.group_depth + 1));
     }
     ++state.group_depth;
     set_status(state, "(");
@@ -1351,6 +1415,7 @@ void handle_keymap_input(EditorState &state, wint_t key, bool is_special) {
     if (!token) {
         return;
     }
+    log_input_token(state, *token, key, is_printable_input(key, is_special), is_special);
     if (handle_popup_input(state, *token)) {
         return;
     }

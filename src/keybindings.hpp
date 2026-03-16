@@ -153,3 +153,4 @@ KeyDispatch dispatch_key_sequence(
     std::vector<std::string> &pending_tokens,
     const std::string &token,
     bool printable);
+std::string action_name(EditorAction action);
