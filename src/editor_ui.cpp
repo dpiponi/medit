@@ -1,6 +1,11 @@
 #include "editor_internal.hpp"
 
+#include "logger.hpp"
 #include "string_utils.hpp"
+
+#ifdef _WIN32
+#include "pdcurses_compat.hpp"
+#endif
 
 #include <algorithm>
 #include <array>
@@ -12,6 +17,7 @@
 #include <sstream>
 
 #if defined(__unix__) || defined(__APPLE__)
+#include <signal.h>
 #include <termios.h>
 #include <unistd.h>
 #endif
@@ -141,9 +147,9 @@ std::size_t display_width(const std::u32string &line, std::size_t tabstop) {
 }
 
 void ensure_horizontal_visibility(EditorState &state, std::size_t window_id, int screen_cols) {
-    EditorState::WindowUiState &buffer_ui = window_ui(state, window_id);
-    const EditorCore &core = window_core(state, window_id);
-    Position cursor = displayed_cursor(state, window_id);
+    EditorState::WindowUiState &buffer_ui = state.window_ui(window_id);
+    const EditorCore &core = state.window_core(window_id);
+    Position cursor = state.displayed_cursor(window_id);
     const std::u32string &line = core.lines()[cursor.row];
     std::size_t cursor_x = display_width_until(line, cursor.column, effective_tabstop(state.config, core.file_path()));
     std::size_t usable_cols = screen_cols > 0 ? static_cast<std::size_t>(screen_cols) : 1;
@@ -157,10 +163,10 @@ void ensure_horizontal_visibility(EditorState &state, std::size_t window_id, int
 }
 
 void ensure_vertical_visibility(EditorState &state, std::size_t window_id, int screen_rows, int buffer_cols) {
-    EditorState::WindowUiState &buffer_ui = window_ui(state, window_id);
+    EditorState::WindowUiState &buffer_ui = state.window_ui(window_id);
     std::size_t usable_rows = screen_rows > 0 ? static_cast<std::size_t>(screen_rows) : 1;
     const std::vector<VisualRow> &visual_rows = visual_rows_for_window(state, window_id, buffer_cols);
-    std::size_t cursor_visual_row = visual_row_for_buffer_row(visual_rows, displayed_cursor(state, window_id).row);
+    std::size_t cursor_visual_row = visual_row_for_buffer_row(visual_rows, state.displayed_cursor(window_id).row);
     if (cursor_visual_row < buffer_ui.row_offset) {
         buffer_ui.row_offset = cursor_visual_row;
     }
@@ -263,16 +269,16 @@ StyleRole resolve_style_role(Position position, const std::vector<HighlightSpan>
 }
 
 std::vector<HighlightSpan> collect_line_highlights(const EditorState &state, std::size_t window_id, std::size_t row) {
-    const EditorCore &core = window_core(state, window_id);
-    const EditorState::WindowUiState &window_state = window_ui(state, window_id);
-    const EditorState::BufferUiState &buffer_ui = buffer_ui_state(state, window_buffer(state, window_id).id);
+    const EditorCore &core = state.window_core(window_id);
+    const EditorState::WindowUiState &window_state = state.window_ui(window_id);
+    const EditorState::BufferUiState &buffer_ui = state.buffer_ui_state(state.window_buffer(window_id).id);
     std::vector<HighlightSpan> spans;
     Range entire_line = core.line_range(row);
-    const auto &syntax_ui = buffer_syntax_ui(state, window_buffer(state, window_id).id);
+    const auto &syntax_ui = state.buffer_syntax_ui(state.window_buffer(window_id).id);
     if (row < syntax_ui.syntax_highlights.size()) {
         spans.insert(spans.end(), syntax_ui.syntax_highlights[row].begin(), syntax_ui.syntax_highlights[row].end());
     }
-    if (displayed_cursor(state, window_id).row == row) {
+    if (state.displayed_cursor(window_id).row == row) {
         spans.push_back({entire_line, StyleRole::CursorLine, 10});
     }
     std::optional<Range> selection = core.selection_range();
@@ -280,7 +286,7 @@ std::vector<HighlightSpan> collect_line_highlights(const EditorState &state, std
         Range line_selection{
             {row, row == selection->start.row ? selection->start.column : 0},
             {row, row == selection->end.row ? selection->end.column : core.line_length(row)}};
-        if (!positions_equal(line_selection.start, line_selection.end)) {
+        if (!(line_selection.start == line_selection.end)) {
             spans.push_back({line_selection, StyleRole::Selection, 100});
         }
     }
@@ -292,7 +298,7 @@ std::vector<HighlightSpan> collect_line_highlights(const EditorState &state, std
         Range line_match{
             {row, row == match.start.row ? match.start.column : 0},
             {row, row == match.end.row ? match.end.column : core.line_length(row)}};
-        if (positions_equal(line_match.start, line_match.end)) {
+        if ((line_match.start == line_match.end)) {
             continue;
         }
         StyleRole role =
@@ -302,7 +308,7 @@ std::vector<HighlightSpan> collect_line_highlights(const EditorState &state, std
         int priority = role == StyleRole::SearchMatchCurrent ? 95 : 90;
         spans.push_back({line_match, role, priority});
     }
-    if (should_render_diagnostics(state, window_id)) {
+    if (state.should_render_diagnostics(window_id)) {
         for (const Diagnostic &diagnostic : core.diagnostics()) {
             Range range = normalized_range(diagnostic.range);
             if (row < range.start.row || row > range.end.row) {
@@ -311,7 +317,7 @@ std::vector<HighlightSpan> collect_line_highlights(const EditorState &state, std
             Range line_diagnostic{
                 {row, row == range.start.row ? range.start.column : 0},
                 {row, row == range.end.row ? range.end.column : core.line_length(row)}};
-            if (positions_equal(line_diagnostic.start, line_diagnostic.end)) {
+            if ((line_diagnostic.start == line_diagnostic.end)) {
                 continue;
             }
             StyleRole role = diagnostic.severity == DiagnosticSeverity::Error
@@ -450,6 +456,14 @@ void setup_terminal(const Theme &theme) {
     g_shell_termios_valid = tcgetattr(STDIN_FILENO, &g_shell_termios) == 0;
 #endif
     initscr();
+#if defined(SIGTSTP)
+    // Ensure SIGTSTP has default handler (raw() mode might have disabled it)
+    struct sigaction sa;
+    sa.sa_handler = SIG_DFL;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGTSTP, &sa, nullptr);
+#endif
     set_escdelay(25);
     def_shell_mode();
     raw();
@@ -487,20 +501,38 @@ void teardown_terminal() {
 
 void suspend_editor(EditorState &state) {
 #if defined(SIGTSTP)
-    state.pending_tokens.clear();
-    state.pending_motion = PendingMotion::None;
-    state.pending_motion_repeat_count = 1;
-    state.repeat_digits.clear();
+    log_debug("suspend_editor called - attempting to suspend");
+    state.pending.tokens.clear();
+    state.pending.motion = PendingMotion::None;
+    state.pending.motion_repeat_count = 1;
+    state.pending.repeat_digits.clear();
     def_prog_mode();
     endwin();
     restore_shell_terminal_state();
-    std::raise(SIGTSTP);
+
+    // Re-enable default SIGTSTP handler before raising
+    struct sigaction sa;
+    sa.sa_handler = SIG_DFL;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGTSTP, &sa, nullptr);
+
+    log_debug("suspend_editor sending SIGTSTP to process group");
+    // Send SIGTSTP to the process group (not just this thread)
+    int result = kill(0, SIGTSTP);
+    if (result != 0) {
+        log_debug("suspend_editor kill() failed errno=" + std::to_string(errno));
+    }
+
+    // Execution continues here after 'fg'
+    log_debug("suspend_editor resumed after SIGTSTP");
     reset_prog_mode();
     refresh();
     clearok(stdscr, TRUE);
-    set_status(state, mode_name(state.mode));
+    state.set_status(mode_name(state.mode));
 #else
-    set_status(state, "Suspend not supported");
+    log_debug("suspend_editor called but SIGTSTP not defined");
+    state.set_status("Suspend not supported");
 #endif
 }
 
@@ -515,8 +547,8 @@ int line_number_width(const EditorCore &core) {
 }
 
 void draw_buffer_rows(const EditorState &state, std::size_t window_id, const WindowLayoutRect &rect, int line_number_width_value) {
-    const EditorCore &core = window_core(state, window_id);
-    const EditorState::WindowUiState &buffer_ui = window_ui(state, window_id);
+    const EditorCore &core = state.window_core(window_id);
+    const EditorState::WindowUiState &buffer_ui = state.window_ui(window_id);
     int buffer_rows = rect.height;
     int buffer_cols = rect.width - line_number_width_value - 1;
     if (buffer_rows <= 0 || buffer_cols <= 0) {
@@ -538,7 +570,7 @@ void draw_buffer_rows(const EditorState &state, std::size_t window_id, const Win
         const VisualRow &visual_row = visual_rows[visual_row_index];
         if (visual_row.kind == VisualRowKind::SourceLine) {
             StyleRole line_number_role =
-                displayed_cursor(state, window_id).row == visual_row.buffer_row ? StyleRole::CursorLineNumber : StyleRole::LineNumber;
+                state.displayed_cursor(window_id).row == visual_row.buffer_row ? StyleRole::CursorLineNumber : StyleRole::LineNumber;
             draw_line_number(state.theme, screen_row, rect.left, visual_row.buffer_row + 1, line_number_width_value, line_number_role);
             const std::u32string &line = core.lines()[visual_row.buffer_row];
             std::vector<HighlightSpan> spans = collect_line_highlights(state, window_id, visual_row.buffer_row);
@@ -578,7 +610,7 @@ void draw_buffer_rows(const EditorState &state, std::size_t window_id, const Win
 }
 
 std::string build_status_text(const EditorState &state) {
-    const EditorCore &core = active_core(state);
+    const EditorCore &core = state.active_core();
     Position cursor = core.cursor();
     std::string language = infer_language_id(state.config, core.file_path());
     std::string workspace = "-";
@@ -599,7 +631,7 @@ void draw_status_bar(const EditorState &state, int screen_rows, int screen_cols)
     attron(curses_attributes(style, StyleRole::StatusBar));
     move(screen_rows - 2, 0);
     clrtoeol();
-    const EditorCore &core = active_core(state);
+    const EditorCore &core = state.active_core();
     Position cursor = core.cursor();
     std::string language = infer_language_id(state.config, core.file_path());
     std::string workspace = "-";
@@ -837,12 +869,12 @@ void draw_popup(const EditorState &state, int screen_rows, int screen_cols) {
 
 std::pair<int, int> cursor_screen_position(const EditorState &state, const WindowLayoutRect &rect) {
     const std::size_t window_id = state.windows.active_window_id();
-    const EditorCore &core = active_core(state);
-    const EditorState::WindowUiState &buffer_ui = active_buffer_ui(state);
+    const EditorCore &core = state.active_core();
+    const EditorState::WindowUiState &buffer_ui = state.active_buffer_ui();
     int line_number_cols = line_number_width(core);
     int buffer_cols = rect.width - line_number_cols - 1;
     const std::vector<VisualRow> &visual_rows = visual_rows_for_window(state, window_id, buffer_cols);
-    Position cursor = displayed_cursor(state, window_id);
+    Position cursor = state.displayed_cursor(window_id);
     std::size_t visual_row_index = visual_row_for_buffer_row(visual_rows, cursor.row);
     const std::u32string &line = core.lines()[cursor.row];
     std::size_t width = display_width_until(line, cursor.column, effective_tabstop(state.config, core.file_path()));
@@ -873,8 +905,8 @@ std::optional<ClickedBufferPosition> buffer_position_from_screen_point(const Edi
             continue;
         }
 
-        const EditorCore &core = window_core(state, rect.window_id);
-        const EditorState::WindowUiState &buffer_ui = window_ui(state, rect.window_id);
+        const EditorCore &core = state.window_core(rect.window_id);
+        const EditorState::WindowUiState &buffer_ui = state.window_ui(rect.window_id);
         int line_number_cols = line_number_width(core);
         int buffer_cols = rect.width - line_number_cols - 1;
         if (buffer_cols <= 0) {
@@ -910,7 +942,7 @@ void draw_editor(const EditorState &state) {
     erase();
     std::vector<WindowLayoutRect> rects = state.windows.layout_rects(screen_rows, screen_cols, 2);
     for (const WindowLayoutRect &rect : rects) {
-        int line_cols = line_number_width(window_core(state, rect.window_id));
+        int line_cols = line_number_width(state.window_core(rect.window_id));
         draw_buffer_rows(state, rect.window_id, rect, line_cols);
     }
     draw_status_bar(state, screen_rows, screen_cols);
@@ -928,17 +960,17 @@ void draw_editor(const EditorState &state) {
     refresh();
 }
 
-void refresh_syntax_highlights(EditorState &state, std::size_t window_id) {
+void EditorState::refresh_syntax_highlights(std::size_t window_id) {
     constexpr auto kInsertSyntaxDebounce = std::chrono::milliseconds(120);
-    EditorCore &core = window_core(state, window_id);
-    EditorState::SyntaxUiState &syntax_ui = buffer_syntax_ui(state, window_buffer(state, window_id).id);
+    EditorCore &core = window_core(window_id);
+    SyntaxUiState &syntax_ui = buffer_syntax_ui(window_buffer(window_id).id);
     std::size_t current_revision = core.current_revision();
     SyntaxSelection selection;
     try {
-        selection = resolve_syntax_selection(state.config, core.file_path());
+        selection = resolve_syntax_selection(config, core.file_path());
     } catch (const std::exception &error) {
         if (!syntax_ui.syntax_config_error_reported) {
-            set_status(state, std::string("Syntax config error: ") + error.what());
+            set_status(std::string("Syntax config error: ") + error.what());
             syntax_ui.syntax_config_error_reported = true;
         }
         selection = {};
@@ -956,7 +988,7 @@ void refresh_syntax_highlights(EditorState &state, std::size_t window_id) {
         return;
     }
 
-    if (state.mode == Mode::Insert && syntax_ui.syntax_revision != current_revision) {
+    if (mode == Mode::Insert && syntax_ui.syntax_revision != current_revision) {
         auto now = std::chrono::steady_clock::now();
         if (now - syntax_ui.syntax_dirty_since < kInsertSyntaxDebounce) {
             return;
@@ -971,11 +1003,11 @@ void refresh_syntax_highlights(EditorState &state, std::size_t window_id) {
     syntax_ui.syntax_selection = selection;
     syntax_ui.syntax_file_path = core.file_path();
     syntax_ui.syntax_revision = current_revision;
-    auto syntax_result = highlight_document_syntax(core.lines(), state.config, syntax_ui.syntax_selection);
+    auto syntax_result = highlight_document_syntax(core.lines(), config, syntax_ui.syntax_selection);
     if (!syntax_result) {
         syntax_ui.syntax_highlights.assign(core.lines().size(), {});
         if (!syntax_ui.syntax_config_error_reported) {
-            set_status(state, "Syntax error: " + syntax_result.error());
+            set_status("Syntax error: " + syntax_result.error());
             syntax_ui.syntax_config_error_reported = true;
         }
     } else {
@@ -985,13 +1017,13 @@ void refresh_syntax_highlights(EditorState &state, std::size_t window_id) {
 }
 
 void render_frame(EditorState &state) {
-    normalize_selected_diagnostic(state);
+    state.normalize_selected_diagnostic();
     int screen_rows = 0;
     int screen_cols = 0;
     getmaxyx(stdscr, screen_rows, screen_cols);
     for (const EditorWindow &window : state.windows.windows()) {
-        refresh_search_matches_for_window(state, window.id);
-        refresh_syntax_highlights(state, window.id);
+        state.refresh_search_matches_for_window(window.id);
+        state.refresh_syntax_highlights(window.id);
     }
     auto rects = state.windows.layout_rects(screen_rows, screen_cols, 2);
     auto active_rect = std::find_if(
@@ -1000,7 +1032,7 @@ void render_frame(EditorState &state) {
         [&state](const WindowLayoutRect &rect) { return rect.window_id == state.windows.active_window_id(); });
     if (active_rect != rects.end()) {
         int buffer_rows = active_rect->height;
-        int buffer_cols = active_rect->width - line_number_width(active_core(state)) - 1;
+        int buffer_cols = active_rect->width - line_number_width(state.active_core()) - 1;
         ensure_cursor_visible(state, state.windows.active_window_id(), buffer_rows, buffer_cols);
     }
     draw_editor(state);

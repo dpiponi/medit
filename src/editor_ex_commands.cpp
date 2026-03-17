@@ -19,73 +19,73 @@
 #include <unistd.h>
 #endif
 
-void handle_quit_command(EditorState &state, bool force) {
-    if (!force && !can_quit_without_force(state)) {
-        set_status(state, "Unsaved changes; use :q! to quit");
+void EditorState::handle_quit_command(bool force) {
+    if (!force && !can_quit_without_force(*this)) {
+        set_status("Unsaved changes; use :q! to quit");
         return;
     }
-    quit_editor(state);
+    quit_editor();
 }
 
-void handle_write_command(EditorState &state, const std::string &argument) {
-    EditorCore &core = active_core(state);
+void EditorState::handle_write_command(const std::string &argument) {
+    EditorCore &core = active_core();
     if (argument.empty()) {
         if (core.save_current_file()) {
-            set_status(state, prefixed_message("Wrote ", core.display_file_name()));
+            set_status(prefixed_message("Wrote ", core.display_file_name()));
         } else {
-            set_status(state, core.file_path() ? "Write failed" : "No file name");
+            set_status(core.file_path() ? "Write failed" : "No file name");
         }
         return;
     }
     if (core.save_current_file_as(argument)) {
-        set_status(state, prefixed_message("Wrote ", argument));
+        set_status(prefixed_message("Wrote ", argument));
     } else {
-        set_status(state, "Write failed");
+        set_status("Write failed");
     }
 }
 
-void handle_edit_command(EditorState &state, const std::string &argument) {
+void EditorState::handle_edit_command(const std::string &argument) {
     if (argument.empty()) {
-        set_status(state, "No file name");
+        set_status("No file name");
         return;
     }
     log_debug("edit command open path=" + argument);
-    EditorBuffer *buffer = state.session.open_file(argument, true);
+    EditorBuffer *buffer = session.open_file(argument, true);
     if (buffer) {
-        state.windows.set_active_buffer_id(buffer->id);
-        sync_active_window_buffer(state);
-        window_ui(state, state.windows.active_window_id()) = EditorState::WindowUiState{};
+        windows.set_active_buffer_id(buffer->id);
+        sync_active_window_buffer();
+        window_ui(windows.active_window_id()) = WindowUiState{};
         log_debug("edit command opened path=" + argument);
-        set_status(state, prefixed_message("Opened ", argument));
+        set_status(prefixed_message("Opened ", argument));
     } else {
         log_debug("edit command open failed path=" + argument);
-        set_status(state, "Could not open file");
+        set_status("Could not open file");
     }
 }
 
-void handle_write_quit_command(EditorState &state, const std::string &argument) {
-    EditorCore &core = active_core(state);
+void EditorState::handle_write_quit_command(const std::string &argument) {
+    EditorCore &core = active_core();
     if (argument.empty()) {
         if (!core.save_current_file()) {
-            set_status(state, core.file_path() ? "Write failed" : "No file name");
+            set_status(core.file_path() ? "Write failed" : "No file name");
             return;
         }
-        if (!can_quit_without_force(state)) {
-            set_status(state, "Other buffers still have unsaved changes");
+        if (!can_quit_without_force(*this)) {
+            set_status("Other buffers still have unsaved changes");
             return;
         }
-        quit_editor(state);
+        quit_editor();
         return;
     }
     if (!core.save_current_file_as(argument)) {
-        set_status(state, "Write failed");
+        set_status("Write failed");
         return;
     }
-    if (!can_quit_without_force(state)) {
-        set_status(state, "Other buffers still have unsaved changes");
+    if (!can_quit_without_force(*this)) {
+        set_status("Other buffers still have unsaved changes");
         return;
     }
-    quit_editor(state);
+    quit_editor();
 }
 
 std::string buffers_summary(const EditorState &state) {
@@ -96,7 +96,7 @@ std::string buffers_summary(const EditorState &state) {
             message << " | ";
         }
         const EditorBuffer &buffer = buffers[index];
-        if (buffer.id == active_window(state).buffer_id) {
+        if (buffer.id == state.active_window().buffer_id) {
             message << "*";
         }
         message << buffer.id << ":" << buffer.core.display_file_name();
@@ -107,55 +107,55 @@ std::string buffers_summary(const EditorState &state) {
     return message.str();
 }
 
-void handle_buffer_switch_command(EditorState &state, const std::string &argument) {
+void EditorState::handle_buffer_switch_command(const std::string &argument) {
     if (argument.empty()) {
-        set_status(state, "No buffer id");
+        set_status("No buffer id");
         return;
     }
     std::size_t buffer_id = 0;
     try {
         buffer_id = static_cast<std::size_t>(std::stoul(argument));
     } catch (const std::exception &) {
-        set_status(state, "Invalid buffer id");
+        set_status("Invalid buffer id");
         return;
     }
-    if (state.session.find_buffer_by_id(buffer_id)) {
-        show_buffer_in_active_window(state, buffer_id);
-        set_status(state, prefixed_message("Switched to ", active_core(state).display_file_name()));
+    if (session.find_buffer_by_id(buffer_id)) {
+        show_buffer_in_active_window(buffer_id);
+        set_status(prefixed_message("Switched to ", active_core().display_file_name()));
     } else {
-        set_status(state, "No such buffer");
+        set_status("No such buffer");
     }
 }
 
-void handle_buffer_delete_command(EditorState &state, bool force) {
-    std::size_t closing_id = active_window(state).buffer_id;
-    std::string closing_name = active_core(state).display_file_name();
-    state.session.switch_to_id(closing_id);
+void EditorState::handle_buffer_delete_command(bool force) {
+    std::size_t closing_id = active_window().buffer_id;
+    std::string closing_name = active_core().display_file_name();
+    session.switch_to_id(closing_id);
     std::vector<EditorEvent> closed_events;
-    if (!state.session.close_active_buffer(force, &closed_events)) {
-        set_status(state, "Unsaved changes; use :bd! to close");
+    if (!session.close_active_buffer(force, &closed_events)) {
+        set_status("Unsaved changes; use :bd! to close");
         return;
     }
     for (const EditorEvent &event : closed_events) {
-        state.runtime.dispatch_editor_event(event);
+        runtime.dispatch_editor_event(event);
     }
-    state.buffer_ui.erase(closing_id);
-    state.syntax_ui.erase(closing_id);
-    std::size_t replacement_buffer_id = state.session.active_buffer_id();
-    state.windows.replace_buffer_id(closing_id, replacement_buffer_id);
-    for (const EditorWindow &window : state.windows.windows()) {
+    buffer_ui_map.erase(closing_id);
+    syntax_ui_map.erase(closing_id);
+    std::size_t replacement_buffer_id = session.active_buffer_id();
+    windows.replace_buffer_id(closing_id, replacement_buffer_id);
+    for (const EditorWindow &window : windows.windows()) {
         if (window.buffer_id == replacement_buffer_id) {
-            window_ui(state, window.id) = EditorState::WindowUiState{};
+            window_ui(window.id) = EditorState::WindowUiState{};
         }
     }
-    sync_active_window_buffer(state);
-    active_buffer_ui(state);
-    set_status(state, prefixed_message("Closed ", closing_name));
+    sync_active_window_buffer();
+    active_buffer_ui();
+    set_status(prefixed_message("Closed ", closing_name));
 }
 
-void handle_goto_line_command(EditorState &state, const std::string &argument) {
+void EditorState::handle_goto_line_command(const std::string &argument) {
     if (argument.empty()) {
-        set_status(state, "No line number");
+        set_status("No line number");
         return;
     }
 
@@ -163,19 +163,19 @@ void handle_goto_line_command(EditorState &state, const std::string &argument) {
     try {
         line_number = static_cast<std::size_t>(std::stoul(argument));
     } catch (const std::exception &) {
-        set_status(state, "Invalid line number");
+        set_status("Invalid line number");
         return;
     }
 
     if (line_number == 0) {
-        set_status(state, "Line numbers start at 1");
+        set_status("Line numbers start at 1");
         return;
     }
 
-    EditorCore &core = active_core(state);
+    EditorCore &core = active_core();
     std::size_t target_row = std::min(line_number - 1, core.line_count() - 1);
     core.set_cursor({target_row, 0});
-    set_status(state, "Line " + std::to_string(target_row + 1));
+    set_status("Line " + std::to_string(target_row + 1));
 }
 
 std::string shell_single_quote(const std::string &text) {
@@ -213,7 +213,7 @@ std::string shell_printf_lines_command(const std::vector<std::string> &lines) {
     return command;
 }
 
-std::optional<std::string> run_picker_command(EditorState &state, const std::string &pipeline_command, std::string &error_message) {
+std::optional<std::string> EditorState::run_picker_command(const std::string &pipeline_command, std::string &error_message) {
 #if defined(__unix__) || defined(__APPLE__)
     if (std::optional<std::string> missing = missing_executable_in_pipeline(pipeline_command)) {
         error_message = "missing executable: " + *missing;
@@ -235,10 +235,10 @@ std::optional<std::string> run_picker_command(EditorState &state, const std::str
         " > " + shell_single_quote(temp_path);
     log_debug("picker start cwd=" + current_directory + " pipeline=" + pipeline_command + " output=" + temp_path);
     log_debug("external command kind=picker spawn command=" + shell_command);
-    state.pending_tokens.clear();
-    state.pending_motion = PendingMotion::None;
-    state.pending_motion_repeat_count = 1;
-    state.repeat_digits.clear();
+    pending.tokens.clear();
+    pending.motion = PendingMotion::None;
+    pending.motion_repeat_count = 1;
+    pending.repeat_digits.clear();
     def_prog_mode();
     endwin();
     restore_shell_terminal_state();
@@ -269,7 +269,6 @@ std::optional<std::string> run_picker_command(EditorState &state, const std::str
     }
     return selection;
 #else
-    (void)state;
     (void)pipeline_command;
     log_debug("picker unsupported on this platform");
     error_message = "external pickers unsupported on this platform";
@@ -334,15 +333,15 @@ bool update_meditrc_setting(
     return true;
 }
 
-void handle_pick_theme_command(EditorState &state) {
-    if (state.config.source_path.empty()) {
-        set_status(state, "Theme picker needs a meditrc");
+void EditorState::handle_pick_theme_command() {
+    if (config.source_path.empty()) {
+        set_status("Theme picker needs a meditrc");
         return;
     }
 
-    std::filesystem::path theme_dir = theme_directory_for_config(state.config);
+    std::filesystem::path theme_dir = theme_directory_for_config(config);
     if (theme_dir.empty() || !std::filesystem::exists(theme_dir)) {
-        set_status(state, "No theme directory");
+        set_status("No theme directory");
         return;
     }
 
@@ -355,30 +354,30 @@ void handle_pick_theme_command(EditorState &state) {
     }
     std::sort(theme_names.begin(), theme_names.end());
     if (theme_names.empty()) {
-        set_status(state, "No themes found");
+        set_status("No themes found");
         return;
     }
 
     std::string error_message;
     std::optional<std::string> selection =
-        run_picker_command(state, shell_printf_lines_command(theme_names) + " | fzf", error_message);
+        run_picker_command(shell_printf_lines_command(theme_names) + " | fzf", error_message);
     if (!selection) {
-        set_status(state, error_message);
+        set_status(error_message);
         return;
     }
 
     std::string update_error;
-    std::filesystem::path meditrc_path = state.config.source_path;
+    std::filesystem::path meditrc_path = config.source_path;
     if (!update_meditrc_setting(meditrc_path, "colors", *selection, update_error)) {
-        set_status(state, update_error);
+        set_status(update_error);
         return;
     }
 
     std::string reload_error;
-    if (reload_editor_configuration(state, reload_error)) {
-        set_status(state, "Theme: " + *selection);
+    if (reload_editor_configuration(reload_error)) {
+        set_status("Theme: " + *selection);
     } else {
-        set_status(state, "Config reload failed: " + reload_error);
+        set_status("Config reload failed: " + reload_error);
     }
 }
 
@@ -427,10 +426,10 @@ bool run_selection_filter_command(
         " > " + shell_single_quote(output_path) +
         " 2> " + shell_single_quote(error_path);
     log_debug("external command kind=selection-filter spawn command=" + shell_command);
-    state.pending_tokens.clear();
-    state.pending_motion = PendingMotion::None;
-    state.pending_motion_repeat_count = 1;
-    state.repeat_digits.clear();
+    state.pending.tokens.clear();
+    state.pending.motion = PendingMotion::None;
+    state.pending.motion_repeat_count = 1;
+    state.pending.repeat_digits.clear();
     def_prog_mode();
     endwin();
     restore_shell_terminal_state();
@@ -500,13 +499,13 @@ bool parse_grep_selection(
     return !path.empty();
 }
 
-void handle_find_file_command(EditorState &state) {
+void EditorState::handle_find_file_command() {
     std::string error_message;
     std::optional<std::string> selection =
-        run_picker_command(state, project_file_list_command() + " | fzf", error_message);
+        run_picker_command(project_file_list_command() + " | fzf", error_message);
     if (!selection) {
         log_debug("find-file canceled/error: " + error_message);
-        set_status(state, error_message);
+        set_status(error_message);
         return;
     }
     std::filesystem::path resolved = *selection;
@@ -515,17 +514,17 @@ void handle_find_file_command(EditorState &state) {
     }
     resolved = resolved.lexically_normal();
     log_debug("find-file resolved path=" + resolved.string());
-    handle_edit_command(state, resolved.string());
+    handle_edit_command(resolved.string());
 }
 
-void open_startup_file_picker(EditorState &state, const std::optional<std::filesystem::path> &root) {
+void EditorState::open_startup_file_picker(const std::optional<std::filesystem::path> &root) {
     std::string error_message;
     std::optional<std::string> selection =
-        run_picker_command(state, project_file_list_command(root) + " | fzf", error_message);
+        run_picker_command(project_file_list_command(root) + " | fzf", error_message);
     if (!selection) {
         log_debug("startup picker canceled/error: " + error_message);
         if (!error_message.empty()) {
-            set_status(state, error_message);
+            set_status(error_message);
         }
         return;
     }
@@ -537,21 +536,21 @@ void open_startup_file_picker(EditorState &state, const std::optional<std::files
     resolved = resolved.lexically_normal();
     log_debug("startup picker resolved path=" + resolved.string());
 
-    EditorBuffer *buffer = state.session.open_file(resolved.string(), true);
+    EditorBuffer *buffer = session.open_file(resolved.string(), true);
     if (!buffer) {
         log_debug("startup picker open failed path=" + resolved.string());
-        set_status(state, "Could not open file");
+        set_status("Could not open file");
         return;
     }
-    state.windows.set_active_buffer_id(buffer->id);
-    sync_active_window_buffer(state);
-    active_buffer_ui(state);
-    set_status(state, "Opened " + resolved.string());
+    windows.set_active_buffer_id(buffer->id);
+    sync_active_window_buffer();
+    active_buffer_ui();
+    set_status("Opened " + resolved.string());
 }
 
-void handle_grep_command(EditorState &state, const std::string &argument) {
+void EditorState::handle_grep_command(const std::string &argument) {
     if (argument.empty()) {
-        set_status(state, "No grep pattern");
+        set_status("No grep pattern");
         return;
     }
 
@@ -559,10 +558,10 @@ void handle_grep_command(EditorState &state, const std::string &argument) {
     std::string command =
         "rg --column --line-number --no-heading --color=never --smart-case " +
         shell_single_quote(argument) + " | fzf";
-    std::optional<std::string> selection = run_picker_command(state, command, error_message);
+    std::optional<std::string> selection = run_picker_command(command, error_message);
     if (!selection) {
         log_debug("grep picker canceled/error: " + error_message);
-        set_status(state, error_message);
+        set_status(error_message);
         return;
     }
 
@@ -571,7 +570,7 @@ void handle_grep_command(EditorState &state, const std::string &argument) {
     std::size_t column = 0;
     if (!parse_grep_selection(*selection, path, row, column)) {
         log_debug("grep parse failed selection=[" + *selection + "]");
-        set_status(state, "Could not parse grep result");
+        set_status("Could not parse grep result");
         return;
     }
     std::filesystem::path resolved = path;
@@ -582,57 +581,57 @@ void handle_grep_command(EditorState &state, const std::string &argument) {
     log_debug("grep resolved path=" + path + " row=" + std::to_string(row) + " column=" + std::to_string(column));
 
     EditorBuffer *existing = nullptr;
-    for (EditorBuffer &buffer : state.session.buffers()) {
+    for (EditorBuffer &buffer : session.buffers()) {
         if (buffer.core.file_path() && *buffer.core.file_path() == path) {
             existing = &buffer;
             break;
         }
     }
     if (existing) {
-        if (std::optional<std::size_t> window_id = state.windows.find_window_showing_buffer(existing->id)) {
-            focus_window(state, *window_id);
+        if (std::optional<std::size_t> window_id = windows.find_window_showing_buffer(existing->id)) {
+            focus_window(*window_id);
         } else {
-            show_buffer_in_active_window(state, existing->id);
+            show_buffer_in_active_window(existing->id);
         }
-        active_core(state).set_cursor({row, column});
-        set_status(state, "Opened " + path);
+        active_core().set_cursor({row, column});
+        set_status("Opened " + path);
         return;
     }
 
-    EditorBuffer *buffer = state.session.open_file(path, true);
+    EditorBuffer *buffer = session.open_file(path, true);
     if (!buffer) {
         log_debug("grep open failed path=" + path);
-        set_status(state, "Could not open file");
+        set_status("Could not open file");
         return;
     }
-    state.windows.set_active_buffer_id(buffer->id);
-    sync_active_window_buffer(state);
-    active_buffer_ui(state);
-    active_core(state).set_cursor({row, column});
-    set_status(state, "Opened " + path);
+    windows.set_active_buffer_id(buffer->id);
+    sync_active_window_buffer();
+    active_buffer_ui();
+    active_core().set_cursor({row, column});
+    set_status("Opened " + path);
 }
 
-void execute_filter_command(EditorState &state) {
-    EditorCore &core = active_core(state);
-    std::optional<Range> selection = displayed_selection_range(state, state.windows.active_window_id());
+void EditorState::execute_filter_command() {
+    EditorCore &core = active_core();
+    std::optional<Range> selection = displayed_selection_range(windows.active_window_id());
     if (!selection) {
-        set_status(state, "No selection");
-        enter_normal_mode(state);
+        set_status("No selection");
+        enter_normal_mode();
         return;
     }
 
-    std::string command = u32_to_utf8(state.command_buffer);
+    std::string command = u32_to_utf8(command_buffer);
     if (command.empty()) {
-        set_status(state, "No filter command");
-        enter_normal_mode(state);
+        set_status("No filter command");
+        enter_normal_mode();
         return;
     }
 
     std::u32string output_text;
     std::string error_message;
-    if (!run_selection_filter_command(state, command, core.read_text(*selection), output_text, error_message)) {
-        set_status(state, error_message);
-        enter_normal_mode(state);
+    if (!run_selection_filter_command(*this, command, core.read_text(*selection), output_text, error_message)) {
+        set_status(error_message);
+        enter_normal_mode();
         return;
     }
 
@@ -641,36 +640,36 @@ void execute_filter_command(EditorState &state) {
     }
 
     core.replace_range(*selection, output_text);
-    enter_normal_mode(state);
-    set_status(state, "Selection filtered");
+    enter_normal_mode();
+    set_status("Selection filtered");
 }
 
-void execute_sed_command(EditorState &state) {
-    EditorCore &core = active_core(state);
+void EditorState::execute_sed_command() {
+    EditorCore &core = active_core();
     std::optional<Range> selection = core.selection_range();
     if (!selection) {
-        set_status(state, "No selection");
-        enter_normal_mode(state);
+        set_status("No selection");
+        enter_normal_mode();
         return;
     }
 
-    std::string script = u32_to_utf8(state.command_buffer);
+    std::string script = u32_to_utf8(command_buffer);
     if (script.empty()) {
-        set_status(state, "No sed command");
-        enter_normal_mode(state);
+        set_status("No sed command");
+        enter_normal_mode();
         return;
     }
 
     std::u32string output_text;
     std::string error_message;
     if (!run_selection_filter_command(
-            state,
+            *this,
             "sed " + script,
             core.read_text(*selection),
             output_text,
             error_message)) {
-        set_status(state, error_message);
-        enter_normal_mode(state);
+        set_status(error_message);
+        enter_normal_mode();
         return;
     }
 
@@ -679,16 +678,9 @@ void execute_sed_command(EditorState &state) {
     }
 
     core.replace_range(*selection, output_text);
-    enter_normal_mode(state);
-    set_status(state, "Selection filtered with sed");
+    enter_normal_mode();
+    set_status("Selection filtered with sed");
 }
-
-struct SubstituteCommand {
-    bool whole_buffer = false;
-    std::string pattern;
-    std::string replacement;
-    bool global = false;
-};
 
 enum class NamedEditorCommand {
     Write,
@@ -805,22 +797,22 @@ bool parse_substitute_command(std::string_view command, SubstituteCommand &parse
     return true;
 }
 
-void handle_substitute_command(EditorState &state, const SubstituteCommand &command) {
-    EditorCore &core = active_core(state);
+void EditorState::handle_substitute_command(const SubstituteCommand &command) {
+    EditorCore &core = active_core();
     std::size_t start_row = command.whole_buffer ? 0 : core.cursor().row;
     std::size_t end_row = command.whole_buffer ? core.line_count() - 1 : core.cursor().row;
     std::string error_message;
     std::size_t substitutions =
         core.substitute_regex(start_row, end_row, command.pattern, command.replacement, command.global, error_message);
     if (!error_message.empty()) {
-        set_status(state, error_message);
+        set_status(error_message);
         return;
     }
     if (substitutions == 0) {
-        set_status(state, "Pattern not found");
+        set_status("Pattern not found");
         return;
     }
-    set_status(state, count_label(substitutions, "substitution"));
+    set_status(count_label(substitutions, "substitution"));
 }
 
 std::vector<PopupMenuItem> command_completion_items() {
@@ -852,102 +844,102 @@ void execute_named_editor_command(
     const std::string &argument) {
     switch (command) {
         case NamedEditorCommand::Write:
-            handle_write_command(state, argument);
+            state.handle_write_command(argument);
             break;
         case NamedEditorCommand::Quit:
-            handle_quit_command(state, false);
+            state.handle_quit_command(false);
             break;
         case NamedEditorCommand::ForceQuit:
-            handle_quit_command(state, true);
+            state.handle_quit_command(true);
             break;
         case NamedEditorCommand::WriteQuit:
-            handle_write_quit_command(state, argument);
+            state.handle_write_quit_command(argument);
             break;
         case NamedEditorCommand::WriteIfChangedQuit:
-            handle_write_quit_command(state, argument);
+            state.handle_write_quit_command(argument);
             break;
         case NamedEditorCommand::Edit:
-            handle_edit_command(state, argument);
+            state.handle_edit_command(argument);
             break;
         case NamedEditorCommand::Buffers:
-            set_status(state, buffers_summary(state));
+            state.set_status(buffers_summary(state));
             break;
         case NamedEditorCommand::Buffer:
-            handle_buffer_switch_command(state, argument);
+            state.handle_buffer_switch_command(argument);
             break;
         case NamedEditorCommand::NextBuffer:
             state.session.next_buffer();
-            set_status(state, prefixed_message("Switched to ", active_core(state).display_file_name()));
+            state.set_status(prefixed_message("Switched to ", state.active_core().display_file_name()));
             break;
         case NamedEditorCommand::PreviousBuffer:
             state.session.previous_buffer();
-            set_status(state, prefixed_message("Switched to ", active_core(state).display_file_name()));
+            state.set_status(prefixed_message("Switched to ", state.active_core().display_file_name()));
             break;
         case NamedEditorCommand::DeleteBuffer:
-            handle_buffer_delete_command(state, false);
+            state.handle_buffer_delete_command(false);
             break;
         case NamedEditorCommand::ForceDeleteBuffer:
-            handle_buffer_delete_command(state, true);
+            state.handle_buffer_delete_command(true);
             break;
         case NamedEditorCommand::FindFile:
-            handle_find_file_command(state);
+            state.handle_find_file_command();
             break;
         case NamedEditorCommand::Grep:
-            handle_grep_command(state, argument);
+            state.handle_grep_command(argument);
             break;
         case NamedEditorCommand::PickTheme:
-            handle_pick_theme_command(state);
+            state.handle_pick_theme_command();
             break;
         case NamedEditorCommand::ReloadConfig: {
             std::string error_message;
-            if (reload_editor_configuration(state, error_message)) {
-                set_status(state, "Reloaded config");
+            if (state.reload_editor_configuration(error_message)) {
+                state.set_status("Reloaded config");
             } else {
-                set_status(state, "Config reload failed: " + error_message);
+                state.set_status("Config reload failed: " + error_message);
             }
             break;
         }
         case NamedEditorCommand::Diagnostics:
-            show_diagnostics_summary(state);
+            state.show_diagnostics_summary();
             break;
         case NamedEditorCommand::LspStatus:
-            show_lsp_status(state);
+            state.show_lsp_status();
             break;
         case NamedEditorCommand::TreeSitterStatus:
-            show_tree_sitter_status(state);
+            state.show_tree_sitter_status();
             break;
     }
 }
 
-void show_command_completion(EditorState &state) {
-    if (state.mode != Mode::Command || state.command_prompt_kind != CommandPromptKind::EditorCommand) {
+void EditorState::show_command_completion() {
+    if (mode != Mode::Command || command_prompt_kind != CommandPromptKind::EditorCommand) {
         return;
     }
-    std::string command = u32_to_utf8(state.command_buffer);
+    std::string command = u32_to_utf8(command_buffer);
     if (command.contains(' ') || command.contains('\t')) {
-        set_status(state, "Complete the command name only");
+        set_status("Complete the command name only");
         return;
     }
     show_menu_popup(
-        state,
+        *this,
         "Commands",
         command_completion_items(),
-        EditorState::PopupApplyTarget::CommandBuffer,
-        state.command_buffer,
-        EditorState::PopupFilterMode::PrefixLabelOnly);
+        PopupApplyTarget::CommandBuffer,
+        command_buffer,
+        PopupFilterMode::PrefixLabelOnly);
 }
 
-void execute_command(EditorState &state) {
-    if (state.command_prompt_kind == CommandPromptKind::FilterSelection) {
-        execute_filter_command(state);
+void EditorState::execute_command() {
+    if (command_prompt_kind == CommandPromptKind::FilterSelection) {
+        execute_filter_command();
         return;
     }
-    if (state.command_prompt_kind == CommandPromptKind::SedSelection) {
-        execute_sed_command(state);
+    if (command_prompt_kind == CommandPromptKind::SedSelection) {
+        execute_sed_command();
         return;
     }
 
-    std::u32string command_text = state.command_buffer;
+    std::u32string command_text = command_buffer;
     std::string command = u32_to_utf8(command_text);
     log_debug("ex command=" + command);
     std::istringstream parser(command);
@@ -961,22 +953,22 @@ void execute_command(EditorState &state) {
     }
 
     if (verb.empty()) {
-        enter_normal_mode(state);
+        enter_normal_mode();
         return;
     }
-    add_prompt_history_entry(state, command_text);
+    add_prompt_history_entry(command_text);
     SubstituteCommand substitute;
     std::string substitute_error;
     if (parse_substitute_command(command, substitute, substitute_error)) {
-        handle_substitute_command(state, substitute);
+        handle_substitute_command(substitute);
     } else if (!substitute_error.empty()) {
-        set_status(state, substitute_error);
+        set_status(substitute_error);
     } else if (std::all_of(verb.begin(), verb.end(), [](unsigned char ch) { return std::isdigit(ch) != 0; })) {
-        handle_goto_line_command(state, verb);
+        handle_goto_line_command(verb);
     } else if (std::optional<NamedEditorCommand> named = named_editor_command_from_verb(verb)) {
-        execute_named_editor_command(state, *named, argument);
+        execute_named_editor_command(*this, *named, argument);
     } else {
-        set_status(state, "Unknown command: " + verb);
+        set_status("Unknown command: " + verb);
     }
-    enter_normal_mode(state);
+    enter_normal_mode();
 }

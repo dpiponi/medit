@@ -5,9 +5,14 @@
 #include "process_utils.hpp"
 #include "string_utils.hpp"
 
+#ifdef _WIN32
+#include "pdcurses_compat.hpp"
+#endif
+
 #include <algorithm>
 #include <cctype>
 #include <clocale>
+#include <csignal>
 #include <cstdlib>
 #include <cstdio>
 #include <fstream>
@@ -17,31 +22,33 @@
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
+#include <signal.h>
 #include <unistd.h>
 #endif
 
-EditorWindow &active_window(EditorState &state) {
-    return *state.windows.active_window();
+// EditorState member functions
+EditorWindow &EditorState::active_window() {
+    return *windows.active_window();
 }
 
-const EditorWindow &active_window(const EditorState &state) {
-    return *state.windows.active_window();
+const EditorWindow &EditorState::active_window() const {
+    return *windows.active_window();
 }
 
-EditorBuffer &window_buffer(EditorState &state, std::size_t window_id) {
-    return *state.session.find_buffer_by_id(state.windows.find_window(window_id)->buffer_id);
+EditorBuffer &EditorState::window_buffer(std::size_t window_id) {
+    return *session.find_buffer_by_id(windows.find_window(window_id)->buffer_id);
 }
 
-const EditorBuffer &window_buffer(const EditorState &state, std::size_t window_id) {
-    return *state.session.find_buffer_by_id(state.windows.find_window(window_id)->buffer_id);
+const EditorBuffer &EditorState::window_buffer(std::size_t window_id) const {
+    return *session.find_buffer_by_id(windows.find_window(window_id)->buffer_id);
 }
 
-EditorBuffer &active_buffer(EditorState &state) {
-    return window_buffer(state, state.windows.active_window_id());
+EditorBuffer &EditorState::active_buffer() {
+    return window_buffer(windows.active_window_id());
 }
 
-const EditorBuffer &active_buffer(const EditorState &state) {
-    return window_buffer(state, state.windows.active_window_id());
+const EditorBuffer &EditorState::active_buffer() const {
+    return window_buffer(windows.active_window_id());
 }
 
 std::string buffer_text_utf8(const EditorBuffer &buffer) {
@@ -75,7 +82,7 @@ const char *selection_mode_name(SelectionMode mode) {
 }
 
 JsonValue json_buffer_summary(const EditorState &state, const EditorBuffer &buffer) {
-    bool active = buffer.id == active_buffer(state).id;
+    bool active = buffer.id == state.active_buffer().id;
     JsonValue result = {
         {"id", buffer.id},
         {"document_uri", buffer.core.document_uri()},
@@ -87,8 +94,8 @@ JsonValue json_buffer_summary(const EditorState &state, const EditorBuffer &buff
         {"active", active},
     };
     if (active) {
-        result["cursor"] = json_position(displayed_cursor(state, state.windows.active_window_id()));
-        if (std::optional<Range> selection = displayed_selection_range(state, state.windows.active_window_id())) {
+        result["cursor"] = json_position(state.displayed_cursor(state.windows.active_window_id()));
+        if (std::optional<Range> selection = state.displayed_selection_range(state.windows.active_window_id())) {
             result["selection"] = json_range(*selection);
             result["selection_mode"] = selection_mode_name(buffer.core.selection_mode());
         } else {
@@ -103,32 +110,32 @@ JsonValue json_buffer_summary(const EditorState &state, const EditorBuffer &buff
     return result;
 }
 
-EditorCore &active_core(EditorState &state) {
-    return active_buffer(state).core;
+EditorCore &EditorState::active_core() {
+    return active_buffer().core;
 }
 
-const EditorCore &active_core(const EditorState &state) {
-    return active_buffer(state).core;
+const EditorCore &EditorState::active_core() const {
+    return active_buffer().core;
 }
 
-EditorCore &window_core(EditorState &state, std::size_t window_id) {
-    return window_buffer(state, window_id).core;
+EditorCore &EditorState::window_core(std::size_t window_id) {
+    return window_buffer(window_id).core;
 }
 
-const EditorCore &window_core(const EditorState &state, std::size_t window_id) {
-    return window_buffer(state, window_id).core;
+const EditorCore &EditorState::window_core(std::size_t window_id) const {
+    return window_buffer(window_id).core;
 }
 
-EditorState::WindowUiState &window_ui(EditorState &state, std::size_t window_id) {
-    return state.window_ui.try_emplace(window_id).first->second;
+EditorState::WindowUiState &EditorState::window_ui(std::size_t window_id) {
+    return this->window_ui_map.try_emplace(window_id).first->second;
 }
 
-const EditorState::WindowUiState &window_ui(const EditorState &state, std::size_t window_id) {
-    auto found = state.window_ui.find(window_id);
-    if (found != state.window_ui.end()) {
+const EditorState::WindowUiState &EditorState::window_ui(std::size_t window_id) const {
+    auto found = this->window_ui_map.find(window_id);
+    if (found != this->window_ui_map.end()) {
         return found->second;
     }
-    return const_cast<EditorState &>(state).window_ui.try_emplace(window_id).first->second;
+    return const_cast<EditorState &>(*this).window_ui_map.try_emplace(window_id).first->second;
 }
 
 void clear_ast_selection_state(EditorState::WindowUiState &ui) {
@@ -139,53 +146,53 @@ void clear_ast_selection_state(EditorState::WindowUiState &ui) {
     ui.ast_selection_index = 0;
 }
 
-EditorState::SyntaxUiState &buffer_syntax_ui(EditorState &state, std::size_t buffer_id) {
-    return state.syntax_ui.try_emplace(buffer_id).first->second;
+EditorState::SyntaxUiState &EditorState::buffer_syntax_ui(std::size_t buffer_id) {
+    return this->syntax_ui_map.try_emplace(buffer_id).first->second;
 }
 
-const EditorState::SyntaxUiState &buffer_syntax_ui(const EditorState &state, std::size_t buffer_id) {
-    auto found = state.syntax_ui.find(buffer_id);
-    if (found != state.syntax_ui.end()) {
+const EditorState::SyntaxUiState &EditorState::buffer_syntax_ui(std::size_t buffer_id) const {
+    auto found = this->syntax_ui_map.find(buffer_id);
+    if (found != this->syntax_ui_map.end()) {
         return found->second;
     }
-    return const_cast<EditorState &>(state).syntax_ui.try_emplace(buffer_id).first->second;
+    return const_cast<EditorState &>(*this).syntax_ui_map.try_emplace(buffer_id).first->second;
 }
 
-EditorState::BufferUiState &buffer_ui_state(EditorState &state, std::size_t buffer_id) {
-    return state.buffer_ui.try_emplace(buffer_id).first->second;
+EditorState::BufferUiState &EditorState::buffer_ui_state(std::size_t buffer_id) {
+    return this->buffer_ui_map.try_emplace(buffer_id).first->second;
 }
 
-const EditorState::BufferUiState &buffer_ui_state(const EditorState &state, std::size_t buffer_id) {
-    auto found = state.buffer_ui.find(buffer_id);
-    if (found != state.buffer_ui.end()) {
+const EditorState::BufferUiState &EditorState::buffer_ui_state(std::size_t buffer_id) const {
+    auto found = this->buffer_ui_map.find(buffer_id);
+    if (found != this->buffer_ui_map.end()) {
         return found->second;
     }
-    return const_cast<EditorState &>(state).buffer_ui.try_emplace(buffer_id).first->second;
+    return const_cast<EditorState &>(*this).buffer_ui_map.try_emplace(buffer_id).first->second;
 }
 
-EditorState::BufferUiState &active_buffer_cache(EditorState &state) {
-    return buffer_ui_state(state, active_buffer(state).id);
+EditorState::BufferUiState &EditorState::active_buffer_cache() {
+    return buffer_ui_state(active_buffer().id);
 }
 
-const EditorState::BufferUiState &active_buffer_cache(const EditorState &state) {
-    return buffer_ui_state(state, active_buffer(state).id);
+const EditorState::BufferUiState &EditorState::active_buffer_cache() const {
+    return buffer_ui_state(active_buffer().id);
 }
 
-EditorState::WindowUiState &active_buffer_ui(EditorState &state) {
-    return window_ui(state, state.windows.active_window_id());
+EditorState::WindowUiState &EditorState::active_buffer_ui() {
+    return window_ui(windows.active_window_id());
 }
 
-const EditorState::WindowUiState &active_buffer_ui(const EditorState &state) {
-    return window_ui(state, state.windows.active_window_id());
+const EditorState::WindowUiState &EditorState::active_buffer_ui() const {
+    return window_ui(windows.active_window_id());
 }
 
-Position displayed_cursor(const EditorState &state, std::size_t window_id) {
-    return window_ui(state, window_id).view_state.cursor;
+Position EditorState::displayed_cursor(std::size_t window_id) const {
+    return window_ui(window_id).view_state.cursor;
 }
 
-std::optional<Range> displayed_selection_range(const EditorState &state, std::size_t window_id) {
-    const EditorState::WindowUiState &ui = window_ui(state, window_id);
-    const EditorCore &core = window_core(state, window_id);
+std::optional<Range> EditorState::displayed_selection_range(std::size_t window_id) const {
+    const WindowUiState &ui = window_ui(window_id);
+    const EditorCore &core = window_core(window_id);
     if (!ui.view_state.selection_anchor) {
         return std::nullopt;
     }
@@ -207,49 +214,46 @@ std::optional<Range> displayed_selection_range(const EditorState &state, std::si
 
     Position cursor_extent = cursor.column < core.line_length(cursor.row) ? Position{cursor.row, cursor.column + 1} : cursor;
     Position anchor_extent = anchor.column < core.line_length(anchor.row) ? Position{anchor.row, anchor.column + 1} : anchor;
-    if (position_less_than(cursor, anchor)) {
+    if ((cursor < anchor)) {
         return Range{cursor, anchor_extent};
     }
     return Range{anchor, cursor_extent};
 }
 
-void sync_window_view_from_core(EditorState &state, std::size_t window_id) {
-    EditorState::WindowUiState &ui = window_ui(state, window_id);
+void EditorState::sync_window_view_from_core(std::size_t window_id) {
+EditorState::WindowUiState &ui = window_ui(window_id);
     EditorViewState previous = ui.view_state;
-    ui.view_state = window_core(state, window_id).view_state();
+    ui.view_state = window_core(window_id).view_state();
     auto same_optional_position = [](const std::optional<Position> &left, const std::optional<Position> &right) {
         if (!left.has_value() || !right.has_value()) {
             return !left.has_value() && !right.has_value();
         }
-        return positions_equal(*left, *right);
+        return (*left == *right);
     };
-    if (!positions_equal(previous.cursor, ui.view_state.cursor) ||
+    if (!(previous.cursor == ui.view_state.cursor) ||
         !same_optional_position(previous.selection_anchor, ui.view_state.selection_anchor) ||
         previous.selection_mode != ui.view_state.selection_mode) {
         clear_ast_selection_state(ui);
     }
 }
 
-void sync_core_view_from_window(EditorState &state, std::size_t window_id) {
-    EditorState::WindowUiState &ui = window_ui(state, window_id);
-    EditorCore &core = window_core(state, window_id);
+void EditorState::sync_core_view_from_window(std::size_t window_id) {
+EditorState::WindowUiState &ui = window_ui(window_id);
+    EditorCore &core = window_core(window_id);
     core.restore_view_state(ui.view_state, false);
     ui.view_state = core.view_state();
 }
 
+EditorState::PromptHistory &EditorState::active_prompt_history() {
+    if (mode == Mode::Search) {
+        return command_history.searches;
+    }
+    return command_history.get_for_kind(command_prompt_kind);
+}
+
+// Wrapper
 EditorState::PromptHistory &active_prompt_history(EditorState &state) {
-    if (state.mode == Mode::Search) {
-        return state.search_history;
-    }
-    switch (state.command_prompt_kind) {
-        case CommandPromptKind::EditorCommand:
-            return state.editor_command_history;
-        case CommandPromptKind::FilterSelection:
-            return state.filter_command_history;
-        case CommandPromptKind::SedSelection:
-            return state.sed_command_history;
-    }
-    return state.editor_command_history;
+    return state.active_prompt_history();
 }
 
 void reset_prompt_history_navigation(EditorState::PromptHistory &history) {
@@ -257,23 +261,23 @@ void reset_prompt_history_navigation(EditorState::PromptHistory &history) {
     history.draft.clear();
 }
 
-void add_prompt_history_entry(EditorState &state, const std::u32string &entry) {
+void EditorState::add_prompt_history_entry(const std::u32string &entry) {
     if (entry.empty()) {
         return;
     }
-    EditorState::PromptHistory &history = active_prompt_history(state);
+    PromptHistory &history = active_prompt_history();
     if (history.entries.empty() || history.entries.back() != entry) {
         history.entries.push_back(entry);
     }
     reset_prompt_history_navigation(history);
 }
 
-void browse_prompt_history(EditorState &state, bool previous) {
-    EditorState::PromptHistory &history = active_prompt_history(state);
+void EditorState::browse_prompt_history(bool previous) {
+    PromptHistory &history = active_prompt_history();
     if (history.entries.empty()) {
         return;
     }
-    std::u32string &buffer = state.mode == Mode::Search ? state.search_buffer : state.command_buffer;
+    std::u32string &buffer = mode == Mode::Search ? search_buffer : command_buffer;
     if (!history.browse_index) {
         if (!previous) {
             return;
@@ -385,7 +389,7 @@ std::string make_status_bar_left_text(
     const std::string &workspace) {
     return mode_name(state.mode) +
            "  " + core.display_file_name() +
-           "  [b " + std::to_string(state.session.index_for_buffer_id(active_window(state).buffer_id).value_or(0) + 1) +
+           "  [b " + std::to_string(state.session.index_for_buffer_id(state.active_window().buffer_id).value_or(0) + 1) +
            "/" + std::to_string(state.session.buffer_count()) +
            "] [w " + std::to_string(state.windows.active_window_index() + 1) +
            "/" + std::to_string(state.windows.window_count()) +
@@ -400,8 +404,8 @@ std::string make_status_bar_right_text(const EditorCore &core, Position cursor) 
            "  rev " + std::to_string(core.current_revision());
 }
 
-void set_status(EditorState &state, const std::string &message) {
-    state.status_message = message;
+void EditorState::set_status(const std::string &message) {
+status_message = message;
 }
 
 bool reload_editor_configuration(EditorState &state, std::string &error_message);
@@ -409,17 +413,17 @@ void handle_service_events(EditorState &state);
 void begin_insert_session(EditorState &state);
 void rebuild_popup_filter(EditorState &state);
 
-void show_popup(EditorState &state, std::string title, std::u32string text) {
-    state.popup.visible = true;
-    state.popup.kind = PopupKind::Text;
-    state.popup.title = std::move(title);
-    state.popup.text = std::move(text);
-    state.popup.items.clear();
-    state.popup.filter.clear();
-    state.popup.filtered_indices.clear();
-    state.popup.selected_index = 0;
-    state.popup.scroll_offset = 0;
-    state.popup.originating_mode = state.mode;
+void EditorState::show_popup(std::string title, std::u32string text) {
+popup.visible = true;
+    popup.kind = PopupKind::Text;
+    popup.title = std::move(title);
+    popup.text = std::move(text);
+    popup.items.clear();
+    popup.filter.clear();
+    popup.filtered_indices.clear();
+    popup.selected_index = 0;
+    popup.scroll_offset = 0;
+    popup.originating_mode = mode;
 }
 
 void show_menu_popup(
@@ -469,23 +473,23 @@ void show_key_hints_popup(
     state.popup.sticky = sticky;
 }
 
-void dismiss_popup(EditorState &state) {
-    state.popup.visible = false;
-    state.popup.kind = PopupKind::Text;
-    state.popup.title.clear();
-    state.popup.text.clear();
-    state.popup.items.clear();
-    state.popup.filter.clear();
-    state.popup.filtered_indices.clear();
-    state.popup.selected_index = 0;
-    state.popup.scroll_offset = 0;
-    state.popup.apply_target = EditorState::PopupApplyTarget::BufferText;
-    state.popup.filter_mode = EditorState::PopupFilterMode::ContainsLabelOrDetail;
-    state.popup.sticky = false;
+void EditorState::dismiss_popup() {
+popup.visible = false;
+    popup.kind = PopupKind::Text;
+    popup.title.clear();
+    popup.text.clear();
+    popup.items.clear();
+    popup.filter.clear();
+    popup.filtered_indices.clear();
+    popup.selected_index = 0;
+    popup.scroll_offset = 0;
+    popup.apply_target = EditorState::PopupApplyTarget::BufferText;
+    popup.filter_mode = EditorState::PopupFilterMode::ContainsLabelOrDetail;
+    popup.sticky = false;
 }
 
-bool popup_accepts_input(const EditorState &state) {
-    return state.popup.visible && state.popup.kind == PopupKind::Menu;
+bool EditorState::popup_accepts_input() const {
+    return popup.visible && popup.kind == PopupKind::Menu;
 }
 
 std::size_t popup_menu_visible_rows_for_screen(int screen_rows) {
@@ -530,7 +534,7 @@ void rebuild_popup_filter(EditorState &state) {
 }
 
 void ensure_popup_selection_visible(EditorState &state, std::size_t visible_rows) {
-    if (!popup_accepts_input(state) || state.popup.filtered_indices.empty()) {
+    if (!state.popup_accepts_input() || state.popup.filtered_indices.empty()) {
         return;
     }
     std::size_t clamped_visible_rows = std::max<std::size_t>(visible_rows, 1);
@@ -546,7 +550,7 @@ void ensure_popup_selection_visible(EditorState &state, std::size_t visible_rows
 }
 
 void move_popup_selection(EditorState &state, bool forward) {
-    if (!popup_accepts_input(state) || state.popup.filtered_indices.empty()) {
+    if (!state.popup_accepts_input() || state.popup.filtered_indices.empty()) {
         return;
     }
     if (forward) {
@@ -559,20 +563,20 @@ void move_popup_selection(EditorState &state, bool forward) {
 }
 
 void apply_popup_selection(EditorState &state) {
-    if (!popup_accepts_input(state) || state.popup.filtered_indices.empty()) {
+    if (!state.popup_accepts_input() || state.popup.filtered_indices.empty()) {
         return;
     }
     PopupMenuItem item = state.popup.items[state.popup.filtered_indices[state.popup.selected_index]];
     Mode originating_mode = state.popup.originating_mode;
     EditorState::PopupApplyTarget apply_target = state.popup.apply_target;
-    dismiss_popup(state);
+    state.dismiss_popup();
     if (apply_target == EditorState::PopupApplyTarget::CommandBuffer) {
         state.command_buffer = utf8_to_u32(item.insert_text);
-        set_status(state, ":" + item.insert_text);
+        state.set_status(":" + item.insert_text);
         return;
     }
 
-    EditorCore &core = active_core(state);
+    EditorCore &core = state.active_core();
     std::u32string text = utf8_to_u32(item.insert_text);
     Position start = item.replace_range ? item.replace_range->start : core.cursor();
     bool applied = false;
@@ -583,18 +587,18 @@ void apply_popup_selection(EditorState &state) {
     }
     if (applied) {
         core.set_cursor(EditorCommandAccess::position_after_text(core, start, text));
-        sync_window_view_from_core(state, state.windows.active_window_id());
-        set_status(state, "Completion applied");
+        state.sync_window_view_from_core(state.windows.active_window_id());
+        state.set_status("Completion applied");
     } else {
-        set_status(state, "Completion failed");
+        state.set_status("Completion failed");
     }
     if (originating_mode == Mode::Insert) {
-        begin_insert_session(state);
+        state.begin_insert_session();
     }
 }
 
-bool handle_popup_input(EditorState &state, const std::string &token) {
-    if (!popup_accepts_input(state)) {
+bool EditorState::handle_popup_input(const std::string &token) {
+    if (!popup_accepts_input()) {
         return false;
     }
     int screen_rows = 0;
@@ -602,94 +606,94 @@ bool handle_popup_input(EditorState &state, const std::string &token) {
     getmaxyx(stdscr, screen_rows, screen_cols);
     std::size_t visible_rows = popup_menu_visible_rows_for_screen(screen_rows);
     if (token == "up") {
-        move_popup_selection(state, false);
-        ensure_popup_selection_visible(state, visible_rows);
+        move_popup_selection(*this, false);
+        ensure_popup_selection_visible(*this, visible_rows);
         return true;
     }
     if (token == "down") {
-        move_popup_selection(state, true);
-        ensure_popup_selection_visible(state, visible_rows);
+        move_popup_selection(*this, true);
+        ensure_popup_selection_visible(*this, visible_rows);
         return true;
     }
     if (token == "tab") {
-        move_popup_selection(state, true);
-        ensure_popup_selection_visible(state, visible_rows);
+        move_popup_selection(*this, true);
+        ensure_popup_selection_visible(*this, visible_rows);
         return true;
     }
     if (token == "shift-tab") {
-        move_popup_selection(state, false);
-        ensure_popup_selection_visible(state, visible_rows);
+        move_popup_selection(*this, false);
+        ensure_popup_selection_visible(*this, visible_rows);
         return true;
     }
     if (token == "backspace") {
-        if (!state.popup.filter.empty()) {
-            state.popup.filter.pop_back();
-            rebuild_popup_filter(state);
-            ensure_popup_selection_visible(state, visible_rows);
+        if (!popup.filter.empty()) {
+            popup.filter.pop_back();
+            rebuild_popup_filter(*this);
+            ensure_popup_selection_visible(*this, visible_rows);
         }
         return true;
     }
     if (token == "enter") {
-        apply_popup_selection(state);
+        apply_popup_selection(*this);
         return true;
     }
     if (token == "esc") {
-        Mode originating_mode = state.popup.originating_mode;
-        dismiss_popup(state);
+        Mode originating_mode = popup.originating_mode;
+        dismiss_popup();
         if (originating_mode == Mode::Insert) {
-            begin_insert_session(state);
+            begin_insert_session();
         }
-        set_status(state, mode_name(state.mode));
+        set_status(mode_name(mode));
         return true;
     }
     if (token == "printable") {
         return true;
     }
     if (!token.empty() && utf8_to_u32(token).size() == 1) {
-        state.popup.filter += utf8_to_u32(token);
-        rebuild_popup_filter(state);
-        ensure_popup_selection_visible(state, visible_rows);
+        popup.filter += utf8_to_u32(token);
+        rebuild_popup_filter(*this);
+        ensure_popup_selection_visible(*this, visible_rows);
         return true;
     }
-    dismiss_popup(state);
+    dismiss_popup();
     return false;
 }
 
-void sync_active_window_buffer(EditorState &state) {
-    if (const EditorWindow *window = state.windows.active_window()) {
-        state.session.switch_to_id(window->buffer_id);
+void EditorState::sync_active_window_buffer() {
+if (const EditorWindow *window = windows.active_window()) {
+        session.switch_to_id(window->buffer_id);
     }
 }
 
 void initialize_windows(EditorState &state) {
     state.windows = WindowManager(state.session.active_buffer_id());
-    state.window_ui.clear();
-    active_buffer_ui(state);
-    sync_window_view_from_core(state, state.windows.active_window_id());
+    state.window_ui_map.clear();
+    state.active_buffer_ui();
+    state.sync_window_view_from_core(state.windows.active_window_id());
 }
 
-void show_buffer_in_active_window(EditorState &state, std::size_t buffer_id, bool reset_view) {
-    state.windows.set_active_buffer_id(buffer_id);
-    sync_active_window_buffer(state);
+void EditorState::show_buffer_in_active_window(std::size_t buffer_id, bool reset_view) {
+    windows.set_active_buffer_id(buffer_id);
+    sync_active_window_buffer();
     if (reset_view) {
-        active_buffer_ui(state) = EditorState::WindowUiState{};
-        sync_window_view_from_core(state, state.windows.active_window_id());
+        active_buffer_ui() = EditorState::WindowUiState{};
+        sync_window_view_from_core(windows.active_window_id());
     } else {
-        sync_core_view_from_window(state, state.windows.active_window_id());
+        sync_core_view_from_window(windows.active_window_id());
     }
 }
 
-void focus_window(EditorState &state, std::size_t window_id) {
-    if (!state.windows.set_active_window(window_id)) {
+void EditorState::focus_window(std::size_t window_id) {
+if (!windows.set_active_window(window_id)) {
         return;
     }
-    sync_active_window_buffer(state);
-    active_buffer_ui(state);
-    sync_core_view_from_window(state, window_id);
+    sync_active_window_buffer();
+    active_buffer_ui();
+    sync_core_view_from_window(window_id);
 }
 
 void invalidate_syntax_cache(EditorState &state) {
-    for (auto &[buffer_id, ui_state] : state.syntax_ui) {
+    for (auto &[buffer_id, ui_state] : state.syntax_ui_map) {
         (void)buffer_id;
         ui_state.syntax_revision = std::numeric_limits<std::size_t>::max();
         ui_state.pending_syntax_revision = std::numeric_limits<std::size_t>::max();
@@ -707,144 +711,146 @@ void initialize_locale() {
 
 bool suspend_supported() {
 #if defined(SIGTSTP)
+    log_debug("suspend_supported() check: SIGTSTP is defined, returning true");
     return true;
 #else
+    log_debug("suspend_supported() check: SIGTSTP is NOT defined, returning false");
     return false;
 #endif
 }
 
-void begin_insert_session(EditorState &state) {
-    if (state.insert_session_active) {
+void EditorState::begin_insert_session() {
+if (insert_session_active) {
         return;
     }
-    active_core(state).begin_compound_edit();
-    state.insert_session_active = true;
+    active_core().begin_compound_edit();
+    insert_session_active = true;
 }
 
-void end_insert_session(EditorState &state) {
-    if (!state.insert_session_active) {
+void EditorState::end_insert_session() {
+if (!insert_session_active) {
         return;
     }
-    active_core(state).end_compound_edit();
-    state.insert_session_active = false;
+    active_core().end_compound_edit();
+    insert_session_active = false;
 }
 
-void enter_normal_mode(EditorState &state) {
-    EditorCore &core = active_core(state);
-    if (state.mode == Mode::Insert) {
-        end_insert_session(state);
+void EditorState::enter_normal_mode() {
+EditorCore &core = active_core();
+    if (mode == Mode::Insert) {
+        end_insert_session();
     }
-    if (state.mode == Mode::Visual || state.mode == Mode::VisualLine) {
+    if (mode == Mode::Visual || mode == Mode::VisualLine) {
         core.clear_selection();
     }
-    state.mode = Mode::Normal;
-    state.command_buffer.clear();
-    state.pending_tokens.clear();
-    state.pending_motion = PendingMotion::None;
-    state.pending_motion_repeat_count = 1;
-    state.pending_replace_count = 0;
-    state.repeat_digits.clear();
-    state.search_buffer.clear();
-    Position cursor = displayed_cursor(state, state.windows.active_window_id());
+    mode = Mode::Normal;
+    command_buffer.clear();
+    pending.tokens.clear();
+    pending.motion = PendingMotion::None;
+    pending.motion_repeat_count = 1;
+    pending.replace_count = 0;
+    pending.repeat_digits.clear();
+    search_buffer.clear();
+    Position cursor = displayed_cursor(windows.active_window_id());
     std::size_t length = core.line_length(cursor.row);
     if (cursor.column > 0 && cursor.column == length) {
         core.set_cursor({cursor.row, cursor.column - 1});
     }
-    set_status(state, mode_name(state.mode));
+    set_status(mode_name(mode));
 }
 
-void enter_insert_mode(EditorState &state) {
-    active_core(state).clear_selection();
-    begin_insert_session(state);
-    state.mode = Mode::Insert;
-    state.pending_tokens.clear();
-    state.pending_motion = PendingMotion::None;
-    state.pending_motion_repeat_count = 1;
-    state.pending_replace_count = 0;
-    state.repeat_digits.clear();
-    state.search_buffer.clear();
-    set_status(state, mode_name(state.mode));
+void EditorState::enter_insert_mode() {
+active_core().clear_selection();
+    begin_insert_session();
+    mode = Mode::Insert;
+    pending.tokens.clear();
+    pending.motion = PendingMotion::None;
+    pending.motion_repeat_count = 1;
+    pending.replace_count = 0;
+    pending.repeat_digits.clear();
+    search_buffer.clear();
+    set_status(mode_name(mode));
 }
 
-void enter_command_mode(EditorState &state) {
-    active_core(state).clear_selection();
-    state.mode = Mode::Command;
-    state.command_prompt_kind = CommandPromptKind::EditorCommand;
-    state.command_buffer.clear();
-    reset_prompt_history_navigation(state.editor_command_history);
-    state.pending_tokens.clear();
-    state.pending_motion = PendingMotion::None;
-    state.pending_motion_repeat_count = 1;
-    state.pending_replace_count = 0;
-    state.repeat_digits.clear();
-    state.search_buffer.clear();
-    set_status(state, ":");
+void EditorState::enter_command_mode() {
+active_core().clear_selection();
+    mode = Mode::Command;
+    command_prompt_kind = CommandPromptKind::EditorCommand;
+    command_buffer.clear();
+    reset_prompt_history_navigation(command_history.editor_commands);
+    pending.tokens.clear();
+    pending.motion = PendingMotion::None;
+    pending.motion_repeat_count = 1;
+    pending.replace_count = 0;
+    pending.repeat_digits.clear();
+    search_buffer.clear();
+    set_status(":");
 }
 
-void enter_filter_command_mode(EditorState &state) {
-    if (!active_core(state).has_selection()) {
-        set_status(state, "No selection");
+void EditorState::enter_filter_command_mode() {
+if (!active_core().has_selection()) {
+        set_status("No selection");
         return;
     }
-    state.mode = Mode::Command;
-    state.command_prompt_kind = CommandPromptKind::FilterSelection;
-    state.command_buffer.clear();
-    reset_prompt_history_navigation(state.filter_command_history);
-    state.pending_tokens.clear();
-    state.pending_motion = PendingMotion::None;
-    state.pending_motion_repeat_count = 1;
-    state.pending_replace_count = 0;
-    state.repeat_digits.clear();
-    state.search_buffer.clear();
-    set_status(state, "|");
+    mode = Mode::Command;
+    command_prompt_kind = CommandPromptKind::FilterSelection;
+    command_buffer.clear();
+    reset_prompt_history_navigation(command_history.filter_commands);
+    pending.tokens.clear();
+    pending.motion = PendingMotion::None;
+    pending.motion_repeat_count = 1;
+    pending.replace_count = 0;
+    pending.repeat_digits.clear();
+    search_buffer.clear();
+    set_status("|");
 }
 
-void enter_sed_command_mode(EditorState &state) {
-    if (!active_core(state).has_selection()) {
-        set_status(state, "No selection");
+void EditorState::enter_sed_command_mode() {
+if (!active_core().has_selection()) {
+        set_status("No selection");
         return;
     }
-    state.mode = Mode::Command;
-    state.command_prompt_kind = CommandPromptKind::SedSelection;
-    state.command_buffer.clear();
-    reset_prompt_history_navigation(state.sed_command_history);
-    state.pending_tokens.clear();
-    state.pending_motion = PendingMotion::None;
-    state.pending_motion_repeat_count = 1;
-    state.pending_replace_count = 0;
-    state.repeat_digits.clear();
-    state.search_buffer.clear();
-    set_status(state, "S");
+    mode = Mode::Command;
+    command_prompt_kind = CommandPromptKind::SedSelection;
+    command_buffer.clear();
+    reset_prompt_history_navigation(command_history.sed_commands);
+    pending.tokens.clear();
+    pending.motion = PendingMotion::None;
+    pending.motion_repeat_count = 1;
+    pending.replace_count = 0;
+    pending.repeat_digits.clear();
+    search_buffer.clear();
+    set_status("S");
 }
 
-void enter_search_mode(EditorState &state) {
-    EditorCore &core = active_core(state);
-    EditorState::WindowUiState &window_state = active_buffer_ui(state);
+void EditorState::enter_search_mode() {
+EditorCore &core = active_core();
+    EditorState::WindowUiState &window_state = active_buffer_ui();
     core.clear_selection();
-    state.mode = Mode::Search;
-    state.search_buffer.clear();
-    reset_prompt_history_navigation(state.search_history);
+    mode = Mode::Search;
+    search_buffer.clear();
+    reset_prompt_history_navigation(command_history.searches);
     window_state.search_origin = core.cursor();
-    state.pending_tokens.clear();
-    state.pending_motion = PendingMotion::None;
-    state.pending_motion_repeat_count = 1;
-    state.pending_replace_count = 0;
-    state.repeat_digits.clear();
-    set_status(state, "/");
+    pending.tokens.clear();
+    pending.motion = PendingMotion::None;
+    pending.motion_repeat_count = 1;
+    pending.replace_count = 0;
+    pending.repeat_digits.clear();
+    set_status("/");
 }
 
 bool can_quit_without_force(const EditorState &state) {
     return !state.session.has_dirty_buffers();
 }
 
-void quit_editor(EditorState &state) {
-    state.should_quit = true;
+void EditorState::quit_editor() {
+should_quit = true;
 }
 
 const std::vector<DiagnosticEntryView> &sorted_diagnostics(const EditorState &state, std::size_t window_id) {
-    const EditorBuffer &buffer = window_buffer(state, window_id);
+    const EditorBuffer &buffer = state.window_buffer(window_id);
     const EditorCore &core = buffer.core;
-    EditorState::BufferUiState &buffer_ui = const_cast<EditorState &>(state).buffer_ui.try_emplace(buffer.id).first->second;
+    EditorState::BufferUiState &buffer_ui = const_cast<EditorState &>(state).buffer_ui_map.try_emplace(buffer.id).first->second;
     if (buffer_ui.sorted_diagnostics_revision == core.diagnostics_revision()) {
         return buffer_ui.sorted_diagnostics;
     }
@@ -858,35 +864,35 @@ const std::vector<DiagnosticEntryView> &sorted_diagnostics(const EditorState &st
     std::sort(buffer_ui.sorted_diagnostics.begin(), buffer_ui.sorted_diagnostics.end(), [](const DiagnosticEntryView &left, const DiagnosticEntryView &right) {
         Range left_range = normalized_range(left.diagnostic.range);
         Range right_range = normalized_range(right.diagnostic.range);
-        if (positions_equal(left_range.start, right_range.start)) {
-            return position_less_than(left_range.end, right_range.end);
+        if ((left_range.start == right_range.start)) {
+            return (left_range.end < right_range.end);
         }
-        return position_less_than(left_range.start, right_range.start);
+        return (left_range.start < right_range.start);
     });
     buffer_ui.sorted_diagnostics_revision = core.diagnostics_revision();
     return buffer_ui.sorted_diagnostics;
 }
 
-bool should_render_diagnostics(const EditorState &state, std::size_t window_id) {
-    return state.diagnostics_visible && (
-        state.mode != Mode::Insert ||
-        effective_show_diagnostics_in_insert_mode(state.config, window_core(state, window_id).file_path()));
+bool EditorState::should_render_diagnostics(std::size_t window_id) const {
+    return diagnostics_visible && (
+        mode != Mode::Insert ||
+        effective_show_diagnostics_in_insert_mode(config, window_core(window_id).file_path()));
 }
 
-void normalize_selected_diagnostic(EditorState &state) {
-    EditorState::WindowUiState &buffer_ui = active_buffer_ui(state);
-    if (active_core(state).diagnostics().empty()) {
+void EditorState::normalize_selected_diagnostic() {
+EditorState::WindowUiState &buffer_ui = active_buffer_ui();
+    if (active_core().diagnostics().empty()) {
         buffer_ui.selected_diagnostic_index.reset();
         return;
     }
-    if (!buffer_ui.selected_diagnostic_index || *buffer_ui.selected_diagnostic_index >= active_core(state).diagnostics().size()) {
+    if (!buffer_ui.selected_diagnostic_index || *buffer_ui.selected_diagnostic_index >= active_core().diagnostics().size()) {
         buffer_ui.selected_diagnostic_index = 0;
     }
 }
 
 void focus_diagnostic(EditorState &state, std::size_t diagnostic_index) {
-    EditorState::WindowUiState &buffer_ui = active_buffer_ui(state);
-    EditorCore &core = active_core(state);
+    EditorState::WindowUiState &buffer_ui = state.active_buffer_ui();
+    EditorCore &core = state.active_core();
     const std::vector<Diagnostic> &diagnostics = core.diagnostics();
     if (diagnostic_index >= diagnostics.size()) {
         return;
@@ -896,10 +902,10 @@ void focus_diagnostic(EditorState &state, std::size_t diagnostic_index) {
     core.set_cursor(range.start);
 }
 
-void show_diagnostics_summary(EditorState &state) {
+void EditorState::show_diagnostics_summary() {
     std::size_t errors = 0;
     std::size_t warnings = 0;
-    for (const Diagnostic &diagnostic : active_core(state).diagnostics()) {
+    for (const Diagnostic &diagnostic : active_core().diagnostics()) {
         if (diagnostic.severity == DiagnosticSeverity::Error) {
             ++errors;
         } else {
@@ -907,31 +913,30 @@ void show_diagnostics_summary(EditorState &state) {
         }
     }
     if (errors == 0 && warnings == 0) {
-        set_status(state, "No diagnostics");
+        set_status("No diagnostics");
         return;
     }
-    set_status(state, count_label(errors, "error") + ", " + count_label(warnings, "warning"));
+    set_status(count_label(errors, "error") + ", " + count_label(warnings, "warning"));
 }
 
-void show_lsp_status(EditorState &state) {
-    show_popup(state, "LSP Status", utf8_to_u32(state.runtime.status_summary()));
-    set_status(state, "LSP status");
+void EditorState::show_lsp_status() {
+    show_popup("LSP Status", utf8_to_u32(runtime.status_summary()));
+    set_status("LSP status");
 }
 
-void show_tree_sitter_status(EditorState &state) {
+void EditorState::show_tree_sitter_status() {
     show_popup(
-        state,
         "Tree-sitter Status",
-        utf8_to_u32(tree_sitter_status_summary(state.config, active_core(state).file_path())));
-    set_status(state, "Tree-sitter status");
+        utf8_to_u32(tree_sitter_status_summary(config, active_core().file_path())));
+    set_status("Tree-sitter status");
 }
 
-void navigate_diagnostic(EditorState &state, bool forward) {
-    EditorState::WindowUiState &buffer_ui = active_buffer_ui(state);
-    const std::vector<DiagnosticEntryView> &diagnostics = sorted_diagnostics(state, state.windows.active_window_id());
+void EditorState::navigate_diagnostic(bool forward) {
+EditorState::WindowUiState &buffer_ui = active_buffer_ui();
+    const std::vector<DiagnosticEntryView> &diagnostics = sorted_diagnostics(*this, windows.active_window_id());
     if (diagnostics.empty()) {
         buffer_ui.selected_diagnostic_index.reset();
-        set_status(state, "No diagnostics");
+        set_status("No diagnostics");
         return;
     }
 
@@ -947,10 +952,10 @@ void navigate_diagnostic(EditorState &state, bool forward) {
         }
     }
     if (!found_current) {
-    Position cursor = displayed_cursor(state, state.windows.active_window_id());
+    Position cursor = displayed_cursor(windows.active_window_id());
         for (std::size_t index = 0; index < diagnostics.size(); ++index) {
             Range range = normalized_range(diagnostics[index].diagnostic.range);
-            if (!position_less_than(range.start, cursor)) {
+            if (!(range.start < cursor)) {
                 current_sorted_index = index;
                 found_current = true;
                 break;
@@ -967,19 +972,18 @@ void navigate_diagnostic(EditorState &state, bool forward) {
         current_sorted_index = current_sorted_index == 0 ? diagnostics.size() - 1 : current_sorted_index - 1;
     }
 
-    focus_diagnostic(state, diagnostics[current_sorted_index].index);
+    focus_diagnostic(*this, diagnostics[current_sorted_index].index);
     const Diagnostic &diagnostic = diagnostics[current_sorted_index].diagnostic;
     set_status(
-        state,
         std::string(diagnostic.severity == DiagnosticSeverity::Error ? "Error: " : "Warning: ") +
             u32_to_utf8(diagnostic.message));
 }
 
 const std::vector<AnnotationEntryView> &sorted_annotations(const EditorState &state, std::size_t window_id) {
-    const EditorBuffer &buffer = window_buffer(state, window_id);
+    const EditorBuffer &buffer = state.window_buffer(window_id);
     const EditorCore &core = buffer.core;
-    bool show_diagnostics = should_render_diagnostics(state, window_id);
-    EditorState::BufferUiState &buffer_ui = const_cast<EditorState &>(state).buffer_ui.try_emplace(buffer.id).first->second;
+    bool show_diagnostics = state.should_render_diagnostics(window_id);
+    EditorState::BufferUiState &buffer_ui = const_cast<EditorState &>(state).buffer_ui_map.try_emplace(buffer.id).first->second;
     std::size_t combined_revision = core.annotations_revision() ^ (core.diagnostics_revision() << 1);
     auto found_cache = buffer_ui.sorted_annotations.find(show_diagnostics);
     if (found_cache != buffer_ui.sorted_annotations.end() && found_cache->second.first == combined_revision) {
@@ -998,8 +1002,8 @@ const std::vector<AnnotationEntryView> &sorted_annotations(const EditorState &st
         std::optional<std::size_t> diagnostic_index;
         if (annotation.kind == AnnotationKind::Diagnostic) {
             for (const DiagnosticEntryView &diagnostic : diagnostics) {
-                if (positions_equal(normalized_range(diagnostic.diagnostic.range).start, normalized_range(annotation.range).start) &&
-                    positions_equal(normalized_range(diagnostic.diagnostic.range).end, normalized_range(annotation.range).end) &&
+                if ((normalized_range(diagnostic.diagnostic.range).start == normalized_range(annotation.range).start) &&
+                    (normalized_range(diagnostic.diagnostic.range).end == normalized_range(annotation.range).end) &&
                     diagnostic.diagnostic.source == annotation.source &&
                     diagnostic.diagnostic.message == annotation.text) {
                     diagnostic_index = diagnostic.index;
@@ -1018,10 +1022,10 @@ const std::vector<AnnotationEntryView> &sorted_annotations(const EditorState &st
         if (left_anchor != right_anchor) {
             return left_anchor < right_anchor;
         }
-        if (positions_equal(left_range.start, right_range.start)) {
-            return position_less_than(left_range.end, right_range.end);
+        if ((left_range.start == right_range.start)) {
+            return (left_range.end < right_range.end);
         }
-        return position_less_than(left_range.start, right_range.start);
+        return (left_range.start < right_range.start);
     });
     auto &cache_entry = buffer_ui.sorted_annotations[show_diagnostics];
     cache_entry.first = combined_revision;
@@ -1062,7 +1066,7 @@ std::vector<VisualRow> build_visual_rows(const EditorState &state, std::size_t w
     std::vector<AnnotationEntryView> annotations = sorted_annotations(state, window_id);
     std::size_t annotation_index = 0;
 
-    for (std::size_t row = 0; row < window_core(state, window_id).line_count(); ++row) {
+    for (std::size_t row = 0; row < state.window_core(window_id).line_count(); ++row) {
         rows.push_back({VisualRowKind::SourceLine, row, 0, std::nullopt});
         while (annotation_index < annotations.size()) {
             Range range = normalized_range(annotations[annotation_index].annotation.range);
@@ -1081,10 +1085,10 @@ std::vector<VisualRow> build_visual_rows(const EditorState &state, std::size_t w
 }
 
 const std::vector<VisualRow> &visual_rows_for_window(const EditorState &state, std::size_t window_id, int buffer_cols) {
-    EditorBuffer const &buffer = window_buffer(state, window_id);
-    EditorState::BufferUiState &buffer_state = const_cast<EditorState &>(state).buffer_ui.try_emplace(buffer.id).first->second;
-    const EditorCore &core = window_core(state, window_id);
-    bool show_diagnostics = should_render_diagnostics(state, window_id);
+    EditorBuffer const &buffer = state.window_buffer(window_id);
+    EditorState::BufferUiState &buffer_state = const_cast<EditorState &>(state).buffer_ui_map.try_emplace(buffer.id).first->second;
+    const EditorCore &core = state.window_core(window_id);
+    bool show_diagnostics = state.should_render_diagnostics(window_id);
     VisualRowsCache &cache = buffer_state.visual_rows_caches[{buffer_cols, show_diagnostics}];
     bool live_text_may_change = state.insert_session_active;
     if (live_text_may_change || cache.buffer_cols != buffer_cols || cache.text_revision != core.current_revision() ||
@@ -1151,37 +1155,37 @@ std::vector<std::string> run_capture_command(const std::string &command, const s
 #endif
 }
 
-void request_definition(EditorState &state) {
-    EditorCore &core = active_core(state);
-    state.runtime.dispatch_editor_events(core);
+void EditorState::request_definition() {
+EditorCore &core = active_core();
+    runtime.dispatch_editor_events(core);
     ServiceRequest request;
     request.type = ServiceRequestType::GoToDefinition;
     request.document_uri = core.document_uri();
     request.utf16_position = core.utf16_position_for_position(core.cursor());
-    state.runtime.dispatch_service_request(request);
-    set_status(state, "Definition requested");
+    runtime.dispatch_service_request(request);
+    set_status("Definition requested");
 }
 
-void request_hover(EditorState &state) {
-    EditorCore &core = active_core(state);
-    state.runtime.dispatch_editor_events(core);
+void EditorState::request_hover() {
+EditorCore &core = active_core();
+    runtime.dispatch_editor_events(core);
     ServiceRequest request;
     request.type = ServiceRequestType::Hover;
     request.document_uri = core.document_uri();
     request.utf16_position = core.utf16_position_for_position(core.cursor());
     request.document_version = core.document_version();
-    state.runtime.dispatch_service_request(request);
-    state.runtime.poll_services();
-    handle_service_events(state);
-    set_status(state, "Hover requested");
+    runtime.dispatch_service_request(request);
+    runtime.poll_services();
+    handle_service_events();
+    set_status("Hover requested");
 }
 
-void request_completion(EditorState &state) {
-    EditorCore &core = active_core(state);
-    if (state.mode == Mode::Insert) {
-        end_insert_session(state);
+void EditorState::request_completion() {
+EditorCore &core = active_core();
+    if (mode == Mode::Insert) {
+        end_insert_session();
     }
-    state.runtime.dispatch_editor_events(core);
+    runtime.dispatch_editor_events(core);
     auto is_identifier_char = [](char32_t codepoint) {
         return (codepoint >= U'a' && codepoint <= U'z') || (codepoint >= U'A' && codepoint <= U'Z') ||
             (codepoint >= U'0' && codepoint <= U'9') || codepoint == U'_';
@@ -1205,14 +1209,14 @@ void request_completion(EditorState &state) {
     request.document_version = core.document_version();
     request.completion_range = Range{start, cursor};
     request.completion_prefix = u32_to_utf8(core.read_text(*request.completion_range));
-    state.runtime.dispatch_service_request(request);
-    state.runtime.poll_services();
-    handle_service_events(state);
-    set_status(state, "Completion requested");
+    runtime.dispatch_service_request(request);
+    runtime.poll_services();
+    handle_service_events();
+    set_status("Completion requested");
 }
 
 void request_selection_range(EditorState &state) {
-    EditorCore &core = active_core(state);
+    EditorCore &core = state.active_core();
     state.runtime.dispatch_editor_events(core);
     ServiceRequest request;
     request.type = ServiceRequestType::SelectionRange;
@@ -1221,16 +1225,16 @@ void request_selection_range(EditorState &state) {
     request.document_version = core.document_version();
     state.runtime.dispatch_service_request(request);
     state.runtime.poll_services();
-    handle_service_events(state);
+    state.handle_service_events();
 }
 
-void select_enclosing_ast(EditorState &state) {
-    EditorState::WindowUiState &ui = active_buffer_ui(state);
-    EditorCore &core = active_core(state);
+void EditorState::select_enclosing_ast() {
+EditorState::WindowUiState &ui = active_buffer_ui();
+    EditorCore &core = active_core();
     bool cache_valid = ui.ast_selection_document_uri == core.document_uri() &&
         ui.ast_selection_document_version == core.document_version() && !ui.ast_selection_ranges.empty();
     if (!cache_valid) {
-        request_selection_range(state);
+        request_selection_range(*this);
         return;
     }
     if (ui.ast_selection_index + 1 < ui.ast_selection_ranges.size()) {
@@ -1241,30 +1245,30 @@ void select_enclosing_ast(EditorState &state) {
         std::vector<Range> cached_ranges = ui.ast_selection_ranges;
         std::size_t cached_index = ui.ast_selection_index;
         core.set_selection_range(ui.ast_selection_ranges[ui.ast_selection_index], SelectionMode::Character);
-        state.mode = Mode::Visual;
-        sync_window_view_from_core(state, state.windows.active_window_id());
+        mode = Mode::Visual;
+        sync_window_view_from_core(windows.active_window_id());
         ui.ast_selection_document_uri = std::move(cached_uri);
         ui.ast_selection_document_version = cached_version;
         ui.ast_selection_cursor = cached_cursor;
         ui.ast_selection_ranges = std::move(cached_ranges);
         ui.ast_selection_index = cached_index;
-        set_status(state, "Selected enclosing AST node");
+        set_status("Selected enclosing AST node");
     } else {
-        set_status(state, "No enclosing AST range");
+        set_status("No enclosing AST range");
     }
 }
 
-void select_inner_ast(EditorState &state) {
-    EditorState::WindowUiState &ui = active_buffer_ui(state);
-    EditorCore &core = active_core(state);
+void EditorState::select_inner_ast() {
+EditorState::WindowUiState &ui = active_buffer_ui();
+    EditorCore &core = active_core();
     bool cache_valid = ui.ast_selection_document_uri == core.document_uri() &&
         ui.ast_selection_document_version == core.document_version() && !ui.ast_selection_ranges.empty();
     if (!cache_valid) {
-        set_status(state, "No smaller AST range");
+        set_status("No smaller AST range");
         return;
     }
     if (ui.ast_selection_index == 0) {
-        set_status(state, "No smaller AST range");
+        set_status("No smaller AST range");
         return;
     }
     --ui.ast_selection_index;
@@ -1274,14 +1278,14 @@ void select_inner_ast(EditorState &state) {
     std::vector<Range> cached_ranges = ui.ast_selection_ranges;
     std::size_t cached_index = ui.ast_selection_index;
     core.set_selection_range(ui.ast_selection_ranges[ui.ast_selection_index], SelectionMode::Character);
-    state.mode = Mode::Visual;
-    sync_window_view_from_core(state, state.windows.active_window_id());
+    mode = Mode::Visual;
+    sync_window_view_from_core(windows.active_window_id());
     ui.ast_selection_document_uri = std::move(cached_uri);
     ui.ast_selection_document_version = cached_version;
     ui.ast_selection_cursor = cached_cursor;
     ui.ast_selection_ranges = std::move(cached_ranges);
     ui.ast_selection_index = cached_index;
-    set_status(state, "Selected inner AST node");
+    set_status("Selected inner AST node");
 }
 
 
@@ -1402,43 +1406,43 @@ std::vector<std::filesystem::path> search_workspace_for_file(
     return matches;
 }
 
-void open_file_under_cursor(EditorState &state) {
-    EditorCore &core = active_core(state);
+void EditorState::open_file_under_cursor() {
+    EditorCore &core = active_core();
     std::optional<std::string> token = token_under_cursor(core);
     if (!token) {
-        set_status(state, "No file reference under cursor");
+        set_status("No file reference under cursor");
         return;
     }
 
-    if (std::optional<std::filesystem::path> direct = resolve_direct_file_reference(state, core, *token)) {
-        handle_edit_command(state, direct->string());
+    if (std::optional<std::filesystem::path> direct = resolve_direct_file_reference(*this, core, *token)) {
+        handle_edit_command(direct->string());
         return;
     }
 
-    std::filesystem::path workspace_root = workspace_root_for_buffer(state, core);
+    std::filesystem::path workspace_root = workspace_root_for_buffer(*this, core);
     std::vector<std::filesystem::path> matches = search_workspace_for_file(workspace_root, *token);
     if (matches.empty()) {
         if (!first_available_executable({"fdfind", "fd"})) {
-            set_status(state, "Missing executable: fdfind/fd");
+            set_status("Missing executable: fdfind/fd");
         } else {
-            set_status(state, "File not found: " + *token);
+            set_status("File not found: " + *token);
         }
         return;
     }
     if (matches.size() > 1) {
-        set_status(state, "Ambiguous file reference: " + *token);
+        set_status("Ambiguous file reference: " + *token);
         return;
     }
-    handle_edit_command(state, matches.front().string());
+    handle_edit_command(matches.front().string());
 }
 
 EditorState::JumpLocation current_jump_location(const EditorState &state) {
-    const EditorCore &core = active_core(state);
-    return {core.document_uri(), core.file_path(), displayed_cursor(state, state.windows.active_window_id())};
+    const EditorCore &core = state.active_core();
+    return {core.document_uri(), core.file_path(), state.displayed_cursor(state.windows.active_window_id())};
 }
 
 bool same_jump_location(const EditorState::JumpLocation &left, const EditorState::JumpLocation &right) {
-    return left.document_uri == right.document_uri && positions_equal(left.position, right.position);
+    return left.document_uri == right.document_uri && (left.position == right.position);
 }
 
 bool open_jump_location(EditorState &state, const EditorState::JumpLocation &location) {
@@ -1457,12 +1461,12 @@ bool open_jump_location(EditorState &state, const EditorState::JumpLocation &loc
         if (!buffer) {
             return false;
         }
-        show_buffer_in_active_window(state, buffer->id);
+        state.show_buffer_in_active_window(buffer->id);
     } else {
         if (std::optional<std::size_t> window_id = state.windows.find_window_showing_buffer(buffer->id)) {
-            focus_window(state, *window_id);
+            state.focus_window(*window_id);
         } else {
-            show_buffer_in_active_window(state, buffer->id);
+            state.show_buffer_in_active_window(buffer->id);
         }
     }
     buffer->core.set_cursor(location.position);
@@ -1476,7 +1480,7 @@ void navigate_jump_history(
     const std::string &empty_message,
     const std::string &success_message) {
     if (from_stack.empty()) {
-        set_status(state, empty_message);
+        state.set_status(empty_message);
         return;
     }
 
@@ -1485,40 +1489,40 @@ void navigate_jump_history(
     EditorState::JumpLocation current = current_jump_location(state);
     if (!open_jump_location(state, target)) {
         from_stack.push_back(std::move(target));
-        set_status(state, "Jump target unavailable");
+        state.set_status("Jump target unavailable");
         return;
     }
     if (to_stack.empty() || !same_jump_location(to_stack.back(), current)) {
         to_stack.push_back(std::move(current));
     }
-    set_status(state, success_message);
+    state.set_status(success_message);
 }
 
-bool reload_editor_configuration(EditorState &state, std::string &error_message) {
+bool EditorState::reload_editor_configuration(std::string &error_message) {
     try {
         EditorConfig new_config = load_editor_config();
         KeyBindings new_keybindings = load_keybindings(new_config);
         Theme new_theme = load_theme(new_config);
 
-        state.config = std::move(new_config);
-        configure_logger(state.config.log_path);
+        config = std::move(new_config);
+        configure_logger(config.log_path);
         log_debug("reload-config applied");
-        state.session.configure_clipboard(state.config.clipboard);
-        state.keybindings = std::move(new_keybindings);
-        state.theme = std::move(new_theme);
+        session.configure_clipboard(config.clipboard);
+        keybindings = std::move(new_keybindings);
+        theme = std::move(new_theme);
         invalidate_syntax_runtime_cache();
-        invalidate_syntax_cache(state);
-        apply_theme_to_terminal(state.theme);
+        invalidate_syntax_cache(*this);
+        apply_theme_to_terminal(theme);
         clearok(stdscr, TRUE);
         refresh();
-        state.runtime.clear_services();
-        if (!state.config.lsp_servers.empty()) {
-            for (const LspServerConfig &server : state.config.lsp_servers) {
-                state.runtime.add_service(std::make_unique<LspService>(server));
+        runtime.clear_services();
+        if (!config.lsp_servers.empty()) {
+            for (const LspServerConfig &server : config.lsp_servers) {
+                runtime.add_service(std::make_unique<LspService>(server));
             }
         }
-        if (!state.config.lsp_servers.empty()) {
-            state.runtime.start_services();
+        if (!config.lsp_servers.empty()) {
+            runtime.start_services();
         }
         return true;
     } catch (const std::exception &error) {
@@ -1527,12 +1531,12 @@ bool reload_editor_configuration(EditorState &state, std::string &error_message)
     }
 }
 
-void set_search_status(EditorState &state, const std::string &suffix) {
-    std::string prompt = "/" + u32_to_utf8(state.search_buffer);
+void EditorState::set_search_status(const std::string &suffix) {
+    std::string prompt = "/" + u32_to_utf8(search_buffer);
     if (!suffix.empty()) {
         prompt += "  " + suffix;
     }
-    set_status(state, prompt);
+    set_status(prompt);
 }
 
 std::size_t column_for_utf8_offset_in_line(const std::u32string &line, std::size_t offset) {
@@ -1548,8 +1552,8 @@ std::size_t column_for_utf8_offset_in_line(const std::u32string &line, std::size
 }
 
 void rebuild_search_matches(EditorState &state) {
-    EditorState::BufferUiState &buffer_ui = active_buffer_cache(state);
-    const EditorCore &core = active_core(state);
+    EditorState::BufferUiState &buffer_ui = state.active_buffer_cache();
+    const EditorCore &core = state.active_core();
     buffer_ui.search_matches.clear();
     buffer_ui.search_pattern_valid = true;
     buffer_ui.search_matches_version = core.document_version();
@@ -1594,8 +1598,8 @@ void rebuild_search_matches(EditorState &state, std::size_t window_id) {
         return;
     }
 
-    EditorState::BufferUiState &buffer_ui = buffer_ui_state(state, window_buffer(state, window_id).id);
-    const EditorCore &core = window_core(state, window_id);
+    EditorState::BufferUiState &buffer_ui = state.buffer_ui_state(state.window_buffer(window_id).id);
+    const EditorCore &core = state.window_core(window_id);
     buffer_ui.search_matches.clear();
     buffer_ui.search_pattern_valid = true;
     buffer_ui.search_matches_version = core.document_version();
@@ -1634,13 +1638,13 @@ void rebuild_search_matches(EditorState &state, std::size_t window_id) {
     }
 }
 
-void refresh_search_matches(EditorState &state, bool move_to_best_match) {
-    EditorState::WindowUiState &window_state = active_buffer_ui(state);
-    EditorState::BufferUiState &buffer_ui = active_buffer_cache(state);
-    EditorCore &core = active_core(state);
+void EditorState::refresh_search_matches(bool move_to_best_match) {
+EditorState::WindowUiState &window_state = active_buffer_ui();
+    EditorState::BufferUiState &buffer_ui = active_buffer_cache();
+    EditorCore &core = active_core();
     if (buffer_ui.search_matches_version != core.document_version() ||
         buffer_ui.compiled_search_pattern_utf8 != u32_to_utf8(buffer_ui.active_search_pattern)) {
-        rebuild_search_matches(state);
+        rebuild_search_matches(*this);
     }
 
     if (!buffer_ui.search_pattern_valid || buffer_ui.search_matches.empty()) {
@@ -1650,11 +1654,11 @@ void refresh_search_matches(EditorState &state, bool move_to_best_match) {
         return;
     }
 
-    Position anchor = move_to_best_match ? window_state.search_origin : displayed_cursor(state, state.windows.active_window_id());
+    Position anchor = move_to_best_match ? window_state.search_origin : displayed_cursor(windows.active_window_id());
     std::size_t best_index = 0;
     bool found_best = false;
     for (std::size_t index = 0; index < buffer_ui.search_matches.size(); ++index) {
-        if (!position_less_than(buffer_ui.search_matches[index].start, anchor)) {
+        if (!(buffer_ui.search_matches[index].start < anchor)) {
             best_index = index;
             found_best = true;
             break;
@@ -1663,25 +1667,25 @@ void refresh_search_matches(EditorState &state, bool move_to_best_match) {
     window_state.current_search_match_index = found_best ? best_index : 0;
     if (move_to_best_match) {
         core.set_cursor(buffer_ui.search_matches[*window_state.current_search_match_index].start);
-        sync_window_view_from_core(state, state.windows.active_window_id());
+        sync_window_view_from_core(windows.active_window_id());
     }
 }
 
-void refresh_search_matches_for_window(EditorState &state, std::size_t window_id) {
-    EditorState::BufferUiState &buffer_ui = buffer_ui_state(state, window_buffer(state, window_id).id);
-    EditorCore &core = window_core(state, window_id);
+void EditorState::refresh_search_matches_for_window(std::size_t window_id) {
+    BufferUiState &buffer_ui = buffer_ui_state(window_buffer(window_id).id);
+    EditorCore &core = window_core(window_id);
     if (buffer_ui.search_matches_version != core.document_version() ||
         buffer_ui.compiled_search_pattern_utf8 != u32_to_utf8(buffer_ui.active_search_pattern)) {
-        rebuild_search_matches(state, window_id);
+        rebuild_search_matches(*this, window_id);
     }
 }
 
-void navigate_search_match(EditorState &state, bool forward) {
-    EditorState::WindowUiState &window_state = active_buffer_ui(state);
-    EditorState::BufferUiState &buffer_ui = active_buffer_cache(state);
-    EditorCore &core = active_core(state);
+void EditorState::navigate_search_match(bool forward) {
+EditorState::WindowUiState &window_state = active_buffer_ui();
+    EditorState::BufferUiState &buffer_ui = active_buffer_cache();
+    EditorCore &core = active_core();
     if (buffer_ui.search_matches.empty()) {
-        set_status(state, buffer_ui.search_pattern_valid ? "No search matches" : "invalid regex");
+        set_status(buffer_ui.search_pattern_valid ? "No search matches" : "invalid regex");
         return;
     }
 
@@ -1693,77 +1697,7 @@ void navigate_search_match(EditorState &state, bool forward) {
     }
     window_state.current_search_match_index = index;
     core.set_cursor(buffer_ui.search_matches[index].start);
-    sync_window_view_from_core(state, state.windows.active_window_id());
-    set_status(state, forward ? "Next match" : "Previous match");
+    sync_window_view_from_core(windows.active_window_id());
+    set_status(forward ? "Next match" : "Previous match");
 }
 
-int main(int argc, char **argv) {
-    initialize_locale();
-    EditorState state;
-    std::optional<std::string> startup_picker_root;
-    try {
-        state.config = load_editor_config();
-        configure_logger(state.config.log_path);
-        log_debug("editor startup");
-        state.session.configure_clipboard(state.config.clipboard);
-        state.keybindings = load_keybindings(state.config);
-    } catch (const std::exception &error) {
-        state.keybindings = load_embedded_keybindings();
-        set_status(state, std::string("Keybindings config error: ") + error.what());
-    }
-    try {
-        state.theme = load_theme(state.config);
-    } catch (const std::exception &error) {
-        state.theme = load_embedded_theme();
-        set_status(state, std::string("Theme config error: ") + error.what());
-    }
-    if (!suspend_supported()) {
-        remove_action_bindings(state.keybindings, EditorAction::Suspend);
-    }
-    initialize_windows(state);
-    if (argc > 1) {
-        startup_picker_root = open_startup_files(state, argc, argv);
-    } else if (!state.config.source_path.empty()) {
-        set_status(state, "Config: " + state.config.source_path);
-    } else if (!state.keybindings.source_path.empty()) {
-        set_status(state, "Keybindings: " + state.keybindings.source_path);
-    }
-
-    try {
-        setup_terminal(state.theme);
-        if (startup_picker_root) {
-            open_startup_file_picker(state, std::filesystem::path(*startup_picker_root));
-        } else if (argc <= 1) {
-            open_startup_file_picker(state);
-        }
-        if (state.config.control_socket_path) {
-            std::string control_error;
-            if (state.control_server.start(*state.config.control_socket_path, control_error)) {
-                log_debug("control socket started path=" + state.config.control_socket_path->string());
-            } else {
-                set_status(state, "Control socket failed: " + control_error);
-                log_debug(
-                    "control socket start failed path=" + state.config.control_socket_path->string() +
-                    " error=" + control_error);
-            }
-        }
-        if (!state.config.lsp_servers.empty()) {
-            for (const LspServerConfig &server : state.config.lsp_servers) {
-                state.runtime.add_service(std::make_unique<LspService>(server));
-            }
-        }
-        render_frame(state);
-        state.runtime.start_services();
-        run_editor(state);
-        state.runtime.stop_services();
-        state.control_server.stop();
-        teardown_terminal();
-        return 0;
-    } catch (const std::exception &error) {
-        state.runtime.stop_services();
-        state.control_server.stop();
-        teardown_terminal();
-        std::fprintf(stderr, "medit: %s\n", error.what());
-        return 1;
-    }
-}
