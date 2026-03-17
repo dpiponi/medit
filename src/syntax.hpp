@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <expected>
 
 enum class SyntaxEngine {
     None,

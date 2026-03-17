@@ -14,64 +14,9 @@
 
 namespace {
 
-std::wstring_convert<std::codecvt_utf8<char32_t>, char32_t> &utf8_converter() {
-    static std::wstring_convert<std::codecvt_utf8<char32_t>, char32_t> converter;
-    return converter;
-}
-
 std::uint64_t next_untitled_id() {
     static std::uint64_t next_id = 1;
     return next_id++;
-}
-
-bool is_unreserved_uri_byte(unsigned char ch) {
-    return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-' ||
-        ch == '_' || ch == '.' || ch == '~' || ch == '/';
-}
-
-std::string percent_encode_path(const std::string &path) {
-    static const char *kHex = "0123456789ABCDEF";
-    std::string encoded;
-    for (unsigned char ch : path) {
-        if (is_unreserved_uri_byte(ch)) {
-            encoded.push_back(static_cast<char>(ch));
-            continue;
-        }
-        encoded.push_back('%');
-        encoded.push_back(kHex[(ch >> 4) & 0x0F]);
-        encoded.push_back(kHex[ch & 0x0F]);
-    }
-    return encoded;
-}
-
-int hex_value(char ch) {
-    if (ch >= '0' && ch <= '9') {
-        return ch - '0';
-    }
-    if (ch >= 'a' && ch <= 'f') {
-        return 10 + (ch - 'a');
-    }
-    if (ch >= 'A' && ch <= 'F') {
-        return 10 + (ch - 'A');
-    }
-    return -1;
-}
-
-std::string percent_decode_path(const std::string &path) {
-    std::string decoded;
-    for (std::size_t i = 0; i < path.size(); ++i) {
-        if (path[i] == '%' && i + 2 < path.size()) {
-            int high = hex_value(path[i + 1]);
-            int low = hex_value(path[i + 2]);
-            if (high >= 0 && low >= 0) {
-                decoded.push_back(static_cast<char>((high << 4) | low));
-                i += 2;
-                continue;
-            }
-        }
-        decoded.push_back(path[i]);
-    }
-    return decoded;
 }
 
 std::u32string buffer_text(const std::vector<std::u32string> &lines) {
@@ -83,14 +28,6 @@ std::u32string buffer_text(const std::vector<std::u32string> &lines) {
         }
     }
     return text;
-}
-
-Range full_document_range(const std::vector<std::u32string> &lines) {
-    if (lines.empty()) {
-        return {{0, 0}, {0, 0}};
-    }
-    std::size_t last_row = lines.size() - 1;
-    return {{0, 0}, {last_row, lines[last_row].size()}};
 }
 
 struct InsertCodepointCommand : EditCommand {
@@ -364,66 +301,6 @@ std::optional<IncrementalDocumentChange> incremental_change_for_command(const Ed
 
 }  // namespace
 
-std::string file_uri_for_path(const std::string &path) {
-    std::filesystem::path absolute = std::filesystem::absolute(path);
-    return "file://" + percent_encode_path(absolute.string());
-}
-
-std::string file_path_from_uri(const std::string &uri) {
-    if (!uri.starts_with("file://")) {
-        return "";
-    }
-    return percent_decode_path(uri.substr(7));
-}
-
-std::string normalize_document_uri(const std::string &uri) {
-    if (!uri.starts_with("file://")) {
-        return uri;
-    }
-    std::string path = file_path_from_uri(uri);
-    if (path.empty()) {
-        return uri;
-    }
-    return file_uri_for_path(path);
-}
-
-std::u32string utf8_to_u32(const std::string &text) {
-    return utf8_converter().from_bytes(text);
-}
-
-std::string u32_to_utf8(const std::u32string &text) {
-    return utf8_converter().to_bytes(text);
-}
-
-bool position_less_than(Position left, Position right) {
-    if (left.row != right.row) {
-        return left.row < right.row;
-    }
-    return left.column < right.column;
-}
-
-bool positions_equal(Position left, Position right) {
-    return left.row == right.row && left.column == right.column;
-}
-
-Range normalized_range(Range range) {
-    if (position_less_than(range.end, range.start)) {
-        std::swap(range.start, range.end);
-    }
-    return range;
-}
-
-bool range_contains(const Range &range, Position position) {
-    Range normalized = normalized_range(range);
-    return !position_less_than(position, normalized.start) && position_less_than(position, normalized.end);
-}
-
-bool ranges_overlap(const Range &left, const Range &right) {
-    Range normalized_left = normalized_range(left);
-    Range normalized_right = normalized_range(right);
-    return position_less_than(normalized_left.start, normalized_right.end) &&
-           position_less_than(normalized_right.start, normalized_left.end);
-}
 
 bool ends_with_newline(const std::u32string &text) {
     return !text.empty() && text.back() == U'\n';
@@ -595,7 +472,7 @@ std::optional<Range> EditorCore::selection_range() const {
     }
     Position cursor_extent = position_after_character(cursor_);
     Position anchor_extent = position_after_character(anchor);
-    if (position_less_than(cursor_, anchor)) {
+    if ((cursor_ < anchor)) {
         return Range{cursor_, anchor_extent};
     }
     return Range{anchor, cursor_extent};
@@ -765,7 +642,7 @@ void EditorCore::emit_document_changed(Range range, const std::u32string &text) 
 }
 
 void EditorCore::emit_cursor_moved(Position previous_cursor) {
-    if (suppress_cursor_events_ || positions_equal(previous_cursor, cursor_)) {
+    if (suppress_cursor_events_ || (previous_cursor == cursor_)) {
         return;
     }
     emit_event({EditorEventType::CursorMoved, document_uri_, document_version_, cursor_, std::nullopt, U""});
@@ -959,7 +836,7 @@ void EditorCore::clear_selection() {
 
 bool EditorCore::set_selection_range(Range range, SelectionMode mode) {
     Range normalized = normalized_range(range);
-    if (positions_equal(normalized.start, normalized.end)) {
+    if ((normalized.start == normalized.end)) {
         return false;
     }
 
@@ -984,7 +861,7 @@ bool EditorCore::set_selection_range(Range range, SelectionMode mode) {
 
 bool EditorCore::extend_selection_to_range(Range range) {
     Range normalized = normalized_range(range);
-    if (positions_equal(normalized.start, normalized.end)) {
+    if ((normalized.start == normalized.end)) {
         return false;
     }
     if (!selection_anchor_) {
@@ -993,8 +870,8 @@ bool EditorCore::extend_selection_to_range(Range range) {
 
     Range current = *selection_range();
     Range merged{
-        position_less_than(current.start, normalized.start) ? current.start : normalized.start,
-        position_less_than(current.end, normalized.end) ? normalized.end : current.end};
+        (current.start < normalized.start) ? current.start : normalized.start,
+        (current.end < normalized.end) ? normalized.end : current.end};
     return set_selection_range(merged, SelectionMode::Character);
 }
 
@@ -1175,7 +1052,7 @@ std::u32string EditorCore::read_text(Range range) const {
 
 bool EditorCore::delete_range(Range range) {
     Range normalized = normalized_range(range);
-    if (positions_equal(normalized.start, normalized.end)) {
+    if ((normalized.start == normalized.end)) {
         return false;
     }
     std::u32string deleted_text = read_range(normalized);
@@ -1187,7 +1064,7 @@ bool EditorCore::delete_range(Range range) {
 bool EditorCore::replace_range(Range range, const std::u32string &text) {
     Range normalized = normalized_range(range);
     std::u32string replaced_text = read_range(normalized);
-    if (positions_equal(normalized.start, normalized.end) && text.empty()) {
+    if ((normalized.start == normalized.end) && text.empty()) {
         return false;
     }
     apply_command(std::make_unique<ReplaceRangeCommand>(normalized, replaced_text, text));
@@ -1272,10 +1149,10 @@ bool EditorCore::apply_text_edits(const std::vector<TextEdit> &edits) {
     std::sort(sorted_edits.begin(), sorted_edits.end(), [](const TextEdit &left, const TextEdit &right) {
         Range normalized_left = normalized_range(left.range);
         Range normalized_right = normalized_range(right.range);
-        if (positions_equal(normalized_left.start, normalized_right.start)) {
-            return position_less_than(normalized_right.end, normalized_left.end);
+        if ((normalized_left.start == normalized_right.start)) {
+            return (normalized_right.end < normalized_left.end);
         }
-        return position_less_than(normalized_right.start, normalized_left.start);
+        return (normalized_right.start < normalized_left.start);
     });
 
     for (std::size_t index = 1; index < sorted_edits.size(); ++index) {
@@ -1683,7 +1560,7 @@ void EditorCore::raw_insert_text(Position position, const std::u32string &text) 
 
 std::u32string EditorCore::read_range(Range range) const {
     Range normalized = normalized_range(range);
-    if (positions_equal(normalized.start, normalized.end)) {
+    if ((normalized.start == normalized.end)) {
         return U"";
     }
 
@@ -1720,7 +1597,7 @@ Position EditorCore::position_after_text(Position position, const std::u32string
 std::u32string EditorCore::raw_delete_range(Range range) {
     Range normalized = normalized_range(range);
     std::u32string deleted_text = read_range(normalized);
-    if (positions_equal(normalized.start, normalized.end)) {
+    if ((normalized.start == normalized.end)) {
         return deleted_text;
     }
 
@@ -1913,7 +1790,7 @@ void EditorCore::open_line_above_with_autoindent() {
 
 bool EditorCore::yank_selection() {
     std::optional<Range> selected = selection_range();
-    if (!selected || positions_equal(selected->start, selected->end)) {
+    if (!selected || (selected->start == selected->end)) {
         return false;
     }
     yank_buffer_ = read_range(*selected);
@@ -1923,7 +1800,7 @@ bool EditorCore::yank_selection() {
 
 bool EditorCore::delete_selection() {
     std::optional<Range> selected = selection_range();
-    if (!selected || positions_equal(selected->start, selected->end)) {
+    if (!selected || (selected->start == selected->end)) {
         return false;
     }
     Range range = *selected;
@@ -1969,7 +1846,7 @@ bool EditorCore::replace_selection_with_yank() {
         return false;
     }
     std::optional<Range> selected = selection_range();
-    if (!selected || positions_equal(selected->start, selected->end)) {
+    if (!selected || (selected->start == selected->end)) {
         return false;
     }
     Range range = *selected;

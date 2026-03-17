@@ -6,7 +6,16 @@
 #include <charconv>
 #include <array>
 #include <map>
+#ifdef _WIN32
+// Enable ncurses-compatible mode in PDCurses
+#ifndef NCURSES_MOUSE_VERSION
+#define NCURSES_MOUSE_VERSION 1
+#endif
+#endif
 #include <curses.h>
+#ifdef _WIN32
+#include "pdcurses_compat.hpp"
+#endif
 #include <stdexcept>
 
 namespace {

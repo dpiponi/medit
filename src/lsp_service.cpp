@@ -358,7 +358,7 @@ std::vector<Range> selection_ranges_from_result(const JsonValue &result, const E
             auto end = range_value->find("end");
             if (start != range_value->end() && end != range_value->end() && start->is_object() && end->is_object()) {
                 Range range{position_from_lsp(*start, core), position_from_lsp(*end, core)};
-                if (!positions_equal(range.start, range.end)) {
+                if (!(range.start == range.end)) {
                     ranges.push_back(normalized_range(range));
                 }
             }
@@ -372,7 +372,7 @@ std::vector<Range> selection_ranges_from_result(const JsonValue &result, const E
     }
 
     ranges.erase(std::unique(ranges.begin(), ranges.end(), [](const Range &left, const Range &right) {
-        return positions_equal(left.start, right.start) && positions_equal(left.end, right.end);
+        return (left.start == right.start) && (left.end == right.end);
     }), ranges.end());
     return ranges;
 }

@@ -11,6 +11,9 @@
 struct Position {
     std::size_t row = 0;
     std::size_t column = 0;
+
+    // Comparison operators - lexicographic order (row first, then column)
+    auto operator<=>(const Position &) const = default;
 };
 
 struct Range {
@@ -156,19 +159,18 @@ struct EditorCommandAccess {
     static Position position_after_text(const EditorCore &core, Position position, const std::u32string &text);
 };
 
-std::u32string utf8_to_u32(const std::string &text);
-std::string u32_to_utf8(const std::u32string &text);
-std::string file_uri_for_path(const std::string &path);
-std::string file_path_from_uri(const std::string &uri);
-std::string normalize_document_uri(const std::string &uri);
-bool position_less_than(Position left, Position right);
-bool positions_equal(Position left, Position right);
-Range normalized_range(Range range);
-bool range_contains(const Range &range, Position position);
+// Utility functions extracted to separate modules
+#include "text_encoding_utils.hpp"
+#include "uri_utils.hpp"
+#include "position_utils.hpp"
 
 class EditorCore {
   public:
     EditorCore();
+    EditorCore(const EditorCore &) = delete;
+    EditorCore &operator=(const EditorCore &) = delete;
+    EditorCore(EditorCore &&) = default;
+    EditorCore &operator=(EditorCore &&) = default;
 
     const std::vector<std::u32string> &lines() const;
     const std::optional<std::string> &file_path() const;

@@ -47,37 +47,50 @@ std::optional<std::size_t> parse_optional_row_param(const JsonValue &params, con
 EditorBuffer *control_target_buffer(EditorState &state, const JsonValue &params) {
     std::optional<std::size_t> buffer_id = parse_optional_buffer_id(params);
     if (!buffer_id) {
-        return &active_buffer(state);
+        return &state.active_buffer();
     }
     return state.session.find_buffer_by_id(*buffer_id);
 }
 
-SelectionMode json_to_selection_mode(const JsonValue &value) {
+// Generic template for parsing JSON string to enum with validation
+template<typename EnumType>
+EnumType json_to_enum(const JsonValue &value,
+                      const std::string &type_name,
+                      const std::map<std::string, EnumType> &mapping) {
     if (!value.is_string()) {
-        throw std::runtime_error("selection mode must be a string");
+        throw std::runtime_error(type_name + " must be a string");
     }
-    const std::string mode = value.get<std::string>();
-    if (mode == "character") {
-        return SelectionMode::Character;
+    const std::string str_value = value.get<std::string>();
+    auto it = mapping.find(str_value);
+    if (it != mapping.end()) {
+        return it->second;
     }
-    if (mode == "line") {
-        return SelectionMode::Line;
+
+    // Build error message with valid options
+    std::string valid_options;
+    for (const auto &[key, _] : mapping) {
+        if (!valid_options.empty()) {
+            valid_options += "' or '";
+        }
+        valid_options += key;
     }
-    throw std::runtime_error("selection mode must be 'character' or 'line'");
+    throw std::runtime_error(type_name + " must be '" + valid_options + "'");
+}
+
+SelectionMode json_to_selection_mode(const JsonValue &value) {
+    static const std::map<std::string, SelectionMode> mapping = {
+        {"character", SelectionMode::Character},
+        {"line", SelectionMode::Line}
+    };
+    return json_to_enum(value, "selection mode", mapping);
 }
 
 WindowSplitDirection json_to_split_direction(const JsonValue &value) {
-    if (!value.is_string()) {
-        throw std::runtime_error("direction must be a string");
-    }
-    const std::string direction = value.get<std::string>();
-    if (direction == "horizontal") {
-        return WindowSplitDirection::Horizontal;
-    }
-    if (direction == "vertical") {
-        return WindowSplitDirection::Vertical;
-    }
-    throw std::runtime_error("direction must be 'horizontal' or 'vertical'");
+    static const std::map<std::string, WindowSplitDirection> mapping = {
+        {"horizontal", WindowSplitDirection::Horizontal},
+        {"vertical", WindowSplitDirection::Vertical}
+    };
+    return json_to_enum(value, "direction", mapping);
 }
 
 std::string json_to_open_line_direction(const JsonValue &value) {
@@ -129,7 +142,7 @@ std::string handle_control_request(EditorState &state, std::string_view request_
 
         if (method == "status") {
             JsonValue result = {
-                {"active_buffer_id", active_buffer(state).id},
+                {"active_buffer_id", state.active_buffer().id},
                 {"active_window_id", state.windows.active_window_id()},
                 {"buffer_count", state.session.buffer_count()},
                 {"window_count", state.windows.window_count()},
@@ -200,29 +213,29 @@ std::string handle_control_request(EditorState &state, std::string_view request_
         }
 
         if (method == "get_selection") {
-            std::optional<Range> selection = displayed_selection_range(state, state.windows.active_window_id());
+            std::optional<Range> selection = state.displayed_selection_range(state.windows.active_window_id());
             if (!selection) {
                 return success_control_result(
                            JsonValue{{"selection", nullptr}, {"selection_mode", nullptr}, {"text", ""}})
                     .dump();
             }
-            std::u32string text = active_core(state).read_text(*selection);
+            std::u32string text = state.active_core().read_text(*selection);
             return success_control_result(JsonValue{
                 {"selection", json_range(*selection)},
-                {"selection_mode", selection_mode_name(active_core(state).selection_mode())},
+                {"selection_mode", selection_mode_name(state.active_core().selection_mode())},
                 {"text", u32_to_utf8(text)},
             })
                 .dump();
         }
 
         if (method == "get_cursor") {
-            std::optional<Range> selection = displayed_selection_range(state, state.windows.active_window_id());
+            std::optional<Range> selection = state.displayed_selection_range(state.windows.active_window_id());
             JsonValue result = {
                 {"window_id", state.windows.active_window_id()},
-                {"buffer_id", active_window(state).buffer_id},
-                {"cursor", json_position(displayed_cursor(state, state.windows.active_window_id()))},
+                {"buffer_id", state.active_window().buffer_id},
+                {"cursor", json_position(state.displayed_cursor(state.windows.active_window_id()))},
                 {"selection", selection ? json_range(*selection) : JsonValue(nullptr)},
-                {"selection_mode", selection ? JsonValue(selection_mode_name(active_core(state).selection_mode()))
+                {"selection_mode", selection ? JsonValue(selection_mode_name(state.active_core().selection_mode()))
                                              : JsonValue(nullptr)},
             };
             return success_control_result(std::move(result)).dump();
@@ -238,8 +251,8 @@ std::string handle_control_request(EditorState &state, std::string_view request_
                 return error_control_result("position is required").dump();
             }
             buffer->core.set_cursor(json_to_position(*position));
-            if (buffer->id == active_window(state).buffer_id) {
-                sync_window_view_from_core(state, state.windows.active_window_id());
+            if (buffer->id == state.active_window().buffer_id) {
+                state.sync_window_view_from_core(state.windows.active_window_id());
             }
             return success_control_result(json_buffer_summary(state, *buffer)).dump();
         }
@@ -261,8 +274,8 @@ std::string handle_control_request(EditorState &state, std::string_view request_
             if (!buffer->core.set_selection_range(json_to_range(*range), selection_mode)) {
                 return error_control_result("failed to set selection").dump();
             }
-            if (buffer->id == active_window(state).buffer_id) {
-                sync_window_view_from_core(state, state.windows.active_window_id());
+            if (buffer->id == state.active_window().buffer_id) {
+                state.sync_window_view_from_core(state.windows.active_window_id());
             }
             return success_control_result(json_buffer_summary(state, *buffer)).dump();
         }
@@ -273,8 +286,8 @@ std::string handle_control_request(EditorState &state, std::string_view request_
                 return error_control_result("buffer not found").dump();
             }
             buffer->core.clear_selection();
-            if (buffer->id == active_window(state).buffer_id) {
-                sync_window_view_from_core(state, state.windows.active_window_id());
+            if (buffer->id == state.active_window().buffer_id) {
+                state.sync_window_view_from_core(state.windows.active_window_id());
             }
             return success_control_result(json_buffer_summary(state, *buffer)).dump();
         }
@@ -288,7 +301,7 @@ std::string handle_control_request(EditorState &state, std::string_view request_
             if (!buffer) {
                 return error_control_result("could not open file").dump();
             }
-            show_buffer_in_active_window(state, buffer->id);
+            state.show_buffer_in_active_window(buffer->id);
             return success_control_result(json_buffer_summary(state, *buffer)).dump();
         }
 
@@ -300,9 +313,9 @@ std::string handle_control_request(EditorState &state, std::string_view request_
             if (!state.session.switch_to_id(*buffer_id)) {
                 return error_control_result("buffer not found").dump();
             }
-            show_buffer_in_active_window(state, *buffer_id);
-            set_status(state, prefixed_message("Switched to ", active_core(state).display_file_name()));
-            return success_control_result(json_buffer_summary(state, active_buffer(state))).dump();
+            state.show_buffer_in_active_window(*buffer_id);
+            state.set_status(prefixed_message("Switched to ", state.active_core().display_file_name()));
+            return success_control_result(json_buffer_summary(state, state.active_buffer())).dump();
         }
 
         if (method == "apply_text_edits") {
@@ -329,8 +342,8 @@ std::string handle_control_request(EditorState &state, std::string_view request_
             if (!buffer->core.apply_text_edits(parsed_edits)) {
                 return error_control_result("failed to apply edits").dump();
             }
-            if (buffer->id == active_buffer(state).id) {
-                sync_window_view_from_core(state, state.windows.active_window_id());
+            if (buffer->id == state.active_buffer().id) {
+                state.sync_window_view_from_core(state.windows.active_window_id());
             }
             return success_control_result(json_buffer_summary(state, *buffer)).dump();
         }
@@ -366,8 +379,8 @@ std::string handle_control_request(EditorState &state, std::string_view request_
                     buffer->core.open_line_above();
                 }
             }
-            if (buffer->id == active_window(state).buffer_id) {
-                sync_window_view_from_core(state, state.windows.active_window_id());
+            if (buffer->id == state.active_window().buffer_id) {
+                state.sync_window_view_from_core(state.windows.active_window_id());
             }
             return success_control_result(json_buffer_summary(state, *buffer)).dump();
         }
@@ -375,7 +388,7 @@ std::string handle_control_request(EditorState &state, std::string_view request_
         if (method == "close_buffer") {
             std::optional<std::size_t> buffer_id = parse_optional_buffer_id(params);
             const bool force = params.value("force", false);
-            const std::size_t target_buffer_id = buffer_id.value_or(active_window(state).buffer_id);
+            const std::size_t target_buffer_id = buffer_id.value_or(state.active_window().buffer_id);
             EditorBuffer *target = state.session.find_buffer_by_id(target_buffer_id);
             if (!target) {
                 return error_control_result("buffer not found").dump();
@@ -389,21 +402,21 @@ std::string handle_control_request(EditorState &state, std::string_view request_
             for (const EditorEvent &event : closed_events) {
                 state.runtime.dispatch_editor_event(event);
             }
-            state.buffer_ui.erase(target_buffer_id);
-            state.syntax_ui.erase(target_buffer_id);
+            state.buffer_ui_map.erase(target_buffer_id);
+            state.syntax_ui_map.erase(target_buffer_id);
             const std::size_t replacement_buffer_id = state.session.active_buffer_id();
             state.windows.replace_buffer_id(target_buffer_id, replacement_buffer_id);
             for (const EditorWindow &window : state.windows.windows()) {
                 if (window.buffer_id == replacement_buffer_id) {
-                    window_ui(state, window.id) = EditorState::WindowUiState{};
+                    state.window_ui(window.id) = EditorState::WindowUiState{};
                 }
             }
-            sync_active_window_buffer(state);
-            active_buffer_ui(state);
-            set_status(state, prefixed_message("Closed ", closed_name));
+            state.sync_active_window_buffer();
+            state.active_buffer_ui();
+            state.set_status(prefixed_message("Closed ", closed_name));
             return success_control_result(JsonValue{
                 {"closed_buffer_id", target_buffer_id},
-                {"active_buffer", json_buffer_summary(state, active_buffer(state))},
+                {"active_buffer", json_buffer_summary(state, state.active_buffer())},
             })
                 .dump();
         }
@@ -416,10 +429,10 @@ std::string handle_control_request(EditorState &state, std::string_view request_
             if (!state.windows.find_window(*window_id)) {
                 return error_control_result("window not found").dump();
             }
-            focus_window(state, *window_id);
+            state.focus_window(*window_id);
             return success_control_result(JsonValue{
                 {"window_id", state.windows.active_window_id()},
-                {"buffer", json_buffer_summary(state, active_buffer(state))},
+                {"buffer", json_buffer_summary(state, state.active_buffer())},
             })
                 .dump();
         }
@@ -429,12 +442,12 @@ std::string handle_control_request(EditorState &state, std::string_view request_
             if (direction == params.end()) {
                 return error_control_result("direction is required").dump();
             }
-            if (!split_active_window(state, json_to_split_direction(*direction))) {
+            if (!state.split_active_window(json_to_split_direction(*direction))) {
                 return error_control_result("could not split window").dump();
             }
             return success_control_result(JsonValue{
                 {"window_id", state.windows.active_window_id()},
-                {"buffer", json_buffer_summary(state, active_buffer(state))},
+                {"buffer", json_buffer_summary(state, state.active_buffer())},
             })
                 .dump();
         }
@@ -445,8 +458,8 @@ std::string handle_control_request(EditorState &state, std::string_view request_
             if (!state.windows.find_window(closing_window_id)) {
                 return error_control_result("window not found").dump();
             }
-            focus_window(state, closing_window_id);
-            if (!close_active_window(state) && !state.should_quit) {
+            state.focus_window(closing_window_id);
+            if (!state.close_active_window() && !state.should_quit) {
                 return error_control_result("could not close window").dump();
             }
             return success_control_result(JsonValue{
@@ -459,13 +472,13 @@ std::string handle_control_request(EditorState &state, std::string_view request_
         }
 
         if (method == "close_other_windows") {
-            if (!close_other_windows(state)) {
+            if (!state.close_other_windows()) {
                 return error_control_result("no other windows").dump();
             }
             return success_control_result(JsonValue{
                 {"active_window_id", state.windows.active_window_id()},
                 {"window_count", state.windows.window_count()},
-                {"buffer", json_buffer_summary(state, active_buffer(state))},
+                {"buffer", json_buffer_summary(state, state.active_buffer())},
             })
                 .dump();
         }
@@ -500,11 +513,11 @@ void run_editor(EditorState &state) {
             state.runtime.dispatch_editor_events(buffer.core);
         }
         state.runtime.poll_services();
-        handle_service_events(state);
+        state.handle_service_events();
         state.control_server.poll([&state](std::string_view request) { return handle_control_request(state, request); });
         render_frame(state);
         update_input_timeout(state);
-        handle_input(state);
+        state.handle_input();
     }
 }
 
@@ -517,7 +530,7 @@ std::optional<std::string> open_startup_files(EditorState &state, int argc, char
         std::filesystem::path candidate = expand_user_path(argv[1]);
         if (std::filesystem::is_directory(candidate)) {
             std::filesystem::path normalized = std::filesystem::absolute(candidate).lexically_normal();
-            set_status(state, "Pick file from " + normalized.string());
+            state.set_status("Pick file from " + normalized.string());
             return normalized.string();
         }
     }
@@ -528,17 +541,17 @@ std::optional<std::string> open_startup_files(EditorState &state, int argc, char
         EditorBuffer *buffer = state.session.open_file(path, index == 1);
         if (buffer) {
             if (index == 1) {
-                show_buffer_in_active_window(state, buffer->id);
+                state.show_buffer_in_active_window(buffer->id);
             }
-            set_status(state, "Opened " + path);
+            state.set_status("Opened " + path);
         } else {
             last_failure = "Could not open file: " + path;
         }
     }
 
-    active_buffer_ui(state);
+    state.active_buffer_ui();
     if (!last_failure.empty()) {
-        set_status(state, last_failure);
+        state.set_status(last_failure);
     }
     return std::nullopt;
 }
