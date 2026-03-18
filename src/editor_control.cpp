@@ -395,7 +395,7 @@ std::string handle_control_request(EditorState &state, std::string_view request_
             }
             const std::string closed_name = target->core.display_file_name();
             state.session.switch_to_id(target_buffer_id);
-            std::vector<EditorEvent> closed_events;
+            EditorEvents closed_events;
             if (!state.session.close_active_buffer(force, &closed_events)) {
                 return error_control_result("unsaved changes; pass force=true to close").dump();
             }

@@ -42,7 +42,7 @@ void LspService::handle_request(const ServiceRequest &) {
     // No-op
 }
 
-std::vector<ServiceEvent> LspService::poll() {
+ServiceEvents LspService::poll() {
     return {};
 }
 

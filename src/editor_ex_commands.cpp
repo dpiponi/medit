@@ -1,4 +1,5 @@
 #include "editor_internal.hpp"
+#include "editor_ex_command_completion.hpp"
 
 #include "logger.hpp"
 #include "process_utils.hpp"
@@ -13,7 +14,6 @@
 #include <fstream>
 #include <sstream>
 #include <string_view>
-
 #if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
 #include <unistd.h>
@@ -131,7 +131,7 @@ void EditorState::handle_buffer_delete_command(bool force) {
     std::size_t closing_id = active_window().buffer_id;
     std::string closing_name = active_core().display_file_name();
     session.switch_to_id(closing_id);
-    std::vector<EditorEvent> closed_events;
+    EditorEvents closed_events;
     if (!session.close_active_buffer(force, &closed_events)) {
         set_status("Unsaved changes; use :bd! to close");
         return;
@@ -815,8 +815,8 @@ void EditorState::handle_substitute_command(const SubstituteCommand &command) {
     set_status(count_label(substitutions, "substitution"));
 }
 
-std::vector<PopupMenuItem> command_completion_items() {
-    std::vector<PopupMenuItem> items;
+PopupMenuItems command_completion_items() {
+    PopupMenuItems items;
     items.reserve(kNamedEditorCommands.size() + 2);
     for (const NamedEditorCommandInfo &command : kNamedEditorCommands) {
         items.push_back(
@@ -916,6 +916,20 @@ void EditorState::show_command_completion() {
         return;
     }
     std::string command = u32_to_utf8(command_buffer);
+    if (std::optional<EditFileCompletionResult> completion = complete_edit_file_command(command)) {
+        if (completion->items.empty()) {
+            set_status("No file matches");
+            return;
+        }
+        show_menu_popup(
+            *this,
+            "Files",
+            std::move(completion->items),
+            PopupApplyTarget::CommandBuffer,
+            utf8_to_u32(completion->initial_filter),
+            PopupFilterMode::PrefixLabelOnly);
+        return;
+    }
     if (command.contains(' ') || command.contains('\t')) {
         set_status("Complete the command name only");
         return;

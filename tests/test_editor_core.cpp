@@ -1,6 +1,7 @@
 #include "config.hpp"
 #include "editor_commands.hpp"
 #include "editor_core.hpp"
+#include "editor_ex_command_completion.hpp"
 #include "editor_session.hpp"
 #include "editor_windows.hpp"
 #include "keybindings.hpp"
@@ -23,6 +24,8 @@
 #include <string>
 #include <thread>
 #include <unistd.h>
+
+import theme;
 
 namespace {
 
@@ -1505,6 +1508,48 @@ void test_string_utilities() {
     expect(ellipsize_middle("abcdefghij", 7) == "ab...ij", "ellipsize should preserve both ends");
 }
 
+void test_popup_selection_accept_tokens() {
+    expect(popup_selection_accept_token("tab"), "tab should accept popup selections");
+    expect(popup_selection_accept_token("enter"), "enter should still accept popup selections");
+    expect(!popup_selection_accept_token("shift-tab"), "shift-tab should remain a navigation key");
+    expect(!popup_selection_accept_token("down"), "arrow navigation should not accept popup selections");
+}
+
+void test_edit_command_file_completion() {
+    std::filesystem::path root = std::filesystem::temp_directory_path() / "medit_edit_completion";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "dir");
+    {
+        std::ofstream(root / "alpha.txt") << "alpha\n";
+    }
+    {
+        std::ofstream(root / "beta.txt") << "beta\n";
+    }
+
+    std::filesystem::path previous = std::filesystem::current_path();
+    std::filesystem::current_path(root);
+
+    std::optional<EditFileCompletionResult> filtered = complete_edit_file_command("e a");
+    expect(filtered.has_value(), "edit completion should resolve for the :e command");
+    expect(filtered->initial_filter == "a", "edit completion should keep the current path fragment as the filter");
+    expect(filtered->items.size() == 3, "edit completion should list directory entries before popup filtering");
+    const PopupMenuItem &alpha_item = filtered->items[1];
+    expect(alpha_item.label == "alpha.txt", "edit completion should include matching file names");
+    expect(alpha_item.insert_text == "e alpha.txt", "edit completion should replace the command buffer with the completed path");
+
+    std::optional<EditFileCompletionResult> unfiltered = complete_edit_file_command("e ");
+    expect(unfiltered.has_value(), "edit completion should activate after the command name and a space");
+    expect(!unfiltered->items.empty(), "edit completion should list directory entries");
+    expect(unfiltered->items[0].label == "dir/", "edit completion should sort directories before files");
+
+    std::optional<EditFileCompletionResult> nested = complete_edit_file_command("e dir/");
+    expect(nested.has_value(), "edit completion should support nested directory prefixes");
+    expect(nested->initial_filter == "dir/", "nested completion should keep the typed directory prefix");
+
+    std::filesystem::current_path(previous);
+    std::filesystem::remove_all(root);
+}
+
 void test_lsp_message_framing() {
     std::string payload = "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}";
     std::string encoded = encode_lsp_message(payload);
@@ -2043,6 +2088,8 @@ int main() {
         test_cpp_syntax_highlighting();
         test_file_uri_normalization();
         test_string_utilities();
+        test_popup_selection_accept_tokens();
+        test_edit_command_file_completion();
         test_lsp_message_framing();
         test_lsp_launch_pipe_cleanup();
         test_lsp_service_roundtrip();

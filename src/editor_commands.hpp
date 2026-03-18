@@ -4,6 +4,7 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 enum class EditorCommandType {
@@ -32,18 +33,20 @@ struct PopupMenuItem {
     std::optional<Range> replace_range;
 };
 
+using PopupMenuItems = std::vector<PopupMenuItem>;
+
 struct EditorCommand {
     EditorCommandType type = EditorCommandType::SetStatusMessage;
     std::optional<std::string> document_uri;
-    std::vector<Diagnostic> diagnostics;
-    std::vector<InlineAnnotation> annotations;
+    Diagnostics diagnostics;
+    InlineAnnotations annotations;
     std::optional<Position> position;
     std::optional<Range> selection_range;
     std::vector<Range> selection_ranges;
     std::string title;
     std::string message;
     PopupKind popup_kind = PopupKind::Text;
-    std::vector<PopupMenuItem> popup_items;
+    PopupMenuItems popup_items;
 };
 
 struct EditorCommandResult {
@@ -52,3 +55,4 @@ struct EditorCommandResult {
 };
 
 EditorCommandResult apply_editor_command(EditorCore &core, const EditorCommand &command);
+bool popup_selection_accept_token(std::string_view token);

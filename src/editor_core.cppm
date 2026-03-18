@@ -1,41 +1,42 @@
-#pragma once
+module;
 
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
-using Lines = std::vector<std::u32string>;
+export module editor_core;
 
-struct Position {
+export using Lines = std::vector<std::u32string>;
+
+export struct Position {
     std::size_t row = 0;
     std::size_t column = 0;
 
-    // Comparison operators - lexicographic order (row first, then column)
     auto operator<=>(const Position &) const = default;
 };
 
-struct Range {
+export struct Range {
     Position start;
     Position end;
 };
 
-enum class SelectionMode {
+export enum class SelectionMode {
     Character,
     Line,
 };
 
-struct EditorViewState {
+export struct EditorViewState {
     Position cursor;
     std::optional<Position> selection_anchor;
     SelectionMode selection_mode = SelectionMode::Character;
     std::size_t preferred_column = 0;
 };
 
-enum class StyleRole {
+export enum class StyleRole {
     DefaultText,
     LineNumber,
     WindowDivider,
@@ -64,7 +65,7 @@ enum class StyleRole {
     DiagnosticSelected,
 };
 
-struct TextStyle {
+export struct TextStyle {
     short foreground = -1;
     short background = -1;
     bool bold = false;
@@ -72,50 +73,50 @@ struct TextStyle {
     bool reverse = false;
 };
 
-struct HighlightSpan {
+export struct HighlightSpan {
     Range range;
     StyleRole role = StyleRole::DefaultText;
     int priority = 0;
 };
 
-using HighlightSpans = std::vector<HighlightSpan>;
+export using HighlightSpans = std::vector<HighlightSpan>;
 
-struct TextEdit {
+export struct TextEdit {
     Range range;
     std::u32string text;
 };
 
-struct Utf16Position {
+export struct Utf16Position {
     std::size_t row = 0;
     std::size_t column = 0;
 };
 
-enum class DiagnosticSeverity {
+export enum class DiagnosticSeverity {
     Error,
     Warning,
 };
 
-enum class AnnotationSeverity {
+export enum class AnnotationSeverity {
     Info,
     Warning,
     Error,
 };
 
-enum class AnnotationKind {
+export enum class AnnotationKind {
     Note,
     Diagnostic,
 };
 
-struct Diagnostic {
+export struct Diagnostic {
     Range range;
     DiagnosticSeverity severity = DiagnosticSeverity::Error;
     std::string source;
     std::u32string message;
 };
 
-using Diagnostics = std::vector<Diagnostic>;
+export using Diagnostics = std::vector<Diagnostic>;
 
-struct InlineAnnotation {
+export struct InlineAnnotation {
     Range range;
     AnnotationSeverity severity = AnnotationSeverity::Info;
     AnnotationKind kind = AnnotationKind::Note;
@@ -123,9 +124,9 @@ struct InlineAnnotation {
     std::u32string text;
 };
 
-using InlineAnnotations = std::vector<InlineAnnotation>;
+export using InlineAnnotations = std::vector<InlineAnnotation>;
 
-enum class EditorEventType {
+export enum class EditorEventType {
     DocumentOpened,
     DocumentChanged,
     DocumentSaved,
@@ -135,7 +136,7 @@ enum class EditorEventType {
     AnnotationsChanged,
 };
 
-struct EditorEvent {
+export struct EditorEvent {
     EditorEventType type = EditorEventType::DocumentChanged;
     std::string document_uri;
     std::size_t document_version = 0;
@@ -144,18 +145,18 @@ struct EditorEvent {
     std::u32string text;
 };
 
-using EditorEvents = std::vector<EditorEvent>;
+export using EditorEvents = std::vector<EditorEvent>;
 
-class EditorCore;
+export class EditorCore;
 
-struct EditCommand {
+export struct EditCommand {
     virtual ~EditCommand() = default;
     virtual void apply(EditorCore &core) = 0;
     virtual void undo(EditorCore &core) = 0;
     virtual const char *name() const = 0;
 };
 
-struct EditorCommandAccess {
+export struct EditorCommandAccess {
     static void insert_codepoint(EditorCore &core, Position position, char32_t codepoint);
     static void remove_codepoint(EditorCore &core, Position position);
     static void split_line(EditorCore &core, Position position);
@@ -170,12 +171,23 @@ struct EditorCommandAccess {
     static Position position_after_text(const EditorCore &core, Position position, const std::u32string &text);
 };
 
-// Utility functions extracted to separate modules
-#include "text_encoding_utils.hpp"
-#include "uri_utils.hpp"
-#include "position_utils.hpp"
+export std::u32string utf8_to_u32(const std::string &text);
+export std::string u32_to_utf8(const std::u32string &text);
 
-class EditorCore {
+export std::string file_uri_for_path(const std::string &path);
+export std::string file_path_from_uri(const std::string &uri);
+export std::string normalize_document_uri(const std::string &uri);
+export std::string percent_encode_path(const std::string &path);
+export std::string percent_decode_path(const std::string &path);
+
+export bool position_less_than(Position left, Position right);
+export bool positions_equal(Position left, Position right);
+export Range normalized_range(Range range);
+export bool range_contains(const Range &range, Position position);
+export bool ranges_overlap(const Range &left, const Range &right);
+export Range full_document_range(const Lines &lines);
+
+export class EditorCore {
   public:
     EditorCore();
     EditorCore(const EditorCore &) = delete;

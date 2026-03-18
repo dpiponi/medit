@@ -39,7 +39,7 @@ class EditorSession {
     bool switch_to_id(std::size_t id);
     bool next_buffer();
     bool previous_buffer();
-    bool close_active_buffer(bool force, std::vector<EditorEvent> *closed_events = nullptr);
+    bool close_active_buffer(bool force, EditorEvents *closed_events = nullptr);
 
     EditorBuffer *find_buffer_by_id(std::size_t id);
     const EditorBuffer *find_buffer_by_id(std::size_t id) const;

@@ -19,7 +19,7 @@ std::uint64_t next_untitled_id() {
     return next_id++;
 }
 
-std::u32string buffer_text(const std::vector<std::u32string> &lines) {
+std::u32string buffer_text(const Lines &lines) {
     std::u32string text;
     for (std::size_t row = 0; row < lines.size(); ++row) {
         text += lines[row];
@@ -377,7 +377,7 @@ EditorCore::EditorCore() {
     document_uri_ = "untitled://medit/" + std::to_string(untitled_id_);
 }
 
-const std::vector<std::u32string> &EditorCore::lines() const {
+const Lines &EditorCore::lines() const {
     return lines_;
 }
 
@@ -405,12 +405,12 @@ void EditorCore::restore_view_state(const EditorViewState &view_state, bool emit
     restore_view_state_internal(view_state, emit_cursor_event);
 }
 
-const std::vector<Diagnostic> &EditorCore::diagnostics() const {
+const Diagnostics &EditorCore::diagnostics() const {
     return document_diagnostics(document_uri_);
 }
 
-const std::vector<Diagnostic> &EditorCore::document_diagnostics(const std::string &document_uri) const {
-    static const std::vector<Diagnostic> kEmptyDiagnostics;
+const Diagnostics &EditorCore::document_diagnostics(const std::string &document_uri) const {
+    static const Diagnostics kEmptyDiagnostics;
     auto found = diagnostics_by_uri_.find(document_uri);
     if (found == diagnostics_by_uri_.end()) {
         return kEmptyDiagnostics;
@@ -418,12 +418,12 @@ const std::vector<Diagnostic> &EditorCore::document_diagnostics(const std::strin
     return found->second;
 }
 
-const std::vector<InlineAnnotation> &EditorCore::annotations() const {
+const InlineAnnotations &EditorCore::annotations() const {
     return document_annotations(document_uri_);
 }
 
-const std::vector<InlineAnnotation> &EditorCore::document_annotations(const std::string &document_uri) const {
-    static const std::vector<InlineAnnotation> kEmptyAnnotations;
+const InlineAnnotations &EditorCore::document_annotations(const std::string &document_uri) const {
+    static const InlineAnnotations kEmptyAnnotations;
     auto found = annotations_by_uri_.find(document_uri);
     if (found == annotations_by_uri_.end()) {
         return kEmptyAnnotations;
@@ -431,8 +431,8 @@ const std::vector<InlineAnnotation> &EditorCore::document_annotations(const std:
     return found->second;
 }
 
-std::vector<InlineAnnotation> EditorCore::projected_annotations() const {
-    std::vector<InlineAnnotation> projected = annotations();
+InlineAnnotations EditorCore::projected_annotations() const {
+    InlineAnnotations projected = annotations();
     for (const Diagnostic &diagnostic : diagnostics()) {
         AnnotationSeverity severity =
             diagnostic.severity == DiagnosticSeverity::Error ? AnnotationSeverity::Error : AnnotationSeverity::Warning;
@@ -491,12 +491,12 @@ void EditorCore::set_yank_buffer(std::u32string text, SelectionMode mode) {
     yank_mode_ = mode;
 }
 
-const std::vector<EditorEvent> &EditorCore::pending_events() const {
+const EditorEvents &EditorCore::pending_events() const {
     return pending_events_;
 }
 
-std::vector<EditorEvent> EditorCore::take_events() {
-    std::vector<EditorEvent> events = std::move(pending_events_);
+EditorEvents EditorCore::take_events() {
+    EditorEvents events = std::move(pending_events_);
     pending_events_.clear();
     return events;
 }
@@ -619,7 +619,7 @@ void EditorCore::emit_document_saved() {
     emit_event({EditorEventType::DocumentSaved, document_uri_, document_version_, cursor_, std::nullopt, U""});
 }
 
-void EditorCore::emit_document_changed(const std::vector<std::u32string> &before_lines) {
+void EditorCore::emit_document_changed(const Lines &before_lines) {
     emit_event({
         EditorEventType::DocumentChanged,
         document_uri_,
@@ -884,7 +884,7 @@ void EditorCore::reset_history() {
     saved_document_version_ = 0;
 }
 
-void EditorCore::set_diagnostics(std::vector<Diagnostic> diagnostics) {
+void EditorCore::set_diagnostics(Diagnostics diagnostics) {
     set_document_diagnostics(document_uri_, std::move(diagnostics));
 }
 
@@ -892,7 +892,7 @@ void EditorCore::clear_diagnostics() {
     clear_document_diagnostics(document_uri_);
 }
 
-void EditorCore::set_document_diagnostics(const std::string &document_uri, std::vector<Diagnostic> diagnostics) {
+void EditorCore::set_document_diagnostics(const std::string &document_uri, Diagnostics diagnostics) {
     diagnostics_by_uri_[document_uri] = std::move(diagnostics);
     ++diagnostics_revision_;
     if (document_uri == document_uri_) {
@@ -910,7 +910,7 @@ void EditorCore::clear_document_diagnostics(const std::string &document_uri) {
     }
 }
 
-void EditorCore::set_annotations(std::vector<InlineAnnotation> annotations) {
+void EditorCore::set_annotations(InlineAnnotations annotations) {
     set_document_annotations(document_uri_, std::move(annotations));
 }
 
@@ -918,7 +918,7 @@ void EditorCore::clear_annotations() {
     clear_document_annotations(document_uri_);
 }
 
-void EditorCore::set_document_annotations(const std::string &document_uri, std::vector<InlineAnnotation> annotations) {
+void EditorCore::set_document_annotations(const std::string &document_uri, InlineAnnotations annotations) {
     annotations_by_uri_[document_uri] = std::move(annotations);
     ++annotations_revision_;
     if (document_uri == document_uri_) {
@@ -944,7 +944,7 @@ bool EditorCore::load_file(const std::string &path) {
     buffer << input.rdbuf();
     std::string contents = buffer.str();
 
-    std::vector<std::u32string> loaded_lines;
+    Lines loaded_lines;
     std::string current_line;
     for (char ch : contents) {
         if (ch == '\n') {
@@ -967,7 +967,7 @@ bool EditorCore::load_file(const std::string &path) {
     std::string previous_uri = document_uri_;
     std::size_t previous_version = document_version_;
 
-    lines_ = loaded_lines.empty() ? std::vector<std::u32string>{U""} : loaded_lines;
+    lines_ = loaded_lines.empty() ? Lines{U""} : loaded_lines;
     file_path_ = path;
     document_uri_ = file_uri_for_path(path);
     cursor_ = {0, 0};
@@ -1447,7 +1447,7 @@ void EditorCore::apply_command(std::unique_ptr<EditCommand> command) {
     }
 
     std::optional<IncrementalDocumentChange> incremental_change = incremental_change_for_command(*command, *this);
-    std::vector<std::u32string> before_lines;
+    Lines before_lines;
     if (!incremental_change) {
         before_lines = lines_;
     }
@@ -1889,7 +1889,7 @@ bool EditorCore::undo() {
     if (undo_stack_.empty()) {
         return false;
     }
-    std::vector<std::u32string> before_lines = lines_;
+    Lines before_lines = lines_;
     Position previous_cursor = cursor_;
     std::unique_ptr<EditCommand> command = std::move(undo_stack_.back());
     undo_stack_.pop_back();
@@ -1910,7 +1910,7 @@ bool EditorCore::redo() {
     if (redo_stack_.empty()) {
         return false;
     }
-    std::vector<std::u32string> before_lines = lines_;
+    Lines before_lines = lines_;
     Position previous_cursor = cursor_;
     std::unique_ptr<EditCommand> command = std::move(redo_stack_.back());
     redo_stack_.pop_back();

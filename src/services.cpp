@@ -81,7 +81,7 @@ void EditorRuntime::dispatch_editor_event(const EditorEvent &event) {
 }
 
 void EditorRuntime::dispatch_editor_events(EditorCore &core) {
-    std::vector<EditorEvent> events = core.take_events();
+    EditorEvents events = core.take_events();
     if (events.empty()) {
         return;
     }
@@ -138,17 +138,17 @@ std::string EditorRuntime::status_summary() const {
     return summary;
 }
 
-const std::vector<ServiceEvent> &EditorRuntime::pending_service_events() const {
+const ServiceEvents &EditorRuntime::pending_service_events() const {
     return pending_service_events_;
 }
 
-std::vector<ServiceEvent> EditorRuntime::take_service_events() {
-    std::vector<ServiceEvent> events = std::move(pending_service_events_);
+ServiceEvents EditorRuntime::take_service_events() {
+    ServiceEvents events = std::move(pending_service_events_);
     pending_service_events_.clear();
     return events;
 }
 
-void EditorRuntime::append_events(std::vector<ServiceEvent> events) {
+void EditorRuntime::append_events(ServiceEvents events) {
     pending_service_events_.insert(
         pending_service_events_.end(),
         std::make_move_iterator(events.begin()),

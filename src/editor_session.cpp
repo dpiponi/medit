@@ -135,7 +135,7 @@ bool EditorSession::previous_buffer() {
     return switch_to_index(next_index);
 }
 
-bool EditorSession::close_active_buffer(bool force, std::vector<EditorEvent> *closed_events) {
+bool EditorSession::close_active_buffer(bool force, EditorEvents *closed_events) {
     if (buffers_.empty()) {
         return false;
     }
@@ -145,7 +145,7 @@ bool EditorSession::close_active_buffer(bool force, std::vector<EditorEvent> *cl
 
     active_buffer().core.close_document();
     if (closed_events) {
-        std::vector<EditorEvent> events = active_buffer().core.take_events();
+        EditorEvents events = active_buffer().core.take_events();
         closed_events->insert(
             closed_events->end(),
             std::make_move_iterator(events.begin()),

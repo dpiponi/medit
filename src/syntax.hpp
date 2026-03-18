@@ -25,8 +25,8 @@ bool operator==(const SyntaxSelection &left, const SyntaxSelection &right);
 bool operator!=(const SyntaxSelection &left, const SyntaxSelection &right);
 
 SyntaxSelection resolve_syntax_selection(const EditorConfig &config, const std::optional<std::string> &file_path);
-std::expected<std::vector<std::vector<HighlightSpan>>, std::string> highlight_document_syntax(
-    const std::vector<std::u32string> &lines,
+std::expected<std::vector<HighlightSpans>, std::string> highlight_document_syntax(
+    const Lines &lines,
     const EditorConfig &config,
     const SyntaxSelection &selection);
 std::string tree_sitter_status_summary(const EditorConfig &config, const std::optional<std::string> &file_path);

@@ -1,5 +1,7 @@
 #include "editor_commands.hpp"
 
+#include <string_view>
+
 EditorCommandResult apply_editor_command(EditorCore &core, const EditorCommand &command) {
     EditorCommandResult result;
 
@@ -58,4 +60,8 @@ EditorCommandResult apply_editor_command(EditorCore &core, const EditorCommand &
     }
 
     return result;
+}
+
+bool popup_selection_accept_token(std::string_view token) {
+    return token == "tab" || token == "enter";
 }

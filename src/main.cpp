@@ -12,6 +12,8 @@
 #include <optional>
 #include <string>
 
+import theme;
+
 int main(int argc, char **argv) {
     initialize_locale();
     EditorState state;
@@ -51,8 +53,6 @@ int main(int argc, char **argv) {
         setup_terminal(state.theme);
         if (startup_picker_root) {
             state.open_startup_file_picker(std::filesystem::path(*startup_picker_root));
-        } else if (argc <= 1) {
-            state.open_startup_file_picker();
         }
         if (state.config.control_socket_path) {
             std::string control_error;

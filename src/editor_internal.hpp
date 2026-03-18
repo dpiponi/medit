@@ -68,13 +68,15 @@ struct VisualRow {
     std::optional<AnnotationEntryView> annotation;
 };
 
+using VisualRows = std::vector<VisualRow>;
+
 struct VisualRowsCache {
     int buffer_cols = -1;
     std::size_t text_revision = std::numeric_limits<std::size_t>::max();
     std::size_t diagnostics_revision = std::numeric_limits<std::size_t>::max();
     std::size_t annotations_revision = std::numeric_limits<std::size_t>::max();
     bool show_diagnostics = true;
-    std::vector<VisualRow> rows;
+    VisualRows rows;
 };
 
 struct SubstituteCommand {
@@ -96,7 +98,7 @@ struct EditorState {
     };
 
     struct PromptHistory {
-        std::vector<std::u32string> entries;
+        Lines entries;
         std::optional<std::size_t> browse_index;
         std::u32string draft;
     };
@@ -142,7 +144,7 @@ struct EditorState {
 
     struct SyntaxUiState {
         SyntaxSelection syntax_selection;
-        std::vector<std::vector<HighlightSpan>> syntax_highlights;
+        std::vector<HighlightSpans> syntax_highlights;
         std::size_t syntax_revision = std::numeric_limits<std::size_t>::max();
         std::size_t pending_syntax_revision = std::numeric_limits<std::size_t>::max();
         std::chrono::steady_clock::time_point syntax_dirty_since{};
@@ -155,7 +157,7 @@ struct EditorState {
         PopupKind kind = PopupKind::Text;
         std::string title;
         std::u32string text;
-        std::vector<PopupMenuItem> items;
+        PopupMenuItems items;
         std::u32string filter;
         std::vector<std::size_t> filtered_indices;
         std::size_t selected_index = 0;
@@ -236,7 +238,7 @@ struct EditorState {
     EditorRuntime runtime;
     EditorConfig config;
     KeyBindings keybindings;
-    Theme theme = load_embedded_theme();
+    Theme theme{};
     WindowManager windows;
     std::map<std::size_t, WindowUiState> window_ui_map;
     std::map<std::size_t, BufferUiState> buffer_ui_map;
@@ -381,9 +383,9 @@ void add_prompt_history_entry(EditorState &state, const std::u32string &entry);
 void browse_prompt_history(EditorState &state, bool previous);
 std::size_t popup_menu_visible_rows_for_screen(int screen_rows);
 bool should_render_diagnostics(const EditorState &state, std::size_t window_id);
-std::vector<std::u32string> wrap_annotation_text(const std::u32string &text, int max_cols);
-const std::vector<VisualRow> &visual_rows_for_window(const EditorState &state, std::size_t window_id, int buffer_cols);
-std::size_t visual_row_for_buffer_row(const std::vector<VisualRow> &rows, std::size_t buffer_row);
+Lines wrap_annotation_text(const std::u32string &text, int max_cols);
+const VisualRows &visual_rows_for_window(const EditorState &state, std::size_t window_id, int buffer_cols);
+std::size_t visual_row_for_buffer_row(const VisualRows &rows, std::size_t buffer_row);
 void show_diagnostics_summary(EditorState &state);
 void navigate_diagnostic(EditorState &state, bool forward);
 void execute_command(EditorState &state);
@@ -433,14 +435,14 @@ void set_search_status(EditorState &state, const std::string &suffix = "");
 void show_menu_popup(
     EditorState &state,
     std::string title,
-    std::vector<PopupMenuItem> items,
+    PopupMenuItems items,
     EditorState::PopupApplyTarget apply_target = EditorState::PopupApplyTarget::BufferText,
     std::u32string initial_filter = U"",
     EditorState::PopupFilterMode filter_mode = EditorState::PopupFilterMode::ContainsLabelOrDetail);
 void show_key_hints_popup(
     EditorState &state,
     std::string title,
-    std::vector<PopupMenuItem> items,
+    PopupMenuItems items,
     bool sticky);
 bool popup_accepts_input(const EditorState &state);
 void dismiss_popup(EditorState &state);

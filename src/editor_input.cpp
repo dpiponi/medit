@@ -370,9 +370,9 @@ std::string key_hint_popup_title(const EditorState &state) {
     return mode_name(state.mode) + " after " + joined_key_sequence(state.pending.tokens);
 }
 
-std::vector<PopupMenuItem> key_hint_popup_items(const EditorState &state) {
+PopupMenuItems key_hint_popup_items(const EditorState &state) {
     std::vector<KeyHint> hints = key_hints_for_prefix(state.keybindings, mode_key(state), state.pending.tokens);
-    std::vector<PopupMenuItem> items;
+    PopupMenuItems items;
     items.reserve(hints.size());
     for (const KeyHint &hint : hints) {
         items.push_back({hint.token, hint.detail, {}, std::nullopt});
@@ -385,7 +385,7 @@ bool popup_is_key_hints(const EditorState &state) {
 }
 
 void refresh_key_hint_popup(EditorState &state, bool sticky) {
-    std::vector<PopupMenuItem> items = key_hint_popup_items(state);
+    PopupMenuItems items = key_hint_popup_items(state);
     if (items.empty()) {
         state.dismiss_popup();
         return;

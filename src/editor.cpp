@@ -20,6 +20,8 @@
 #include <sstream>
 #include <string>
 
+import theme;
+
 #if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
 #include <signal.h>
@@ -405,7 +407,7 @@ std::string make_status_bar_right_text(const EditorCore &core, Position cursor) 
 }
 
 void EditorState::set_status(const std::string &message) {
-status_message = message;
+    status_message = message;
 }
 
 bool reload_editor_configuration(EditorState &state, std::string &error_message);
@@ -429,7 +431,7 @@ popup.visible = true;
 void show_menu_popup(
     EditorState &state,
     std::string title,
-    std::vector<PopupMenuItem> items,
+    PopupMenuItems items,
     EditorState::PopupApplyTarget apply_target,
     std::u32string initial_filter,
     EditorState::PopupFilterMode filter_mode) {
@@ -452,7 +454,7 @@ void show_menu_popup(
 void show_key_hints_popup(
     EditorState &state,
     std::string title,
-    std::vector<PopupMenuItem> items,
+    PopupMenuItems items,
     bool sticky) {
     state.popup.visible = true;
     state.popup.kind = PopupKind::KeyHints;
@@ -615,11 +617,6 @@ bool EditorState::handle_popup_input(const std::string &token) {
         ensure_popup_selection_visible(*this, visible_rows);
         return true;
     }
-    if (token == "tab") {
-        move_popup_selection(*this, true);
-        ensure_popup_selection_visible(*this, visible_rows);
-        return true;
-    }
     if (token == "shift-tab") {
         move_popup_selection(*this, false);
         ensure_popup_selection_visible(*this, visible_rows);
@@ -633,7 +630,7 @@ bool EditorState::handle_popup_input(const std::string &token) {
         }
         return true;
     }
-    if (token == "enter") {
+    if (popup_selection_accept_token(token)) {
         apply_popup_selection(*this);
         return true;
     }
@@ -856,7 +853,7 @@ const std::vector<DiagnosticEntryView> &sorted_diagnostics(const EditorState &st
     }
 
     buffer_ui.sorted_diagnostics.clear();
-    const std::vector<Diagnostic> &source = core.diagnostics();
+    const Diagnostics &source = core.diagnostics();
     buffer_ui.sorted_diagnostics.reserve(source.size());
     for (std::size_t index = 0; index < source.size(); ++index) {
         buffer_ui.sorted_diagnostics.push_back({index, source[index]});
@@ -893,7 +890,7 @@ EditorState::WindowUiState &buffer_ui = active_buffer_ui();
 void focus_diagnostic(EditorState &state, std::size_t diagnostic_index) {
     EditorState::WindowUiState &buffer_ui = state.active_buffer_ui();
     EditorCore &core = state.active_core();
-    const std::vector<Diagnostic> &diagnostics = core.diagnostics();
+    const Diagnostics &diagnostics = core.diagnostics();
     if (diagnostic_index >= diagnostics.size()) {
         return;
     }
@@ -991,7 +988,7 @@ const std::vector<AnnotationEntryView> &sorted_annotations(const EditorState &st
     }
 
     std::vector<AnnotationEntryView> annotations;
-    std::vector<InlineAnnotation> projected = core.projected_annotations();
+    InlineAnnotations projected = core.projected_annotations();
     annotations.reserve(projected.size());
 
     const std::vector<DiagnosticEntryView> &diagnostics = sorted_diagnostics(state, window_id);
@@ -1033,12 +1030,12 @@ const std::vector<AnnotationEntryView> &sorted_annotations(const EditorState &st
     return cache_entry.second;
 }
 
-std::vector<std::u32string> wrap_annotation_text(const std::u32string &text, int max_cols) {
+Lines wrap_annotation_text(const std::u32string &text, int max_cols) {
     if (max_cols <= 1) {
         return {text};
     }
 
-    std::vector<std::u32string> wrapped;
+    Lines wrapped;
     std::u32string current_line;
     int current_width = 0;
     for (char32_t codepoint : text) {
@@ -1061,8 +1058,8 @@ std::vector<std::u32string> wrap_annotation_text(const std::u32string &text, int
     return wrapped;
 }
 
-std::vector<VisualRow> build_visual_rows(const EditorState &state, std::size_t window_id, int buffer_cols) {
-    std::vector<VisualRow> rows;
+VisualRows build_visual_rows(const EditorState &state, std::size_t window_id, int buffer_cols) {
+    VisualRows rows;
     std::vector<AnnotationEntryView> annotations = sorted_annotations(state, window_id);
     std::size_t annotation_index = 0;
 
@@ -1073,7 +1070,7 @@ std::vector<VisualRow> build_visual_rows(const EditorState &state, std::size_t w
             if (range.end.row != row) {
                 break;
             }
-            std::vector<std::u32string> wrapped = wrap_annotation_text(annotations[annotation_index].annotation.text, buffer_cols - 2);
+            Lines wrapped = wrap_annotation_text(annotations[annotation_index].annotation.text, buffer_cols - 2);
             for (std::size_t wrap_index = 0; wrap_index < wrapped.size(); ++wrap_index) {
                 rows.push_back({VisualRowKind::Annotation, row, wrap_index, annotations[annotation_index]});
             }
@@ -1084,7 +1081,7 @@ std::vector<VisualRow> build_visual_rows(const EditorState &state, std::size_t w
     return rows;
 }
 
-const std::vector<VisualRow> &visual_rows_for_window(const EditorState &state, std::size_t window_id, int buffer_cols) {
+const VisualRows &visual_rows_for_window(const EditorState &state, std::size_t window_id, int buffer_cols) {
     EditorBuffer const &buffer = state.window_buffer(window_id);
     EditorState::BufferUiState &buffer_state = const_cast<EditorState &>(state).buffer_ui_map.try_emplace(buffer.id).first->second;
     const EditorCore &core = state.window_core(window_id);
@@ -1105,7 +1102,7 @@ const std::vector<VisualRow> &visual_rows_for_window(const EditorState &state, s
     return cache.rows;
 }
 
-std::size_t visual_row_for_buffer_row(const std::vector<VisualRow> &rows, std::size_t buffer_row) {
+std::size_t visual_row_for_buffer_row(const VisualRows &rows, std::size_t buffer_row) {
     for (std::size_t index = 0; index < rows.size(); ++index) {
         if (rows[index].kind == VisualRowKind::SourceLine && rows[index].buffer_row == buffer_row) {
             return index;
@@ -1700,4 +1697,3 @@ EditorState::WindowUiState &window_state = active_buffer_ui();
     sync_window_view_from_core(windows.active_window_id());
     set_status(forward ? "Next match" : "Previous match");
 }
-

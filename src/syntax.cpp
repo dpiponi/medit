@@ -122,7 +122,7 @@ bool is_cpp_keyword(const std::u32string &token) {
 }
 
 void push_span(
-    std::vector<std::vector<HighlightSpan>> &spans_by_line,
+    std::vector<HighlightSpans> &spans_by_line,
     std::size_t row,
     std::size_t start,
     std::size_t end,
@@ -134,8 +134,8 @@ void push_span(
     spans_by_line[row].push_back({{{row, start}, {row, end}}, role, priority});
 }
 
-std::vector<std::vector<HighlightSpan>> highlight_cpp_document(const std::vector<std::u32string> &lines) {
-    std::vector<std::vector<HighlightSpan>> spans_by_line(lines.size());
+std::vector<HighlightSpans> highlight_cpp_document(const Lines &lines) {
+    std::vector<HighlightSpans> spans_by_line(lines.size());
     bool in_block_comment = false;
 
     for (std::size_t row = 0; row < lines.size(); ++row) {
@@ -532,10 +532,10 @@ StyleRole capture_name_to_style_role(std::string_view capture_name) {
     return StyleRole::DefaultText;
 }
 
-std::expected<std::vector<std::vector<HighlightSpan>>, std::string> highlight_tree_sitter_document(
-    const std::vector<std::u32string> &lines,
+std::expected<std::vector<HighlightSpans>, std::string> highlight_tree_sitter_document(
+    const Lines &lines,
     const SyntaxLanguageConfig &language) {
-    std::vector<std::vector<HighlightSpan>> spans_by_line(lines.size());
+    std::vector<HighlightSpans> spans_by_line(lines.size());
     std::expected<LoadedTreeSitterLanguage *, std::string> loaded = load_tree_sitter_language(language);
     if (!loaded) {
         return std::unexpected(loaded.error());
@@ -659,13 +659,13 @@ SyntaxSelection resolve_syntax_selection(const EditorConfig &config, const std::
     return {};
 }
 
-std::expected<std::vector<std::vector<HighlightSpan>>, std::string> highlight_document_syntax(
-    const std::vector<std::u32string> &lines,
+std::expected<std::vector<HighlightSpans>, std::string> highlight_document_syntax(
+    const Lines &lines,
     const EditorConfig &config,
     const SyntaxSelection &selection) {
     switch (selection.engine) {
         case SyntaxEngine::None:
-            return std::vector<std::vector<HighlightSpan>>(lines.size());
+            return std::vector<HighlightSpans>(lines.size());
         case SyntaxEngine::LegacyCpp:
             return highlight_cpp_document(lines);
         case SyntaxEngine::TreeSitter:
@@ -676,7 +676,7 @@ std::expected<std::vector<std::vector<HighlightSpan>>, std::string> highlight_do
             }
             return std::unexpected("configured syntax language not found: " + selection.language_name);
     }
-    return std::vector<std::vector<HighlightSpan>>(lines.size());
+    return std::vector<HighlightSpans>(lines.size());
 }
 
 std::string tree_sitter_status_summary(const EditorConfig &config, const std::optional<std::string> &file_path) {

@@ -1,5 +1,6 @@
-#include "theme.hpp"
+module;
 
+#include "theme.hpp"
 #include "config.hpp"
 #include "json.hpp"
 
@@ -18,12 +19,15 @@
 #endif
 #include <stdexcept>
 
+module theme;
+
 namespace {
 
 constexpr const char *kEmbeddedDefaultTheme = R"json(
 {
   "default_text": { "foreground": "default", "background": "default", "bold": "false", "underline": "false", "reverse": "false" },
   "line_number": { "foreground": "blue", "background": "default", "bold": "false", "underline": "false", "reverse": "false" },
+  "window_divider": { "foreground": "blue", "background": "default", "bold": "false", "underline": "false", "reverse": "false" },
   "cursor_line": { "foreground": "default", "background": "black", "bold": "false", "underline": "false", "reverse": "false" },
   "cursor_line_number": { "foreground": "cyan", "background": "black", "bold": "true", "underline": "false", "reverse": "false" },
   "status_bar": { "foreground": "black", "background": "cyan", "bold": "true", "underline": "false", "reverse": "false" },
@@ -58,6 +62,7 @@ std::map<std::string, StyleRole> role_names() {
     return {
         {"default_text", StyleRole::DefaultText},
         {"line_number", StyleRole::LineNumber},
+        {"window_divider", StyleRole::WindowDivider},
         {"cursor_line", StyleRole::CursorLine},
         {"cursor_line_number", StyleRole::CursorLineNumber},
         {"status_bar", StyleRole::StatusBar},

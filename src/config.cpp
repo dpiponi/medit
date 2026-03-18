@@ -56,15 +56,15 @@ ClipboardMode parse_clipboard_mode(const std::string &value) {
     throw std::runtime_error("invalid clipboard mode: " + value);
 }
 
-std::optional<std::filesystem::path> first_existing_meditrc_path() {
-    std::filesystem::path local = std::filesystem::current_path() / ".config" / "meditrc";
+std::optional<std::filesystem::path> first_existing_config_path(const std::filesystem::path &relative_path) {
+    std::filesystem::path local = std::filesystem::current_path() / relative_path;
     if (std::filesystem::exists(local)) {
         return local;
     }
 
     const char *home = std::getenv("HOME");
     if (home != nullptr) {
-        std::filesystem::path global = std::filesystem::path(home) / ".config" / "meditrc";
+        std::filesystem::path global = std::filesystem::path(home) / relative_path;
         if (std::filesystem::exists(global)) {
             return global;
         }
@@ -73,21 +73,12 @@ std::optional<std::filesystem::path> first_existing_meditrc_path() {
     return std::nullopt;
 }
 
+std::optional<std::filesystem::path> first_existing_meditrc_path() {
+    return first_existing_config_path(std::filesystem::path(".config") / "meditrc");
+}
+
 std::optional<std::filesystem::path> first_existing_default_config_path(const std::string &file_name) {
-    std::filesystem::path local = std::filesystem::current_path() / ".config" / "medit" / file_name;
-    if (std::filesystem::exists(local)) {
-        return local;
-    }
-
-    const char *home = std::getenv("HOME");
-    if (home != nullptr) {
-        std::filesystem::path global = std::filesystem::path(home) / ".config" / "medit" / file_name;
-        if (std::filesystem::exists(global)) {
-            return global;
-        }
-    }
-
-    return std::nullopt;
+    return first_existing_config_path(std::filesystem::path(".config") / "medit" / file_name);
 }
 
 std::filesystem::path resolve_config_reference(

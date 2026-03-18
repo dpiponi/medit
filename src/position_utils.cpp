@@ -31,7 +31,7 @@ bool ranges_overlap(const Range &left, const Range &right) {
            normalized_right.start < normalized_left.end;
 }
 
-Range full_document_range(const std::vector<std::u32string> &lines) {
+Range full_document_range(const Lines &lines) {
     if (lines.empty()) {
         return {{0, 0}, {0, 0}};
     }

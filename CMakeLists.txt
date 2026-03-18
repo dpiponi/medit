@@ -60,6 +60,7 @@ set(CORE_SOURCES
     src/editor.cpp
     src/editor_core.cpp
     src/editor_commands.cpp
+    src/editor_ex_command_completion.cpp
     src/editor_ex_commands.cpp
     src/editor_input.cpp
     src/command_recording.cpp

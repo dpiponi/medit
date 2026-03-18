@@ -31,7 +31,7 @@ class LspService : public EditorService {
     void stop() override;
     void handle_editor_event(const EditorEvent &event) override;
     void handle_request(const ServiceRequest &request) override;
-    std::vector<ServiceEvent> poll() override;
+    ServiceEvents poll() override;
     std::optional<int> poll_interval_ms() const override;
     std::string status_summary() const override;
 
@@ -50,8 +50,8 @@ class LspService : public EditorService {
     std::thread reader_thread_;
     std::thread stderr_thread_;
     mutable std::mutex mutex_;
-    std::vector<ServiceEvent> pending_events_;
-    std::vector<EditorEvent> pending_editor_events_;
+    ServiceEvents pending_events_;
+    EditorEvents pending_editor_events_;
     std::map<std::string, EditorEvent> pending_document_changes_;
     std::map<std::string, std::chrono::steady_clock::time_point> pending_change_times_;
     std::map<std::string, std::u32string> pending_document_texts_;

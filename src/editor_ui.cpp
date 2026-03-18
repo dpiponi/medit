@@ -16,6 +16,8 @@
 #include <limits>
 #include <sstream>
 
+import theme;
+
 #if defined(__unix__) || defined(__APPLE__)
 #include <signal.h>
 #include <termios.h>
@@ -27,6 +29,7 @@ namespace {
 enum class ThemeSlot : short {
     Default = 1,
     LineNumber,
+    WindowDivider,
     CursorLine,
     CursorLineNumber,
     StatusBar,
@@ -165,7 +168,7 @@ void ensure_horizontal_visibility(EditorState &state, std::size_t window_id, int
 void ensure_vertical_visibility(EditorState &state, std::size_t window_id, int screen_rows, int buffer_cols) {
     EditorState::WindowUiState &buffer_ui = state.window_ui(window_id);
     std::size_t usable_rows = screen_rows > 0 ? static_cast<std::size_t>(screen_rows) : 1;
-    const std::vector<VisualRow> &visual_rows = visual_rows_for_window(state, window_id, buffer_cols);
+    const VisualRows &visual_rows = visual_rows_for_window(state, window_id, buffer_cols);
     std::size_t cursor_visual_row = visual_row_for_buffer_row(visual_rows, state.displayed_cursor(window_id).row);
     if (cursor_visual_row < buffer_ui.row_offset) {
         buffer_ui.row_offset = cursor_visual_row;
@@ -189,6 +192,8 @@ ThemeSlot theme_slot(StyleRole role) {
             return ThemeSlot::Default;
         case StyleRole::LineNumber:
             return ThemeSlot::LineNumber;
+        case StyleRole::WindowDivider:
+            return ThemeSlot::WindowDivider;
         case StyleRole::CursorLine:
             return ThemeSlot::CursorLine;
         case StyleRole::CursorLineNumber:
@@ -253,7 +258,7 @@ int curses_attributes(TextStyle style, StyleRole role) {
     return attrs;
 }
 
-StyleRole resolve_style_role(Position position, const std::vector<HighlightSpan> &spans, StyleRole base_role) {
+StyleRole resolve_style_role(Position position, const HighlightSpans &spans, StyleRole base_role) {
     StyleRole resolved_role = base_role;
     int resolved_priority = -1000000;
     for (const HighlightSpan &span : spans) {
@@ -268,11 +273,11 @@ StyleRole resolve_style_role(Position position, const std::vector<HighlightSpan>
     return resolved_role;
 }
 
-std::vector<HighlightSpan> collect_line_highlights(const EditorState &state, std::size_t window_id, std::size_t row) {
+HighlightSpans collect_line_highlights(const EditorState &state, std::size_t window_id, std::size_t row) {
     const EditorCore &core = state.window_core(window_id);
     const EditorState::WindowUiState &window_state = state.window_ui(window_id);
     const EditorState::BufferUiState &buffer_ui = state.buffer_ui_state(state.window_buffer(window_id).id);
-    std::vector<HighlightSpan> spans;
+    HighlightSpans spans;
     Range entire_line = core.line_range(row);
     const auto &syntax_ui = state.buffer_syntax_ui(state.window_buffer(window_id).id);
     if (row < syntax_ui.syntax_highlights.size()) {
@@ -350,7 +355,7 @@ void draw_styled_line(
     int screen_row,
     int start_col,
     const std::u32string &line,
-    const std::vector<HighlightSpan> &spans,
+    const HighlightSpans &spans,
     std::size_t row,
     std::size_t tabstop,
     std::size_t col_offset,
@@ -387,6 +392,129 @@ void clear_rect_line(int screen_row, int left, int width) {
     }
     std::string spaces(static_cast<std::size_t>(width), ' ');
     mvaddnstr(screen_row, left, spaces.c_str(), width);
+}
+
+enum DividerDirectionMask {
+    DividerUp = 1 << 0,
+    DividerDown = 1 << 1,
+    DividerLeft = 1 << 2,
+    DividerRight = 1 << 3,
+};
+
+void add_divider_segment(std::map<std::pair<int, int>, unsigned> &mask_by_cell, int top, int left, int bottom, int right) {
+    if (top > bottom || left > right) {
+        return;
+    }
+    if (left == right) {
+        for (int row = top; row <= bottom; ++row) {
+            unsigned &mask = mask_by_cell[{row, left}];
+            if (row > top) {
+                mask |= DividerUp;
+            }
+            if (row < bottom) {
+                mask |= DividerDown;
+            }
+        }
+        return;
+    }
+    if (top == bottom) {
+        for (int col = left; col <= right; ++col) {
+            unsigned &mask = mask_by_cell[{top, col}];
+            if (col > left) {
+                mask |= DividerLeft;
+            }
+            if (col < right) {
+                mask |= DividerRight;
+            }
+        }
+    }
+}
+
+chtype divider_glyph(unsigned mask) {
+    bool up = (mask & DividerUp) != 0;
+    bool down = (mask & DividerDown) != 0;
+    bool left = (mask & DividerLeft) != 0;
+    bool right = (mask & DividerRight) != 0;
+
+    if (up && down && left && right) {
+        return ACS_PLUS;
+    }
+    if (up && down && left) {
+        return ACS_RTEE;
+    }
+    if (up && down && right) {
+        return ACS_LTEE;
+    }
+    if (left && right && up) {
+        return ACS_BTEE;
+    }
+    if (left && right && down) {
+        return ACS_TTEE;
+    }
+    if (up && down) {
+        return ACS_VLINE;
+    }
+    if (left && right) {
+        return ACS_HLINE;
+    }
+    if (down && right) {
+        return ACS_ULCORNER;
+    }
+    if (down && left) {
+        return ACS_URCORNER;
+    }
+    if (up && right) {
+        return ACS_LLCORNER;
+    }
+    if (up && left) {
+        return ACS_LRCORNER;
+    }
+    if (up || down) {
+        return ACS_VLINE;
+    }
+    if (left || right) {
+        return ACS_HLINE;
+    }
+    return ACS_PLUS;
+}
+
+void draw_window_dividers(const EditorState &state, const std::vector<WindowLayoutRect> &rects) {
+    if (rects.size() < 2) {
+        return;
+    }
+
+    std::map<std::pair<int, int>, unsigned> mask_by_cell;
+    for (std::size_t i = 0; i < rects.size(); ++i) {
+        for (std::size_t j = i + 1; j < rects.size(); ++j) {
+            const WindowLayoutRect &first = rects[i];
+            const WindowLayoutRect &second = rects[j];
+
+            if (first.left + first.width == second.left - 1 || second.left + second.width == first.left - 1) {
+                int divider_col = first.left + first.width == second.left - 1
+                    ? first.left + first.width
+                    : second.left + second.width;
+                int top = std::max(first.top, second.top);
+                int bottom = std::min(first.top + first.height, second.top + second.height) - 1;
+                add_divider_segment(mask_by_cell, top, divider_col, bottom, divider_col);
+            }
+
+            if (first.top + first.height == second.top - 1 || second.top + second.height == first.top - 1) {
+                int divider_row = first.top + first.height == second.top - 1
+                    ? first.top + first.height
+                    : second.top + second.height;
+                int left = std::max(first.left, second.left);
+                int right = std::min(first.left + first.width, second.left + second.width) - 1;
+                add_divider_segment(mask_by_cell, divider_row, left, divider_row, right);
+            }
+        }
+    }
+
+    TextStyle style = theme_style(state.theme, StyleRole::WindowDivider);
+    attrset(static_cast<attr_t>(curses_attributes(style, StyleRole::WindowDivider)));
+    for (const auto &[cell, mask] : mask_by_cell) {
+        mvaddch(cell.first, cell.second, divider_glyph(mask));
+    }
+    attrset(A_NORMAL);
 }
 
 void draw_line_number(
@@ -555,7 +683,7 @@ void draw_buffer_rows(const EditorState &state, std::size_t window_id, const Win
         return;
     }
     std::size_t tabstop = effective_tabstop(state.config, core.file_path());
-    const std::vector<VisualRow> &visual_rows = visual_rows_for_window(state, window_id, buffer_cols);
+    const VisualRows &visual_rows = visual_rows_for_window(state, window_id, buffer_cols);
     for (int row_offset = 0; row_offset < buffer_rows; ++row_offset) {
         int screen_row = rect.top + row_offset;
         std::size_t visual_row_index = buffer_ui.row_offset + static_cast<std::size_t>(row_offset);
@@ -573,7 +701,7 @@ void draw_buffer_rows(const EditorState &state, std::size_t window_id, const Win
                 state.displayed_cursor(window_id).row == visual_row.buffer_row ? StyleRole::CursorLineNumber : StyleRole::LineNumber;
             draw_line_number(state.theme, screen_row, rect.left, visual_row.buffer_row + 1, line_number_width_value, line_number_role);
             const std::u32string &line = core.lines()[visual_row.buffer_row];
-            std::vector<HighlightSpan> spans = collect_line_highlights(state, window_id, visual_row.buffer_row);
+            HighlightSpans spans = collect_line_highlights(state, window_id, visual_row.buffer_row);
             draw_styled_line(
                 state,
                 screen_row,
@@ -593,10 +721,7 @@ void draw_buffer_rows(const EditorState &state, std::size_t window_id, const Win
             *annotation.diagnostic_index == *buffer_ui.selected_diagnostic_index) {
             role = StyleRole::DiagnosticSelected;
         }
-        TextStyle style = theme_style(state.theme, role);
-        attron(curses_attributes(style, role));
-        mvprintw(screen_row, rect.left, "%*s ", line_number_width_value, "");
-        std::vector<std::u32string> wrapped =
+        Lines wrapped =
             wrap_annotation_text(annotation_prefix(annotation.annotation) + annotation.annotation.text, buffer_cols - 2);
         std::u32string text = visual_row.wrap_offset < wrapped.size() ? wrapped[visual_row.wrap_offset] : U"";
         int annotation_col = rect.left + line_number_width_value + 1;
@@ -604,6 +729,8 @@ void draw_buffer_rows(const EditorState &state, std::size_t window_id, const Win
             int rendered_width = static_cast<int>(display_width(text, tabstop));
             annotation_col += std::max(0, buffer_cols - rendered_width);
         }
+        TextStyle style = theme_style(state.theme, role);
+        attron(curses_attributes(style, role));
         mvaddnwstr(screen_row, annotation_col, u32_to_wstring(text).c_str(), buffer_cols);
         attroff(curses_attributes(style, role));
     }
@@ -697,7 +824,7 @@ void draw_popup(const EditorState &state, int screen_rows, int screen_cols) {
     std::size_t menu_scroll_offset = 0;
     std::string popup_title = state.popup.title;
     std::string filter_text = state.popup.kind == PopupKind::Menu ? u32_to_utf8(state.popup.filter) : "";
-    std::vector<std::u32string> wrapped;
+    Lines wrapped;
     if (state.popup.kind == PopupKind::Menu || state.popup.kind == PopupKind::KeyHints) {
         std::size_t filtered_size = state.popup.filtered_indices.size();
         std::size_t max_offset = filtered_size > menu_visible_rows ? filtered_size - menu_visible_rows : 0;
@@ -873,7 +1000,7 @@ std::pair<int, int> cursor_screen_position(const EditorState &state, const Windo
     const EditorState::WindowUiState &buffer_ui = state.active_buffer_ui();
     int line_number_cols = line_number_width(core);
     int buffer_cols = rect.width - line_number_cols - 1;
-    const std::vector<VisualRow> &visual_rows = visual_rows_for_window(state, window_id, buffer_cols);
+    const VisualRows &visual_rows = visual_rows_for_window(state, window_id, buffer_cols);
     Position cursor = state.displayed_cursor(window_id);
     std::size_t visual_row_index = visual_row_for_buffer_row(visual_rows, cursor.row);
     const std::u32string &line = core.lines()[cursor.row];
@@ -912,7 +1039,7 @@ std::optional<ClickedBufferPosition> buffer_position_from_screen_point(const Edi
         if (buffer_cols <= 0) {
             return std::nullopt;
         }
-        const std::vector<VisualRow> &visual_rows = visual_rows_for_window(state, rect.window_id, buffer_cols);
+        const VisualRows &visual_rows = visual_rows_for_window(state, rect.window_id, buffer_cols);
         std::size_t visual_row_index = buffer_ui.row_offset + static_cast<std::size_t>(screen_row - rect.top);
         if (visual_row_index >= visual_rows.size()) {
             return std::nullopt;
@@ -945,6 +1072,7 @@ void draw_editor(const EditorState &state) {
         int line_cols = line_number_width(state.window_core(rect.window_id));
         draw_buffer_rows(state, rect.window_id, rect, line_cols);
     }
+    draw_window_dividers(state, rects);
     draw_status_bar(state, screen_rows, screen_cols);
     draw_message_bar(state, screen_rows, screen_cols);
     draw_popup(state, screen_rows, screen_cols);

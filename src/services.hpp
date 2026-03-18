@@ -42,6 +42,8 @@ struct ServiceEvent {
     std::u32string text;
 };
 
+using ServiceEvents = std::vector<ServiceEvent>;
+
 class EditorService {
   public:
     virtual ~EditorService() = default;

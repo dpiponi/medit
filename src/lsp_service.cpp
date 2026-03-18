@@ -264,7 +264,7 @@ std::optional<std::string> hover_text_from_contents(const JsonValue &contents) {
     return std::nullopt;
 }
 
-std::vector<PopupMenuItem> completion_items_from_result(
+PopupMenuItems completion_items_from_result(
     const JsonValue &result,
     const std::u32string &document_text,
     const ServiceRequest &request) {
@@ -284,7 +284,7 @@ std::vector<PopupMenuItem> completion_items_from_result(
         Range{text_position_for_utf16(document_text, request.utf16_position),
               text_position_for_utf16(document_text, request.utf16_position)});
     std::string prefix = request.completion_prefix;
-    std::vector<PopupMenuItem> parsed;
+    PopupMenuItems parsed;
     for (const JsonValue &item : *items) {
         if (!item.is_object()) {
             continue;
@@ -602,7 +602,7 @@ void LspService::send_editor_event(const EditorEvent &event) {
 }
 
 void LspService::flush_pending_editor_events() {
-    std::vector<EditorEvent> events = std::move(pending_editor_events_);
+    EditorEvents events = std::move(pending_editor_events_);
     pending_editor_events_.clear();
     for (const EditorEvent &event : events) {
         send_editor_event(event);
@@ -642,10 +642,10 @@ void LspService::flush_pending_document_changes(bool force, const std::optional<
     }
 }
 
-std::vector<ServiceEvent> LspService::poll() {
+ServiceEvents LspService::poll() {
     flush_pending_document_changes(false);
     std::lock_guard<std::mutex> lock(mutex_);
-    std::vector<ServiceEvent> events = std::move(pending_events_);
+    ServiceEvents events = std::move(pending_events_);
     pending_events_.clear();
     return events;
 }
@@ -1235,7 +1235,7 @@ void LspService::handle_message(const std::string &payload) {
                         document_text = found->second;
                     }
                 }
-                std::vector<PopupMenuItem> items = completion_items_from_result(*result, document_text, request);
+                PopupMenuItems items = completion_items_from_result(*result, document_text, request);
                 if (items.empty()) {
                     queue_status("No completions");
                     return;
@@ -1311,7 +1311,7 @@ void LspService::handle_message(const std::string &payload) {
     }
 
     std::string normalized_uri = normalize_document_uri(uri->get<std::string>());
-    std::vector<Diagnostic> parsed_diagnostics;
+    Diagnostics parsed_diagnostics;
     EditorCore conversion_core;
     std::string file_path = file_path_from_uri(normalized_uri);
     if (!file_path.empty()) {
