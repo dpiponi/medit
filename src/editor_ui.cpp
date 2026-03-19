@@ -1081,7 +1081,12 @@ void draw_editor(const EditorState &state) {
         rects.begin(),
         rects.end(),
         [&state](const WindowLayoutRect &rect) { return rect.window_id == state.windows.active_window_id(); });
-    if (active_rect != rects.end()) {
+    if (state.mode == Mode::Command || state.mode == Mode::Search) {
+        const std::u32string &buffer = state.mode == Mode::Search ? state.search_buffer : state.command_buffer;
+        std::size_t cursor_x = 1 + display_width_until(buffer, state.prompt_cursor, 8);
+        int cursor_col = std::min<int>(screen_cols > 0 ? screen_cols - 1 : 0, static_cast<int>(cursor_x));
+        move(screen_rows - 1, cursor_col);
+    } else if (active_rect != rects.end()) {
         auto [cursor_row, cursor_col] = cursor_screen_position(state, *active_rect);
         move(cursor_row, cursor_col);
     }

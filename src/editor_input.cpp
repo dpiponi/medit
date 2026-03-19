@@ -20,6 +20,127 @@ void log_input_token(const EditorState &state, const std::string &token, wint_t 
 
 }  // namespace
 
+std::u32string &active_prompt_buffer(EditorState &state) {
+    return state.mode == Mode::Search ? state.search_buffer : state.command_buffer;
+}
+
+void move_prompt_cursor(EditorState &state, std::size_t cursor) {
+    std::u32string &buffer = active_prompt_buffer(state);
+    state.prompt_cursor = std::min(cursor, buffer.size());
+}
+
+bool handle_prompt_token(EditorState &state, const std::string &token, wint_t key, bool printable) {
+    if (state.mode != Mode::Command && state.mode != Mode::Search) {
+        return false;
+    }
+
+    if (state.mode == Mode::Command) {
+        if (token == "esc") {
+            state.enter_normal_mode();
+            return true;
+        }
+        if (token == "enter") {
+            state.execute_command();
+            return true;
+        }
+        if (token == "tab") {
+            state.show_command_completion();
+            return true;
+        }
+        if (token == "backspace") {
+            if (state.prompt_cursor > 0) {
+                state.command_buffer.erase(state.prompt_cursor - 1, 1);
+                --state.prompt_cursor;
+            }
+            return true;
+        }
+        if (token == "left") {
+            if (state.prompt_cursor > 0) {
+                --state.prompt_cursor;
+            }
+            return true;
+        }
+        if (token == "right") {
+            move_prompt_cursor(state, state.prompt_cursor + 1);
+            return true;
+        }
+        if (token == "home") {
+            state.prompt_cursor = 0;
+            return true;
+        }
+        if (token == "end") {
+            move_prompt_cursor(state, std::numeric_limits<std::size_t>::max());
+            return true;
+        }
+        if (token == "up") {
+            state.browse_prompt_history(true);
+            return true;
+        }
+        if (token == "down") {
+            state.browse_prompt_history(false);
+            return true;
+        }
+        if (printable) {
+            state.command_buffer.insert(
+                state.command_buffer.begin() + static_cast<std::ptrdiff_t>(state.prompt_cursor),
+                static_cast<char32_t>(key));
+            ++state.prompt_cursor;
+            return true;
+        }
+        return false;
+    }
+
+    EditorState::BufferUiState &buffer_state = state.active_buffer_cache();
+    if (token == "esc") {
+        state.enter_normal_mode();
+        return true;
+    }
+    if (token == "enter") {
+        state.add_prompt_history_entry(state.search_buffer);
+        buffer_state.active_search_pattern = state.search_buffer;
+        state.refresh_search_matches(true);
+        if (!buffer_state.search_pattern_valid) {
+            state.set_search_status("invalid regex");
+            return true;
+        }
+        state.mode = Mode::Normal;
+        state.set_status(buffer_state.search_matches.empty() ? "No search matches" : "Search applied");
+        return true;
+    }
+    if (token == "backspace") {
+        if (state.prompt_cursor > 0) {
+            state.search_buffer.erase(state.prompt_cursor - 1, 1);
+            --state.prompt_cursor;
+        }
+    } else if (token == "left") {
+        if (state.prompt_cursor > 0) {
+            --state.prompt_cursor;
+        }
+    } else if (token == "right") {
+        move_prompt_cursor(state, state.prompt_cursor + 1);
+    } else if (token == "home") {
+        state.prompt_cursor = 0;
+    } else if (token == "end") {
+        move_prompt_cursor(state, std::numeric_limits<std::size_t>::max());
+    } else if (token == "up") {
+        state.browse_prompt_history(true);
+    } else if (token == "down") {
+        state.browse_prompt_history(false);
+    } else if (printable) {
+        state.search_buffer.insert(
+            state.search_buffer.begin() + static_cast<std::ptrdiff_t>(state.prompt_cursor),
+            static_cast<char32_t>(key));
+        ++state.prompt_cursor;
+    } else {
+        return false;
+    }
+
+    buffer_state.active_search_pattern = state.search_buffer;
+    state.refresh_search_matches(true);
+    state.set_search_status(buffer_state.search_pattern_valid ? "" : "invalid regex");
+    return true;
+}
+
 void append_after_cursor(EditorState &state) {
     EditorCore &core = state.active_core();
     Position cursor = core.cursor();
@@ -884,9 +1005,24 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             state.execute_command();
             break;
         case EditorAction::CommandBackspace:
-            if (!state.command_buffer.empty()) {
-                state.command_buffer.pop_back();
+            if (state.prompt_cursor > 0) {
+                state.command_buffer.erase(state.prompt_cursor - 1, 1);
+                --state.prompt_cursor;
             }
+            break;
+        case EditorAction::PromptMoveLeft:
+            if (state.prompt_cursor > 0) {
+                --state.prompt_cursor;
+            }
+            break;
+        case EditorAction::PromptMoveRight:
+            move_prompt_cursor(state, state.prompt_cursor + 1);
+            break;
+        case EditorAction::PromptMoveStart:
+            state.prompt_cursor = 0;
+            break;
+        case EditorAction::PromptMoveEnd:
+            move_prompt_cursor(state, std::numeric_limits<std::size_t>::max());
             break;
         case EditorAction::CommandHistoryPrevious:
             state.browse_prompt_history(true);
@@ -902,7 +1038,10 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             core.insert_codepoint(static_cast<char32_t>(key));
             break;
         case EditorAction::CommandInsert:
-            state.command_buffer.push_back(static_cast<char32_t>(key));
+            state.command_buffer.insert(
+                state.command_buffer.begin() + static_cast<std::ptrdiff_t>(state.prompt_cursor),
+                static_cast<char32_t>(key));
+            ++state.prompt_cursor;
             break;
         case EditorAction::SearchExecute:
             state.add_prompt_history_entry(state.search_buffer);
@@ -916,15 +1055,19 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             state.set_status(buffer_state.search_matches.empty() ? "No search matches" : "Search applied");
             break;
         case EditorAction::SearchBackspace:
-            if (!state.search_buffer.empty()) {
-                state.search_buffer.pop_back();
+            if (state.prompt_cursor > 0) {
+                state.search_buffer.erase(state.prompt_cursor - 1, 1);
+                --state.prompt_cursor;
             }
             buffer_state.active_search_pattern = state.search_buffer;
             state.refresh_search_matches(true);
             state.set_search_status(buffer_state.search_pattern_valid ? "" : "invalid regex");
             break;
         case EditorAction::SearchInsert:
-            state.search_buffer.push_back(static_cast<char32_t>(key));
+            state.search_buffer.insert(
+                state.search_buffer.begin() + static_cast<std::ptrdiff_t>(state.prompt_cursor),
+                static_cast<char32_t>(key));
+            ++state.prompt_cursor;
             buffer_state.active_search_pattern = state.search_buffer;
             state.refresh_search_matches(true);
             state.set_search_status(buffer_state.search_pattern_valid ? "" : "invalid regex");
@@ -1268,7 +1411,11 @@ void handle_keymap_input(EditorState &state, wint_t key, bool is_special) {
     if (state.popup.visible && state.popup.kind != PopupKind::KeyHints) {
         state.dismiss_popup();
     }
-    process_input_token(state, *token, key, is_printable_input(key, is_special));
+    bool printable = is_printable_input(key, is_special);
+    if (handle_prompt_token(state, *token, key, printable)) {
+        return;
+    }
+    process_input_token(state, *token, key, printable);
 }
 
 void handle_mouse_input(EditorState &state) {

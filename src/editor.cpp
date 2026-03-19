@@ -300,6 +300,7 @@ void EditorState::browse_prompt_history(bool previous) {
         ++*history.browse_index;
     }
     buffer = history.entries[*history.browse_index];
+    prompt_cursor = buffer.size();
 }
 
 std::wstring u32_to_wstring(const std::u32string &text) {
@@ -574,6 +575,7 @@ void apply_popup_selection(EditorState &state) {
     state.dismiss_popup();
     if (apply_target == EditorState::PopupApplyTarget::CommandBuffer) {
         state.command_buffer = utf8_to_u32(item.insert_text);
+        state.prompt_cursor = state.command_buffer.size();
         state.set_status(":" + item.insert_text);
         return;
     }
@@ -742,6 +744,7 @@ EditorCore &core = active_core();
     }
     mode = Mode::Normal;
     command_buffer.clear();
+    prompt_cursor = 0;
     pending.tokens.clear();
     pending.motion = PendingMotion::None;
     pending.motion_repeat_count = 1;
@@ -774,6 +777,7 @@ active_core().clear_selection();
     mode = Mode::Command;
     command_prompt_kind = CommandPromptKind::EditorCommand;
     command_buffer.clear();
+    prompt_cursor = 0;
     reset_prompt_history_navigation(command_history.editor_commands);
     pending.tokens.clear();
     pending.motion = PendingMotion::None;
@@ -792,6 +796,7 @@ if (!active_core().has_selection()) {
     mode = Mode::Command;
     command_prompt_kind = CommandPromptKind::FilterSelection;
     command_buffer.clear();
+    prompt_cursor = 0;
     reset_prompt_history_navigation(command_history.filter_commands);
     pending.tokens.clear();
     pending.motion = PendingMotion::None;
@@ -810,6 +815,7 @@ if (!active_core().has_selection()) {
     mode = Mode::Command;
     command_prompt_kind = CommandPromptKind::SedSelection;
     command_buffer.clear();
+    prompt_cursor = 0;
     reset_prompt_history_navigation(command_history.sed_commands);
     pending.tokens.clear();
     pending.motion = PendingMotion::None;
@@ -826,6 +832,7 @@ EditorCore &core = active_core();
     core.clear_selection();
     mode = Mode::Search;
     search_buffer.clear();
+    prompt_cursor = 0;
     reset_prompt_history_navigation(command_history.searches);
     window_state.search_origin = core.cursor();
     pending.tokens.clear();

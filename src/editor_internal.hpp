@@ -247,6 +247,7 @@ struct EditorState {
     Mode mode = Mode::Normal;
     CommandPromptKind command_prompt_kind = CommandPromptKind::EditorCommand;
     std::u32string command_buffer;
+    std::size_t prompt_cursor = 0;
     CommandHistoryState command_history;
     std::u32string search_buffer;
     std::string status_message = "NORMAL";

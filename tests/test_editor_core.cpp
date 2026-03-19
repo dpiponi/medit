@@ -934,6 +934,18 @@ void test_keybinding_dispatch() {
             *command_completion.action == EditorAction::ShowCommandCompletion,
         "command tab should show command completion");
 
+    KeyDispatch command_left = dispatch_key_sequence(keybindings, "command", pending, "left", false);
+    expect(command_left.action.has_value() && *command_left.action == EditorAction::PromptMoveLeft, "command left should move prompt cursor");
+
+    KeyDispatch command_right = dispatch_key_sequence(keybindings, "command", pending, "right", false);
+    expect(command_right.action.has_value() && *command_right.action == EditorAction::PromptMoveRight, "command right should move prompt cursor");
+
+    KeyDispatch command_home = dispatch_key_sequence(keybindings, "command", pending, "home", false);
+    expect(command_home.action.has_value() && *command_home.action == EditorAction::PromptMoveStart, "command home should move prompt cursor to start");
+
+    KeyDispatch command_end = dispatch_key_sequence(keybindings, "command", pending, "end", false);
+    expect(command_end.action.has_value() && *command_end.action == EditorAction::PromptMoveEnd, "command end should move prompt cursor to end");
+
     KeyDispatch find = dispatch_key_sequence(keybindings, "normal", pending, "f", false);
     expect(find.action.has_value() && *find.action == EditorAction::FindForward, "f should map to find forward");
 
