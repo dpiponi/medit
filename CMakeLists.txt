@@ -4,6 +4,20 @@ project(medit)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+find_package(PkgConfig QUIET)
+if(PKG_CONFIG_FOUND)
+    pkg_check_modules(LUA QUIET lua5.4)
+    if(NOT LUA_FOUND)
+        pkg_check_modules(LUA QUIET lua-5.4)
+    endif()
+    if(NOT LUA_FOUND)
+        pkg_check_modules(LUA QUIET lua54)
+    endif()
+    if(NOT LUA_FOUND)
+        pkg_check_modules(LUA QUIET lua)
+    endif()
+endif()
+
 # Platform detection
 if(WIN32)
     add_definitions(-DPLATFORM_WINDOWS)
@@ -53,6 +67,12 @@ endif()
 include_directories(${CURSES_INCLUDE_DIRS})
 include_directories(src)
 include_directories(third_party)
+if(LUA_FOUND)
+    add_compile_definitions(MEDIT_HAS_LUA=1)
+    include_directories(${LUA_INCLUDE_DIRS})
+else()
+    add_compile_definitions(MEDIT_HAS_LUA=0)
+endif()
 
 # Core editor sources (minimal set)
 set(CORE_SOURCES
@@ -72,6 +92,7 @@ set(CORE_SOURCES
     src/keybindings.cpp
     src/json.cpp
     src/logger.cpp
+    src/lua_runtime.cpp
     src/theme.cpp
     src/syntax.cpp
     src/string_utils.cpp
@@ -102,6 +123,9 @@ list(APPEND CORE_SOURCES src/services.cpp)
 add_executable(medit ${CORE_SOURCES})
 
 target_link_libraries(medit ${CURSES_LIBRARIES})
+if(LUA_FOUND)
+    target_link_libraries(medit ${LUA_LIBRARIES})
+endif()
 
 if(UNIX)
     target_link_libraries(medit dl)

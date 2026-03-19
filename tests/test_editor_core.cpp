@@ -2,6 +2,7 @@
 #include "editor_commands.hpp"
 #include "editor_core.hpp"
 #include "editor_ex_command_completion.hpp"
+#include "editor_internal.hpp"
 #include "editor_session.hpp"
 #include "editor_windows.hpp"
 #include "keybindings.hpp"
@@ -1222,6 +1223,7 @@ void test_config_file_selects_keybindings_and_colors() {
         rc << "keybindings = custom-keys.json\n";
         rc << "colors = amber.json\n";
         rc << "lsp = lsp.json\n";
+        rc << "lua = init.lua\n";
         rc << "log = debug.log\n";
         rc << "syntax_config = syntax.json\n";
         rc << "syntax = cpp\n";
@@ -1304,6 +1306,10 @@ void test_config_file_selects_keybindings_and_colors() {
                   "  \"diagnostic_warning\": { \"foreground\": \"yellow\", \"background\": \"default\", \"bold\": \"false\", \"underline\": \"true\", \"reverse\": \"false\" }\n"
                   "}\n";
     }
+    {
+        std::ofstream lua(medit_dir + "/init.lua");
+        lua << "medit.set_status('lua ready')\n";
+    }
 
     EditorConfig config = load_editor_config_from_path(config_dir + "/meditrc");
     expect(config.keybindings_path.has_value(), "config should resolve keybindings path");
@@ -1311,6 +1317,7 @@ void test_config_file_selects_keybindings_and_colors() {
     expect(config.lsp_path.has_value(), "config should resolve lsp path");
     expect(config.log_path.has_value(), "config should resolve log path");
     expect(config.syntax_config_path.has_value(), "config should resolve syntax config path");
+    expect(config.lua_path.has_value(), "config should resolve lua path");
     expect(config.clipboard.mode == ClipboardMode::SharedFile, "config should parse clipboard mode");
     expect(config.clipboard.shared_file_path.filename() == "clipboard.json", "config should parse clipboard file");
     expect(!config.clipboard.osc52, "config should parse clipboard osc52 flag");
@@ -1321,6 +1328,7 @@ void test_config_file_selects_keybindings_and_colors() {
     expect(config.lsp_path->filename() == "lsp.json", "config should use configured lsp file");
     expect(config.log_path->filename() == "debug.log", "config should use configured log file");
     expect(config.syntax_config_path->filename() == "syntax.json", "config should use configured syntax config file");
+    expect(config.lua_path->filename() == "init.lua", "config should use configured lua file");
     expect(config.lsp_servers.size() == 1, "config should parse lsp server rules");
     expect(config.syntax_languages.size() == 1, "config should parse syntax language rules");
     expect(config.syntax_languages[0].name == "python", "config should parse syntax language name");
@@ -1425,6 +1433,43 @@ void test_infer_language_id() {
     EditorConfig fallback;
     fallback.syntax_name = "cpp";
     expect(infer_language_id(fallback, std::nullopt) == "cpp", "syntax fallback should be used when no file path exists");
+}
+
+void test_lua_runtime_registers_and_executes_command() {
+    std::filesystem::path root = std::filesystem::temp_directory_path() / "medit_lua_runtime";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+
+    std::filesystem::path script_path = root / "init.lua";
+    {
+        std::ofstream script(script_path);
+        script << "medit.register_command('hello', function()\n"
+                  "  medit.set_status('hello from lua')\n"
+                  "end)\n";
+    }
+
+    EditorState state;
+    initialize_windows(state);
+    std::string error_message;
+    expect(state.lua.initialize(state, script_path, error_message), "lua runtime should initialize");
+    expect(error_message.empty(), "lua runtime init should not set an error");
+    std::vector<std::string> commands = state.lua.registered_commands();
+    expect(commands.size() == 1 && commands[0] == "hello", "lua runtime should register commands from startup script");
+    expect(state.lua.execute_command(state, "hello", error_message), "lua runtime should execute registered command");
+    expect(state.status_message == "hello from lua", "lua command should be able to set editor status");
+    state.lua.shutdown();
+    std::filesystem::remove_all(root);
+}
+
+void test_command_execution_preserves_command_status() {
+    EditorState state;
+    initialize_windows(state);
+    state.enter_command_mode();
+    state.command_buffer = utf8_to_u32("buffers");
+    state.prompt_cursor = state.command_buffer.size();
+    state.execute_command();
+    expect(state.mode == Mode::Normal, "executing a command should return to normal mode");
+    expect(state.status_message != "NORMAL", "command result status should not be overwritten on exit");
 }
 
 void test_infer_workspace_root() {
@@ -2109,6 +2154,8 @@ int main() {
         test_config_file_selects_keybindings_and_colors();
         test_lsp_config_rejects_duplicate_patterns();
         test_infer_language_id();
+        test_lua_runtime_registers_and_executes_command();
+        test_command_execution_preserves_command_status();
         test_infer_workspace_root();
         test_process_utils_detect_missing_executables();
         test_cpp_syntax_highlighting();

@@ -41,6 +41,12 @@ int main(int argc, char **argv) {
         log_debug("suspend is supported - keeping suspend keybinding");
     }
     initialize_windows(state);
+    if (state.config.lua_path) {
+        std::string lua_error;
+        if (!state.lua.initialize(state, state.config.lua_path, lua_error)) {
+            state.set_status("Lua init failed: " + lua_error);
+        }
+    }
     if (argc > 1) {
         startup_picker_root = open_startup_files(state, argc, argv);
     } else if (!state.config.source_path.empty()) {

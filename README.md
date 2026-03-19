@@ -77,7 +77,7 @@ The repo ships an example config tree in `config/`. Copy that to `./.config/` or
 1. `./.config/meditrc`
 2. `~/.config/meditrc`
 
-If `meditrc` exists, it selects the keybindings JSON, colors JSON, optional LSP rules JSON, and optional syntax rules JSON to load from `./.config/medit/` or `~/.config/medit/` unless you give absolute paths.
+If `meditrc` exists, it selects the keybindings JSON, colors JSON, optional LSP rules JSON, optional syntax rules JSON, and optional Lua startup script to load from `./.config/medit/` or `~/.config/medit/` unless you give absolute paths.
 
 LSP can be configured per file extension through an LSP rules file:
 
@@ -85,6 +85,7 @@ LSP can be configured per file extension through an LSP rules file:
 lsp = lsp.json
 log = debug.log
 syntax_config = syntax.json
+lua = init.lua
 syntax = python
 right_justify_diagnostics = true
 clipboard = auto
@@ -144,6 +145,11 @@ Example [lsp.json](/home/dan/de/config/medit/lsp.json):
 
 Each open buffer picks the first matching server by filename glob pattern and sends that server the configured language id. The old `lsp_command` and `lsp_language_id` keys still work as a single catch-all fallback.
 The workspace root for each server is found by walking upward from the opened file and looking for the configured `workspace.markers`, then falling back according to `workspace.fallback`.
+
+If `lua = init.lua` is configured, `medit` runs that startup script at launch. The checked-in example [config/medit/init.lua](/home/dan/medit/config/medit/init.lua) registers:
+
+- `:lua-command lua-status` to show a compact status summary
+- `:lua-command edit-lua-init` to open your live Lua init file
 
 For Makefiles, install the server separately before using the shipped config, for example:
 

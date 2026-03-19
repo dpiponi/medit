@@ -138,7 +138,7 @@ void EditorState::handle_buffer_delete_command(bool force) {
         return;
     }
     for (const EditorEvent &event : closed_events) {
-        runtime.dispatch_editor_event(event);
+        dispatch_editor_event(event);
     }
     buffer_ui_map.erase(closing_id);
     syntax_ui_map.erase(closing_id);
@@ -724,6 +724,7 @@ enum class NamedEditorCommand {
     Diagnostics,
     LspStatus,
     TreeSitterStatus,
+    LuaCommand,
 };
 
 struct NamedEditorCommandInfo {
@@ -733,7 +734,7 @@ struct NamedEditorCommandInfo {
     NamedEditorCommand command;
 };
 
-constexpr std::array<NamedEditorCommandInfo, 19> kNamedEditorCommands{{
+constexpr std::array<NamedEditorCommandInfo, 20> kNamedEditorCommands{{
     {"w", "write current buffer", "w", NamedEditorCommand::Write},
     {"q", "quit", "q", NamedEditorCommand::Quit},
     {"q!", "force quit", "q!", NamedEditorCommand::ForceQuit},
@@ -753,6 +754,7 @@ constexpr std::array<NamedEditorCommandInfo, 19> kNamedEditorCommands{{
     {"diagnostics", "show diagnostics summary", "diagnostics", NamedEditorCommand::Diagnostics},
     {"lsp-status", "show language server status", "lsp-status", NamedEditorCommand::LspStatus},
     {"tree-sitter-status", "show tree-sitter status", "tree-sitter-status", NamedEditorCommand::TreeSitterStatus},
+    {"lua-command", "run registered Lua command", "lua-command ", NamedEditorCommand::LuaCommand},
 }};
 
 bool parse_substitute_component(
@@ -835,6 +837,22 @@ void EditorState::handle_substitute_command(const SubstituteCommand &command) {
         return;
     }
     set_status(count_label(substitutions, "substitution"));
+}
+
+void EditorState::handle_lua_command(const std::string &argument) {
+    if (argument.empty()) {
+        set_status("No Lua command name");
+        return;
+    }
+
+    std::string error_message;
+    if (!lua.execute_command(*this, argument, error_message)) {
+        set_status(error_message);
+        return;
+    }
+    if (status_message.empty() || status_message == ":") {
+        set_status("Lua command: " + argument);
+    }
 }
 
 PopupMenuItems command_completion_items() {
@@ -930,6 +948,9 @@ void execute_named_editor_command(
         case NamedEditorCommand::TreeSitterStatus:
             state.show_tree_sitter_status();
             break;
+        case NamedEditorCommand::LuaCommand:
+            state.handle_lua_command(argument);
+            break;
     }
 }
 
@@ -949,6 +970,26 @@ void EditorState::show_command_completion() {
             std::move(completion->items),
             PopupApplyTarget::CommandBuffer,
             utf8_to_u32(completion->initial_filter),
+            PopupFilterMode::PrefixLabelOnly);
+        return;
+    }
+    constexpr std::string_view lua_prefix = "lua-command ";
+    if (command.starts_with(lua_prefix)) {
+        PopupMenuItems items;
+        std::string filter = command.substr(lua_prefix.size());
+        for (const std::string &name : lua.registered_commands()) {
+            items.push_back({name, "Lua command", "lua-command " + name, std::nullopt});
+        }
+        if (items.empty()) {
+            set_status("No Lua commands");
+            return;
+        }
+        show_menu_popup(
+            *this,
+            "Lua Commands",
+            std::move(items),
+            PopupApplyTarget::CommandBuffer,
+            utf8_to_u32(filter),
             PopupFilterMode::PrefixLabelOnly);
         return;
     }
@@ -1006,5 +1047,5 @@ void EditorState::execute_command() {
     } else {
         set_status("Unknown command: " + verb);
     }
-    enter_normal_mode();
+    enter_normal_mode(true);
 }

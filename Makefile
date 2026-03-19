@@ -16,10 +16,14 @@ endif
 
 CURSES_CFLAGS :=
 CURSES_LIBS :=
+LUA_CFLAGS :=
+LUA_LIBS :=
 
 ifeq ($(HAVE_PKGCONFIG),yes)
 CURSES_CFLAGS := $(shell pkg-config --cflags ncursesw 2>/dev/null)
 CURSES_LIBS := $(shell pkg-config --libs ncursesw 2>/dev/null)
+LUA_CFLAGS := $(shell for pkg in lua5.4 lua-5.4 lua54 lua; do if pkg-config --exists $$pkg 2>/dev/null; then pkg-config --cflags $$pkg; break; fi; done)
+LUA_LIBS := $(shell for pkg in lua5.4 lua-5.4 lua54 lua; do if pkg-config --exists $$pkg 2>/dev/null; then pkg-config --libs $$pkg; break; fi; done)
 
 ifeq ($(strip $(CURSES_LIBS)),)
 CURSES_CFLAGS := $(shell pkg-config --cflags ncurses 2>/dev/null)
@@ -42,10 +46,16 @@ CURSES_LIBS := -lncursesw
 endif
 endif
 
-CPPFLAGS := $(BASE_CPPFLAGS) $(CURSES_CFLAGS)
+ifeq ($(strip $(LUA_LIBS)),)
+BASE_CPPFLAGS += -DMEDIT_HAS_LUA=0
+else
+BASE_CPPFLAGS += -DMEDIT_HAS_LUA=1
+endif
+
+CPPFLAGS := $(BASE_CPPFLAGS) $(CURSES_CFLAGS) $(LUA_CFLAGS)
 CXXFLAGS := $(BASE_CXXFLAGS)
 LDFLAGS := $(BASE_LDFLAGS)
-LDLIBS := $(BASE_LDLIBS) $(CURSES_LIBS)
+LDLIBS := $(BASE_LDLIBS) $(CURSES_LIBS) $(LUA_LIBS)
 SRC_DIR := src
 TEST_DIR := tests
 BUILD_DIR := build
@@ -69,8 +79,8 @@ COMMANDS_MODULE_PCM := $(MODULE_DIR)/editor_commands.pcm
 SERVICES_MODULE_INTERFACE := $(SRC_DIR)/services.cppm
 SERVICES_MODULE_OBJECT := $(BUILD_DIR)/$(SERVICES_MODULE_INTERFACE).o
 SERVICES_MODULE_PCM := $(MODULE_DIR)/services.pcm
-APP_SOURCES := $(SRC_DIR)/main.cpp $(SRC_DIR)/editor.cpp $(SRC_DIR)/editor_ui.cpp $(SRC_DIR)/editor_input.cpp $(SRC_DIR)/editor_control.cpp $(SRC_DIR)/editor_ex_commands.cpp $(SRC_DIR)/editor_ex_command_completion.cpp $(SRC_DIR)/editor_core.cpp $(SRC_DIR)/editor_commands.cpp $(SRC_DIR)/editor_session.cpp $(SRC_DIR)/editor_windows.cpp $(SRC_DIR)/clipboard.cpp $(SRC_DIR)/control_server.cpp $(SRC_DIR)/command_recording.cpp $(SRC_DIR)/keybindings.cpp $(SRC_DIR)/config.cpp $(SRC_DIR)/json.cpp $(SRC_DIR)/logger.cpp $(SRC_DIR)/process_utils.cpp $(SRC_DIR)/string_utils.cpp $(SRC_DIR)/text_encoding_utils.cpp $(SRC_DIR)/position_utils.cpp $(SRC_DIR)/uri_utils.cpp $(SRC_DIR)/theme.cpp $(SRC_DIR)/services.cpp $(SRC_DIR)/lsp_service.cpp $(SRC_DIR)/syntax.cpp
-TEST_SOURCES := $(TEST_DIR)/test_editor_core.cpp $(SRC_DIR)/editor_ex_command_completion.cpp $(SRC_DIR)/editor_core.cpp $(SRC_DIR)/editor_commands.cpp $(SRC_DIR)/editor_session.cpp $(SRC_DIR)/editor_windows.cpp $(SRC_DIR)/clipboard.cpp $(SRC_DIR)/keybindings.cpp $(SRC_DIR)/config.cpp $(SRC_DIR)/json.cpp $(SRC_DIR)/logger.cpp $(SRC_DIR)/process_utils.cpp $(SRC_DIR)/string_utils.cpp $(SRC_DIR)/text_encoding_utils.cpp $(SRC_DIR)/position_utils.cpp $(SRC_DIR)/uri_utils.cpp $(SRC_DIR)/theme.cpp $(SRC_DIR)/services.cpp $(SRC_DIR)/lsp_service.cpp $(SRC_DIR)/syntax.cpp
+APP_SOURCES := $(SRC_DIR)/main.cpp $(SRC_DIR)/editor.cpp $(SRC_DIR)/editor_ui.cpp $(SRC_DIR)/editor_input.cpp $(SRC_DIR)/editor_control.cpp $(SRC_DIR)/editor_ex_commands.cpp $(SRC_DIR)/editor_ex_command_completion.cpp $(SRC_DIR)/editor_core.cpp $(SRC_DIR)/editor_commands.cpp $(SRC_DIR)/editor_session.cpp $(SRC_DIR)/editor_windows.cpp $(SRC_DIR)/clipboard.cpp $(SRC_DIR)/control_server.cpp $(SRC_DIR)/command_recording.cpp $(SRC_DIR)/keybindings.cpp $(SRC_DIR)/config.cpp $(SRC_DIR)/json.cpp $(SRC_DIR)/logger.cpp $(SRC_DIR)/lua_runtime.cpp $(SRC_DIR)/process_utils.cpp $(SRC_DIR)/string_utils.cpp $(SRC_DIR)/text_encoding_utils.cpp $(SRC_DIR)/position_utils.cpp $(SRC_DIR)/uri_utils.cpp $(SRC_DIR)/theme.cpp $(SRC_DIR)/services.cpp $(SRC_DIR)/lsp_service.cpp $(SRC_DIR)/syntax.cpp
+TEST_SOURCES := $(TEST_DIR)/test_editor_core.cpp $(SRC_DIR)/editor.cpp $(SRC_DIR)/editor_ui.cpp $(SRC_DIR)/editor_input.cpp $(SRC_DIR)/editor_control.cpp $(SRC_DIR)/editor_ex_commands.cpp $(SRC_DIR)/editor_ex_command_completion.cpp $(SRC_DIR)/editor_core.cpp $(SRC_DIR)/editor_commands.cpp $(SRC_DIR)/editor_session.cpp $(SRC_DIR)/editor_windows.cpp $(SRC_DIR)/clipboard.cpp $(SRC_DIR)/control_server.cpp $(SRC_DIR)/command_recording.cpp $(SRC_DIR)/keybindings.cpp $(SRC_DIR)/config.cpp $(SRC_DIR)/json.cpp $(SRC_DIR)/logger.cpp $(SRC_DIR)/lua_runtime.cpp $(SRC_DIR)/process_utils.cpp $(SRC_DIR)/string_utils.cpp $(SRC_DIR)/text_encoding_utils.cpp $(SRC_DIR)/position_utils.cpp $(SRC_DIR)/uri_utils.cpp $(SRC_DIR)/theme.cpp $(SRC_DIR)/services.cpp $(SRC_DIR)/lsp_service.cpp $(SRC_DIR)/syntax.cpp
 APP_OBJECTS := $(patsubst %.cpp,$(BUILD_DIR)/%.o,$(APP_SOURCES))
 TEST_OBJECTS := $(patsubst %.cpp,$(BUILD_DIR)/%.o,$(TEST_SOURCES))
 SHARED_OBJECTS := $(sort $(APP_OBJECTS) $(TEST_OBJECTS))

@@ -10,6 +10,7 @@ import theme;
 #include "editor_windows.hpp"
 #include "json.hpp"
 #include "keybindings.hpp"
+#include "lua_runtime.hpp"
 #include "position_utils.hpp"
 #include "services.hpp"
 #include "syntax.hpp"
@@ -240,6 +241,7 @@ struct EditorState {
 
     EditorSession session;
     EditorRuntime runtime;
+    LuaRuntime lua;
     EditorConfig config;
     KeyBindings keybindings;
     Theme theme{};
@@ -297,7 +299,7 @@ struct EditorState {
     void sync_active_window_buffer();
     void show_buffer_in_active_window(std::size_t buffer_id, bool reset_view = true);
     void focus_window(std::size_t window_id);
-    void enter_normal_mode();
+    void enter_normal_mode(bool preserve_status = false);
     void enter_insert_mode();
     void enter_command_mode();
     void enter_filter_command_mode();
@@ -320,12 +322,15 @@ struct EditorState {
     void set_search_status(const std::string &suffix = "");
     void show_command_completion();
     void execute_command();
+    void dispatch_editor_event(const EditorEvent &event);
+    void dispatch_editor_events(EditorCore &core);
     bool handle_popup_input(const std::string &token);
     void add_prompt_history_entry(const std::u32string &entry);
     void browse_prompt_history(bool previous);
     bool should_render_diagnostics(std::size_t window_id) const;
     void refresh_search_matches_for_window(std::size_t window_id);
     void handle_edit_command(const std::string &argument);
+    void handle_lua_command(const std::string &argument);
     bool reload_editor_configuration(std::string &error_message);
     void open_startup_file_picker(const std::optional<std::filesystem::path> &root = std::nullopt);
     void open_file_under_cursor();

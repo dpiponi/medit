@@ -400,7 +400,7 @@ std::string handle_control_request(EditorState &state, std::string_view request_
                 return error_control_result("unsaved changes; pass force=true to close").dump();
             }
             for (const EditorEvent &event : closed_events) {
-                state.runtime.dispatch_editor_event(event);
+                state.dispatch_editor_event(event);
             }
             state.buffer_ui_map.erase(target_buffer_id);
             state.syntax_ui_map.erase(target_buffer_id);
@@ -510,7 +510,7 @@ std::string handle_control_request(EditorState &state, std::string_view request_
 void run_editor(EditorState &state) {
     while (!state.should_quit) {
         for (EditorBuffer &buffer : state.session.buffers()) {
-            state.runtime.dispatch_editor_events(buffer.core);
+            state.dispatch_editor_events(buffer.core);
         }
         state.runtime.poll_services();
         state.handle_service_events();

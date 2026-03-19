@@ -1,0 +1,35 @@
+#pragma once
+
+import editor_core;
+
+#include <filesystem>
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
+
+struct EditorState;
+
+class LuaRuntime {
+  public:
+    LuaRuntime();
+    ~LuaRuntime();
+
+    LuaRuntime(const LuaRuntime &) = delete;
+    LuaRuntime &operator=(const LuaRuntime &) = delete;
+
+    bool available() const;
+    bool enabled() const;
+    bool initialize(
+        EditorState &state,
+        const std::optional<std::filesystem::path> &script_path,
+        std::string &error_message);
+    void shutdown();
+    bool execute_command(EditorState &state, const std::string &name, std::string &error_message);
+    void dispatch_editor_event(EditorState &state, const EditorEvent &event);
+    std::vector<std::string> registered_commands() const;
+
+  private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};

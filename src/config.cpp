@@ -403,6 +403,8 @@ EditorConfig load_editor_config_from_path(const std::filesystem::path &path) {
             config.lsp_path = resolve_config_reference(path, value);
         } else if (key == "syntax_config") {
             config.syntax_config_path = resolve_config_reference(path, value);
+        } else if (key == "lua") {
+            config.lua_path = resolve_config_reference(path, value);
         } else if (key == "log" || key == "log_file") {
             config.log_path = resolve_config_reference(path, value);
         } else if (key == "control_socket") {

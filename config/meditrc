@@ -4,6 +4,7 @@ keybindings = keybindings.json
 colors = themes/forest.json
 lsp = lsp.json
 syntax_config = syntax.json
+lua = init.lua
 
 right_justify_diagnostics = true
 

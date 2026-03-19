@@ -45,6 +45,7 @@ struct EditorConfig {
     std::optional<std::filesystem::path> colors_path;
     std::optional<std::filesystem::path> lsp_path;
     std::optional<std::filesystem::path> syntax_config_path;
+    std::optional<std::filesystem::path> lua_path;
     std::optional<std::filesystem::path> log_path;
     std::optional<std::filesystem::path> control_socket_path;
     ClipboardConfig clipboard;

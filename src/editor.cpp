@@ -411,6 +411,18 @@ void EditorState::set_status(const std::string &message) {
     status_message = message;
 }
 
+void EditorState::dispatch_editor_event(const EditorEvent &event) {
+    runtime.dispatch_editor_event(event);
+    lua.dispatch_editor_event(*this, event);
+}
+
+void EditorState::dispatch_editor_events(EditorCore &core) {
+    EditorEvents events = core.take_events();
+    for (const EditorEvent &event : events) {
+        dispatch_editor_event(event);
+    }
+}
+
 bool reload_editor_configuration(EditorState &state, std::string &error_message);
 void handle_service_events(EditorState &state);
 void begin_insert_session(EditorState &state);
@@ -734,7 +746,7 @@ if (!insert_session_active) {
     insert_session_active = false;
 }
 
-void EditorState::enter_normal_mode() {
+void EditorState::enter_normal_mode(bool preserve_status) {
 EditorCore &core = active_core();
     if (mode == Mode::Insert) {
         end_insert_session();
@@ -756,7 +768,9 @@ EditorCore &core = active_core();
     if (cursor.column > 0 && cursor.column == length) {
         core.set_cursor({cursor.row, cursor.column - 1});
     }
-    set_status(mode_name(mode));
+    if (!preserve_status) {
+        set_status(mode_name(mode));
+    }
 }
 
 void EditorState::enter_insert_mode() {
@@ -1161,7 +1175,7 @@ std::vector<std::string> run_capture_command(const std::string &command, const s
 
 void EditorState::request_definition() {
 EditorCore &core = active_core();
-    runtime.dispatch_editor_events(core);
+    dispatch_editor_events(core);
     ServiceRequest request;
     request.type = ServiceRequestType::GoToDefinition;
     request.document_uri = core.document_uri();
@@ -1172,7 +1186,7 @@ EditorCore &core = active_core();
 
 void EditorState::request_hover() {
 EditorCore &core = active_core();
-    runtime.dispatch_editor_events(core);
+    dispatch_editor_events(core);
     ServiceRequest request;
     request.type = ServiceRequestType::Hover;
     request.document_uri = core.document_uri();
@@ -1189,7 +1203,7 @@ EditorCore &core = active_core();
     if (mode == Mode::Insert) {
         end_insert_session();
     }
-    runtime.dispatch_editor_events(core);
+    dispatch_editor_events(core);
     auto is_identifier_char = [](char32_t codepoint) {
         return (codepoint >= U'a' && codepoint <= U'z') || (codepoint >= U'A' && codepoint <= U'Z') ||
             (codepoint >= U'0' && codepoint <= U'9') || codepoint == U'_';
@@ -1221,7 +1235,7 @@ EditorCore &core = active_core();
 
 void request_selection_range(EditorState &state) {
     EditorCore &core = state.active_core();
-    state.runtime.dispatch_editor_events(core);
+    state.dispatch_editor_events(core);
     ServiceRequest request;
     request.type = ServiceRequestType::SelectionRange;
     request.document_uri = core.document_uri();
@@ -1527,6 +1541,11 @@ bool EditorState::reload_editor_configuration(std::string &error_message) {
         }
         if (!config.lsp_servers.empty()) {
             runtime.start_services();
+        }
+        std::string lua_error;
+        if (!lua.initialize(*this, config.lua_path, lua_error)) {
+            error_message = lua_error;
+            return false;
         }
         return true;
     } catch (const std::exception &error) {
