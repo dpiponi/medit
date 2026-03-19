@@ -867,6 +867,18 @@ PopupMenuItems command_completion_items() {
     return items;
 }
 
+std::vector<std::string> lua_command_names(const LuaRuntime &lua) {
+    return lua.registered_commands();
+}
+
+void append_lua_command_completion_items(PopupMenuItems &items, const LuaRuntime &lua) {
+    std::vector<std::string> commands = lua_command_names(lua);
+    items.reserve(items.size() + commands.size());
+    for (const std::string &name : commands) {
+        items.push_back({name, "Lua command", name, std::nullopt});
+    }
+}
+
 std::optional<NamedEditorCommand> named_editor_command_from_verb(std::string_view verb) {
     auto found = std::find_if(
         kNamedEditorCommands.begin(),
@@ -977,7 +989,7 @@ void EditorState::show_command_completion() {
     if (command.starts_with(lua_prefix)) {
         PopupMenuItems items;
         std::string filter = command.substr(lua_prefix.size());
-        for (const std::string &name : lua.registered_commands()) {
+        for (const std::string &name : lua_command_names(lua)) {
             items.push_back({name, "Lua command", "lua-command " + name, std::nullopt});
         }
         if (items.empty()) {
@@ -1000,7 +1012,11 @@ void EditorState::show_command_completion() {
     show_menu_popup(
         *this,
         "Commands",
-        command_completion_items(),
+        [&]() {
+            PopupMenuItems items = command_completion_items();
+            append_lua_command_completion_items(items, lua);
+            return items;
+        }(),
         PopupApplyTarget::CommandBuffer,
         command_buffer,
         PopupFilterMode::PrefixLabelOnly);
@@ -1044,8 +1060,22 @@ void EditorState::execute_command() {
         handle_goto_line_command(verb);
     } else if (std::optional<NamedEditorCommand> named = named_editor_command_from_verb(verb)) {
         execute_named_editor_command(*this, *named, argument);
+    } else if (argument.empty()) {
+        std::string error_message;
+        if (lua.execute_command(*this, verb, error_message)) {
+            if (status_message.empty() || status_message == ":") {
+                set_status("Lua command: " + verb);
+            }
+        } else {
+            set_status("Unknown command: " + verb);
+        }
     } else {
-        set_status("Unknown command: " + verb);
+        std::vector<std::string> commands = lua_command_names(lua);
+        if (std::binary_search(commands.begin(), commands.end(), verb)) {
+            set_status("Lua commands do not take arguments");
+        } else {
+            set_status("Unknown command: " + verb);
+        }
     }
     enter_normal_mode(true);
 }

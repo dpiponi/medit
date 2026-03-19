@@ -1461,6 +1461,52 @@ void test_lua_runtime_registers_and_executes_command() {
     std::filesystem::remove_all(root);
 }
 
+void test_lua_commands_are_top_level_ex_commands() {
+    std::filesystem::path root = std::filesystem::temp_directory_path() / "medit_lua_top_level_command";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+
+    std::filesystem::path script_path = root / "init.lua";
+    {
+        std::ofstream script(script_path);
+        script << "medit.register_command('hello', function()\n"
+                  "  medit.set_status('hello from top level')\n"
+                  "end)\n";
+    }
+
+    EditorState state;
+    initialize_windows(state);
+    std::string error_message;
+    expect(state.lua.initialize(state, script_path, error_message), "lua runtime should initialize for top-level ex command test");
+    expect(error_message.empty(), "lua runtime init should not set an error for top-level ex command test");
+
+    state.enter_command_mode();
+    state.command_buffer = utf8_to_u32("he");
+    state.prompt_cursor = state.command_buffer.size();
+    state.show_command_completion();
+    expect(state.popup.visible, "command completion should show a popup for Lua commands");
+    expect(state.popup.kind == PopupKind::Menu, "command completion should use a menu popup for Lua commands");
+
+    bool saw_hello = false;
+    for (const PopupMenuItem &item : state.popup.items) {
+        if (item.label == "hello" && item.insert_text == "hello") {
+            saw_hello = true;
+            break;
+        }
+    }
+    expect(saw_hello, "top-level command completion should include registered Lua commands");
+
+    state.dismiss_popup();
+    state.command_buffer = utf8_to_u32("hello");
+    state.prompt_cursor = state.command_buffer.size();
+    state.execute_command();
+    expect(state.mode == Mode::Normal, "executing a top-level Lua command should return to normal mode");
+    expect(state.status_message == "hello from top level", "top-level ex command should execute the registered Lua command");
+
+    state.lua.shutdown();
+    std::filesystem::remove_all(root);
+}
+
 void test_command_execution_preserves_command_status() {
     EditorState state;
     initialize_windows(state);
@@ -2155,6 +2201,7 @@ int main() {
         test_lsp_config_rejects_duplicate_patterns();
         test_infer_language_id();
         test_lua_runtime_registers_and_executes_command();
+        test_lua_commands_are_top_level_ex_commands();
         test_command_execution_preserves_command_status();
         test_infer_workspace_root();
         test_process_utils_detect_missing_executables();
