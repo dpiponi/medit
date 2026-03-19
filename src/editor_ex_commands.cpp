@@ -333,6 +333,8 @@ bool update_meditrc_setting(
     return true;
 }
 
+bool parse_substitute_command(std::string_view command, SubstituteCommand &parsed, std::string &error_message);
+
 void EditorState::handle_pick_theme_command() {
     if (config.source_path.empty()) {
         set_status("Theme picker needs a meditrc");
@@ -655,31 +657,50 @@ void EditorState::execute_sed_command() {
 
     std::string script = u32_to_utf8(command_buffer);
     if (script.empty()) {
-        set_status("No sed command");
+        set_status("No substitute command");
         enter_normal_mode();
         return;
     }
 
-    std::u32string output_text;
+    SubstituteCommand substitute;
     std::string error_message;
-    if (!run_selection_filter_command(
-            *this,
-            "sed " + script,
-            core.read_text(*selection),
-            output_text,
-            error_message)) {
+    if (!parse_substitute_command(script, substitute, error_message)) {
         set_status(error_message);
         enter_normal_mode();
         return;
     }
 
-    if (core.selection_mode() == SelectionMode::Line && !output_text.empty() && output_text.back() != U'\n') {
-        output_text.push_back(U'\n');
+    std::size_t substitutions = 0;
+    if (core.selection_mode() == SelectionMode::Line) {
+        Range normalized = normalized_range(*selection);
+        std::size_t end_row = normalized.end.column == 0 && normalized.end.row > normalized.start.row
+            ? normalized.end.row - 1
+            : normalized.end.row;
+        substitutions = core.substitute_regex(
+            normalized.start.row,
+            end_row,
+            substitute.pattern,
+            substitute.replacement,
+            substitute.global,
+            error_message);
+    } else {
+        substitutions = core.substitute_regex_in_range(
+            *selection,
+            substitute.pattern,
+            substitute.replacement,
+            substitute.global,
+            error_message);
     }
-
-    core.replace_range(*selection, output_text);
     enter_normal_mode();
-    set_status("Selection filtered with sed");
+    if (!error_message.empty()) {
+        set_status(error_message);
+        return;
+    }
+    if (substitutions == 0) {
+        set_status("Pattern not found");
+        return;
+    }
+    set_status(count_label(substitutions, "substitution"));
 }
 
 enum class NamedEditorCommand {

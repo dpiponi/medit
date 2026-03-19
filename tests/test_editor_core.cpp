@@ -287,6 +287,20 @@ void test_substitute_regex() {
     std::size_t invalid = core.substitute_regex(0, 1, "(", "omega", true, error_message);
     expect(invalid == 0, "invalid regex should not apply substitutions");
     expect(error_message == "invalid regex", "invalid regex should return explicit error");
+
+    error_message.clear();
+    std::size_t whole_match = core.substitute_regex(0, 1, "(alpha)", "[\\1]&", true, error_message);
+    expect(error_message.empty(), "capture substitute should not report an error");
+    expect(whole_match == 3, "capture substitute should count all matches");
+    expect_text(core, "[alpha]alpha beta [alpha]alpha\nbeta [alpha]alpha", "capture substitute should support vi-style replacements");
+    expect(core.undo(), "undo capture substitute should succeed");
+    expect_text(core, "alpha beta alpha\nbeta alpha", "undo capture substitute should restore text");
+
+    error_message.clear();
+    std::size_t selected = core.substitute_regex_in_range({{0, 6}, {0, 10}}, "beta", "B&", false, error_message);
+    expect(error_message.empty(), "range substitute should not report an error");
+    expect(selected == 1, "range substitute should count one match");
+    expect_text(core, "alpha Bbeta alpha\nbeta alpha", "range substitute should only affect selected text");
 }
 
 void test_replace_selection_with_yank() {

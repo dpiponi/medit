@@ -1,4 +1,8 @@
-#include "editor_core.hpp"
+module;
+
+#include "position_utils.hpp"
+#include "text_encoding_utils.hpp"
+#include "uri_utils.hpp"
 
 #include <codecvt>
 #include <cstddef>
@@ -11,6 +15,10 @@
 #include <regex>
 #include <sstream>
 #include <utility>
+
+module editor_core;
+
+EditCommand::~EditCommand() = default;
 
 namespace {
 
@@ -1140,6 +1148,85 @@ std::size_t outdent_char_count(const std::u32string &line, std::size_t shiftwidt
     return removed_chars;
 }
 
+bool compile_substitute_regex(const std::string &pattern, std::regex &compiled, std::string &error_message) {
+    if (pattern.empty()) {
+        error_message = "empty substitute pattern";
+        return false;
+    }
+
+    try {
+        compiled = std::regex(pattern, std::regex::ECMAScript | std::regex::optimize);
+    } catch (const std::regex_error &) {
+        error_message = "invalid regex";
+        return false;
+    }
+    return true;
+}
+
+std::string translate_substitute_replacement(std::string_view replacement) {
+    std::string translated;
+    translated.reserve(replacement.size() * 2);
+
+    for (std::size_t index = 0; index < replacement.size(); ++index) {
+        char ch = replacement[index];
+        if (ch == '\\' && index + 1 < replacement.size()) {
+            char next = replacement[index + 1];
+            if (next >= '1' && next <= '9') {
+                translated.push_back('$');
+                translated.push_back(next);
+                ++index;
+                continue;
+            }
+            if (next == '0') {
+                translated += "$&";
+                ++index;
+                continue;
+            }
+            if (next == '&') {
+                translated.push_back('&');
+                ++index;
+                continue;
+            }
+
+            translated.push_back('\\');
+            if (next == '$') {
+                translated += "$$";
+            } else {
+                translated.push_back(next);
+            }
+            ++index;
+            continue;
+        }
+
+        if (ch == '&') {
+            translated += "$&";
+            continue;
+        }
+        if (ch == '$') {
+            translated += "$$";
+            continue;
+        }
+        translated.push_back(ch);
+    }
+
+    return translated;
+}
+
+std::size_t count_substitute_matches(const std::string &text, const std::regex &compiled, bool global) {
+    if (!std::regex_search(text, compiled)) {
+        return 0;
+    }
+    if (!global) {
+        return 1;
+    }
+
+    std::size_t substitutions = 0;
+    for (std::sregex_iterator it(text.begin(), text.end(), compiled), end; it != end; ++it) {
+        ++substitutions;
+    }
+    return substitutions;
+}
+
 bool EditorCore::apply_text_edits(const std::vector<TextEdit> &edits) {
     if (edits.empty()) {
         return false;
@@ -1223,44 +1310,27 @@ std::size_t EditorCore::substitute_regex(
         error_message = "invalid substitute range";
         return 0;
     }
-    if (pattern.empty()) {
-        error_message = "empty substitute pattern";
-        return 0;
-    }
 
     std::regex compiled;
-    try {
-        compiled = std::regex(pattern, std::regex::ECMAScript | std::regex::optimize);
-    } catch (const std::regex_error &) {
-        error_message = "invalid regex";
+    if (!compile_substitute_regex(pattern, compiled, error_message)) {
         return 0;
     }
+    std::string translated_replacement = translate_substitute_replacement(replacement);
 
     std::vector<TextEdit> edits;
     std::size_t substitutions = 0;
     for (std::size_t row = start_row; row <= end_row; ++row) {
         std::string line_utf8 = u32_to_utf8(lines_[row]);
-        if (!std::regex_search(line_utf8, compiled)) {
+        std::size_t row_substitutions = count_substitute_matches(line_utf8, compiled, global);
+        if (row_substitutions == 0) {
             continue;
-        }
-
-        std::size_t row_substitutions = 0;
-        if (global) {
-            for (std::sregex_iterator it(line_utf8.begin(), line_utf8.end(), compiled), end; it != end; ++it) {
-                if (it->length() == 0) {
-                    continue;
-                }
-                ++row_substitutions;
-            }
-        } else {
-            row_substitutions = 1;
         }
 
         std::regex_constants::match_flag_type flags = std::regex_constants::format_default;
         if (!global) {
             flags |= std::regex_constants::format_first_only;
         }
-        std::string replaced_utf8 = std::regex_replace(line_utf8, compiled, replacement, flags);
+        std::string replaced_utf8 = std::regex_replace(line_utf8, compiled, translated_replacement, flags);
         substitutions += row_substitutions;
         if (replaced_utf8 != line_utf8) {
             edits.push_back({line_range(row), utf8_to_u32(replaced_utf8)});
@@ -1272,6 +1342,40 @@ std::size_t EditorCore::substitute_regex(
     }
     if (!edits.empty()) {
         apply_text_edits(edits);
+    }
+    return substitutions;
+}
+
+std::size_t EditorCore::substitute_regex_in_range(
+    Range range,
+    const std::string &pattern,
+    const std::string &replacement,
+    bool global,
+    std::string &error_message) {
+    Range normalized = normalized_range(range);
+    if (normalized.start.row >= lines_.size() || normalized.end.row >= lines_.size()) {
+        error_message = "invalid substitute range";
+        return 0;
+    }
+
+    std::regex compiled;
+    if (!compile_substitute_regex(pattern, compiled, error_message)) {
+        return 0;
+    }
+    std::string translated_replacement = translate_substitute_replacement(replacement);
+    std::string text_utf8 = u32_to_utf8(read_text(normalized));
+    std::size_t substitutions = count_substitute_matches(text_utf8, compiled, global);
+    if (substitutions == 0) {
+        return 0;
+    }
+
+    std::regex_constants::match_flag_type flags = std::regex_constants::format_default;
+    if (!global) {
+        flags |= std::regex_constants::format_first_only;
+    }
+    std::string replaced_utf8 = std::regex_replace(text_utf8, compiled, translated_replacement, flags);
+    if (replaced_utf8 != text_utf8) {
+        replace_range(normalized, utf8_to_u32(replaced_utf8));
     }
     return substitutions;
 }

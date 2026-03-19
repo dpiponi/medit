@@ -150,7 +150,7 @@ export using EditorEvents = std::vector<EditorEvent>;
 export class EditorCore;
 
 export struct EditCommand {
-    virtual ~EditCommand() = default;
+    virtual ~EditCommand();
     virtual void apply(EditorCore &core) = 0;
     virtual void undo(EditorCore &core) = 0;
     virtual const char *name() const = 0;
@@ -170,22 +170,6 @@ export struct EditorCommandAccess {
     static std::u32string delete_range(EditorCore &core, Range range);
     static Position position_after_text(const EditorCore &core, Position position, const std::u32string &text);
 };
-
-export std::u32string utf8_to_u32(const std::string &text);
-export std::string u32_to_utf8(const std::u32string &text);
-
-export std::string file_uri_for_path(const std::string &path);
-export std::string file_path_from_uri(const std::string &uri);
-export std::string normalize_document_uri(const std::string &uri);
-export std::string percent_encode_path(const std::string &path);
-export std::string percent_decode_path(const std::string &path);
-
-export bool position_less_than(Position left, Position right);
-export bool positions_equal(Position left, Position right);
-export Range normalized_range(Range range);
-export bool range_contains(const Range &range, Position position);
-export bool ranges_overlap(const Range &left, const Range &right);
-export Range full_document_range(const Lines &lines);
 
 export class EditorCore {
   public:
@@ -278,6 +262,12 @@ export class EditorCore {
     std::size_t substitute_regex(
         std::size_t start_row,
         std::size_t end_row,
+        const std::string &pattern,
+        const std::string &replacement,
+        bool global,
+        std::string &error_message);
+    std::size_t substitute_regex_in_range(
+        Range range,
         const std::string &pattern,
         const std::string &replacement,
         bool global,
