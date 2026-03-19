@@ -1,8 +1,19 @@
 module;
 
-#include "theme.hpp"
+#include <array>
+#include <filesystem>
+#include <string>
+
+struct EditorConfig;
 
 export module theme;
+
+import editor_core;
+
+export struct Theme {
+    std::array<TextStyle, static_cast<std::size_t>(StyleRole::DiagnosticSelected) + 1> styles;
+    std::string source_path;
+};
 
 export Theme load_theme();
 export Theme load_theme(const EditorConfig &config);

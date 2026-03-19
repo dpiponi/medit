@@ -1,6 +1,8 @@
-#include "editor_commands.hpp"
+module;
 
 #include <string_view>
+
+module editor_commands;
 
 EditorCommandResult apply_editor_command(EditorCore &core, const EditorCommand &command) {
     EditorCommandResult result;

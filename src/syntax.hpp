@@ -1,7 +1,8 @@
 #pragma once
 
+import editor_core;
+
 #include "config.hpp"
-#include "editor_core.hpp"
 
 #include <expected>
 #include <optional>

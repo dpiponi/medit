@@ -49,16 +49,17 @@ void EditorState::handle_edit_command(const std::string &argument) {
         set_status("No file name");
         return;
     }
-    log_debug("edit command open path=" + argument);
-    EditorBuffer *buffer = session.open_file(argument, true);
+    std::string path = expand_user_path(argument);
+    log_debug("edit command open path=" + path);
+    EditorBuffer *buffer = session.open_file(path, true);
     if (buffer) {
         windows.set_active_buffer_id(buffer->id);
         sync_active_window_buffer();
         window_ui(windows.active_window_id()) = WindowUiState{};
-        log_debug("edit command opened path=" + argument);
-        set_status(prefixed_message("Opened ", argument));
+        log_debug("edit command opened path=" + path);
+        set_status(prefixed_message("Opened ", path));
     } else {
-        log_debug("edit command open failed path=" + argument);
+        log_debug("edit command open failed path=" + path);
         set_status("Could not open file");
     }
 }

@@ -1,16 +1,20 @@
 #pragma once
 
+import editor_core;
+import theme;
+
 #include "config.hpp"
 #include "control_server.hpp"
 #include "editor_commands.hpp"
-#include "editor_core.hpp"
 #include "editor_session.hpp"
 #include "editor_windows.hpp"
 #include "json.hpp"
 #include "keybindings.hpp"
+#include "position_utils.hpp"
 #include "services.hpp"
 #include "syntax.hpp"
-#include "theme.hpp"
+#include "text_encoding_utils.hpp"
+#include "uri_utils.hpp"
 
 #include <chrono>
 #include <curses.h>

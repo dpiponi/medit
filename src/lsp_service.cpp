@@ -3,8 +3,11 @@
 #include "editor_commands.hpp"
 #include "json.hpp"
 #include "logger.hpp"
+#include "position_utils.hpp"
 #include "process_utils.hpp"
 #include "string_utils.hpp"
+#include "text_encoding_utils.hpp"
+#include "uri_utils.hpp"
 
 #include <algorithm>
 #include <array>

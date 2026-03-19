@@ -1,7 +1,10 @@
-#include "editor_session.hpp"
+module;
 
 #include <filesystem>
+#include <iterator>
 #include <utility>
+
+module editor_session;
 
 EditorSession::EditorSession() {
     new_buffer(true);

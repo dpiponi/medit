@@ -1,7 +1,8 @@
-#include "clipboard.hpp"
+module;
 
 #include "logger.hpp"
 #include "process_utils.hpp"
+#include "text_encoding_utils.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -18,6 +19,8 @@
 #include <sys/file.h>
 #include <unistd.h>
 #endif
+
+module clipboard;
 
 namespace {
 

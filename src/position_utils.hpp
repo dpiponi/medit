@@ -1,6 +1,6 @@
 #pragma once
 
-#include "editor_core.hpp"
+import editor_core;
 
 #include <vector>
 

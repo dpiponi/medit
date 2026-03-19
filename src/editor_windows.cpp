@@ -195,12 +195,9 @@ bool WindowManager::close_others() {
         return false;
     }
 
-    windows_.erase(
-        std::remove_if(
-            windows_.begin(),
-            windows_.end(),
-            [keep_window_id](const EditorWindow &candidate) { return candidate.id != keep_window_id; }),
-        windows_.end());
+    EditorWindow kept_window = *window;
+    windows_.clear();
+    windows_.push_back(std::move(kept_window));
 
     nodes_.clear();
     LayoutNode root;

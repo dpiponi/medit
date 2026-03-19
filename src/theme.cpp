@@ -1,6 +1,5 @@
 module;
 
-#include "theme.hpp"
 #include "config.hpp"
 #include "json.hpp"
 

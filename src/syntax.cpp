@@ -2,6 +2,7 @@
 
 #include "logger.hpp"
 #include "string_utils.hpp"
+#include "text_encoding_utils.hpp"
 
 #include <expected>
 #include <cstdint>

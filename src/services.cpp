@@ -1,7 +1,13 @@
-#include "services.hpp"
+module;
 
 #include <algorithm>
+#include <memory>
+#include <optional>
+#include <string>
 #include <utility>
+#include <vector>
+
+module services;
 
 std::optional<int> EditorService::poll_interval_ms() const {
     return std::nullopt;

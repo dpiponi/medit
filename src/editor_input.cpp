@@ -199,12 +199,14 @@ bool EditorState::close_other_windows() {
     if (!windows.close_others()) {
         return false;
     }
-    for (auto it = window_ui_map.begin(); it != window_ui_map.end();) {
-        if (!windows.find_window(it->first)) {
-            it = window_ui_map.erase(it);
-        } else {
-            ++it;
-        }
+    std::size_t active_window_id = windows.active_window_id();
+    auto kept = window_ui_map.find(active_window_id);
+    if (kept == window_ui_map.end()) {
+        window_ui_map.clear();
+    } else {
+        WindowUiState kept_state = std::move(kept->second);
+        window_ui_map.clear();
+        window_ui_map.emplace(active_window_id, std::move(kept_state));
     }
     sync_active_window_buffer();
     active_buffer_ui();
