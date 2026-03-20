@@ -3,7 +3,6 @@
 
 #ifdef _WIN32
 
-#include "editor_internal.hpp"
 #include "lsp_service.hpp"
 #include "control_server.hpp"
 #include "clipboard.hpp"

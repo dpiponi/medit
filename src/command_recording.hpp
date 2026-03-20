@@ -1,6 +1,6 @@
 #pragma once
 
-#include "editor_internal.hpp"
+#include "editor_state.hpp"
 
 #include <string>
 #include <vector>
