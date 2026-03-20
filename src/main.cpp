@@ -1,6 +1,5 @@
 #include "editor_app.hpp"
 #include "config.hpp"
-#include "keybindings.hpp"
 #include "theme.hpp"
 #include "services.hpp"
 #include "lsp_service.hpp"
@@ -242,6 +241,7 @@ int run_health_check() {
 }  // namespace
 
 import theme;
+import keybindings;
 
 int main(int argc, char **argv) {
     if (argc == 2 && std::string_view(argv[1]) == "--health") {

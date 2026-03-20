@@ -9,7 +9,6 @@ import theme;
 #include "editor_session.hpp"
 #include "editor_windows.hpp"
 #include "json.hpp"
-#include "keybindings.hpp"
 #include "lua_runtime.hpp"
 #include "position_utils.hpp"
 #include "services.hpp"
@@ -27,6 +26,8 @@ import theme;
 #include <string>
 #include <utility>
 #include <vector>
+
+import keybindings;
 
 enum class Mode {
     Normal,

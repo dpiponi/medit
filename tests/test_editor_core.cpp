@@ -5,7 +5,6 @@
 #include "editor_internal.hpp"
 #include "editor_session.hpp"
 #include "editor_windows.hpp"
-#include "keybindings.hpp"
 #include "lsp_service.hpp"
 #include "process_utils.hpp"
 #include "services.hpp"
@@ -27,6 +26,7 @@
 #include <unistd.h>
 
 import theme;
+import keybindings;
 
 namespace {
 
