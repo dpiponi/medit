@@ -3,7 +3,7 @@ PYTHON ?= python3
 UNAME_S := $(shell uname -s)
 HAVE_PKGCONFIG := $(shell command -v pkg-config >/dev/null 2>&1 && echo yes)
 
-BASE_CPPFLAGS := -Isrc -Ithird_party -D_XOPEN_SOURCE_EXTENDED=1
+BASE_CPPFLAGS := -Isrc -Isrc/app -Isrc/editor -Isrc/core -Isrc/platform -Isrc/util -Ithird_party -D_XOPEN_SOURCE_EXTENDED=1
 BASE_CXXFLAGS := -std=c++23 -Wall -Wextra -pedantic
 BASE_LDFLAGS :=
 BASE_LDLIBS :=
@@ -61,32 +61,32 @@ TEST_DIR := tests
 BUILD_DIR := build
 MODULE_DIR := $(BUILD_DIR)/modules
 
-THEME_MODULE_INTERFACE := $(SRC_DIR)/theme.cppm
+THEME_MODULE_INTERFACE := $(SRC_DIR)/core/theme.cppm
 THEME_MODULE_OBJECT := $(BUILD_DIR)/$(THEME_MODULE_INTERFACE).o
 THEME_MODULE_PCM := $(MODULE_DIR)/theme.pcm
-CORE_MODULE_INTERFACE := $(SRC_DIR)/editor_core.cppm
+CORE_MODULE_INTERFACE := $(SRC_DIR)/core/editor_core.cppm
 CORE_MODULE_OBJECT := $(BUILD_DIR)/$(CORE_MODULE_INTERFACE).o
 CORE_MODULE_PCM := $(MODULE_DIR)/editor_core.pcm
-CLIPBOARD_MODULE_INTERFACE := $(SRC_DIR)/clipboard.cppm
+CLIPBOARD_MODULE_INTERFACE := $(SRC_DIR)/platform/clipboard.cppm
 CLIPBOARD_MODULE_OBJECT := $(BUILD_DIR)/$(CLIPBOARD_MODULE_INTERFACE).o
 CLIPBOARD_MODULE_PCM := $(MODULE_DIR)/clipboard.pcm
-SESSION_MODULE_INTERFACE := $(SRC_DIR)/editor_session.cppm
+SESSION_MODULE_INTERFACE := $(SRC_DIR)/core/editor_session.cppm
 SESSION_MODULE_OBJECT := $(BUILD_DIR)/$(SESSION_MODULE_INTERFACE).o
 SESSION_MODULE_PCM := $(MODULE_DIR)/editor_session.pcm
-COMMANDS_MODULE_INTERFACE := $(SRC_DIR)/editor_commands.cppm
+COMMANDS_MODULE_INTERFACE := $(SRC_DIR)/core/editor_commands.cppm
 COMMANDS_MODULE_OBJECT := $(BUILD_DIR)/$(COMMANDS_MODULE_INTERFACE).o
 COMMANDS_MODULE_PCM := $(MODULE_DIR)/editor_commands.pcm
-SERVICES_MODULE_INTERFACE := $(SRC_DIR)/services.cppm
+SERVICES_MODULE_INTERFACE := $(SRC_DIR)/core/services.cppm
 SERVICES_MODULE_OBJECT := $(BUILD_DIR)/$(SERVICES_MODULE_INTERFACE).o
 SERVICES_MODULE_PCM := $(MODULE_DIR)/services.pcm
-CONFIG_MODULE_INTERFACE := $(SRC_DIR)/config.cppm
+CONFIG_MODULE_INTERFACE := $(SRC_DIR)/core/config.cppm
 CONFIG_MODULE_OBJECT := $(BUILD_DIR)/$(CONFIG_MODULE_INTERFACE).o
 CONFIG_MODULE_PCM := $(MODULE_DIR)/config.pcm
-KEYBINDINGS_MODULE_INTERFACE := $(SRC_DIR)/keybindings.cppm
+KEYBINDINGS_MODULE_INTERFACE := $(SRC_DIR)/core/keybindings.cppm
 KEYBINDINGS_MODULE_OBJECT := $(BUILD_DIR)/$(KEYBINDINGS_MODULE_INTERFACE).o
 KEYBINDINGS_MODULE_PCM := $(MODULE_DIR)/keybindings.pcm
-APP_SOURCES := $(SRC_DIR)/main.cpp $(SRC_DIR)/editor.cpp $(SRC_DIR)/editor_ui.cpp $(SRC_DIR)/editor_input.cpp $(SRC_DIR)/editor_control.cpp $(SRC_DIR)/editor_ex_commands.cpp $(SRC_DIR)/editor_ex_command_completion.cpp $(SRC_DIR)/editor_core.cpp $(SRC_DIR)/editor_commands.cpp $(SRC_DIR)/editor_session.cpp $(SRC_DIR)/editor_windows.cpp $(SRC_DIR)/clipboard.cpp $(SRC_DIR)/control_server.cpp $(SRC_DIR)/command_recording.cpp $(SRC_DIR)/config.cpp $(SRC_DIR)/json.cpp $(SRC_DIR)/logger.cpp $(SRC_DIR)/lua_runtime.cpp $(SRC_DIR)/process_utils.cpp $(SRC_DIR)/string_utils.cpp $(SRC_DIR)/text_encoding_utils.cpp $(SRC_DIR)/position_utils.cpp $(SRC_DIR)/uri_utils.cpp $(SRC_DIR)/theme.cpp $(SRC_DIR)/services.cpp $(SRC_DIR)/lsp_service.cpp $(SRC_DIR)/syntax.cpp
-TEST_SOURCES := $(TEST_DIR)/test_editor_core.cpp $(SRC_DIR)/editor.cpp $(SRC_DIR)/editor_ui.cpp $(SRC_DIR)/editor_input.cpp $(SRC_DIR)/editor_control.cpp $(SRC_DIR)/editor_ex_commands.cpp $(SRC_DIR)/editor_ex_command_completion.cpp $(SRC_DIR)/editor_core.cpp $(SRC_DIR)/editor_commands.cpp $(SRC_DIR)/editor_session.cpp $(SRC_DIR)/editor_windows.cpp $(SRC_DIR)/clipboard.cpp $(SRC_DIR)/control_server.cpp $(SRC_DIR)/command_recording.cpp $(SRC_DIR)/config.cpp $(SRC_DIR)/json.cpp $(SRC_DIR)/logger.cpp $(SRC_DIR)/lua_runtime.cpp $(SRC_DIR)/process_utils.cpp $(SRC_DIR)/string_utils.cpp $(SRC_DIR)/text_encoding_utils.cpp $(SRC_DIR)/position_utils.cpp $(SRC_DIR)/uri_utils.cpp $(SRC_DIR)/theme.cpp $(SRC_DIR)/services.cpp $(SRC_DIR)/lsp_service.cpp $(SRC_DIR)/syntax.cpp
+APP_SOURCES := $(SRC_DIR)/app/main.cpp $(SRC_DIR)/editor/editor.cpp $(SRC_DIR)/editor/editor_ui.cpp $(SRC_DIR)/editor/editor_input.cpp $(SRC_DIR)/editor/editor_control.cpp $(SRC_DIR)/editor/editor_ex_commands.cpp $(SRC_DIR)/editor/editor_ex_command_completion.cpp $(SRC_DIR)/core/editor_core.cpp $(SRC_DIR)/core/editor_commands.cpp $(SRC_DIR)/core/editor_session.cpp $(SRC_DIR)/editor/editor_windows.cpp $(SRC_DIR)/platform/clipboard.cpp $(SRC_DIR)/platform/control_server.cpp $(SRC_DIR)/editor/command_recording.cpp $(SRC_DIR)/core/config.cpp $(SRC_DIR)/util/json.cpp $(SRC_DIR)/util/logger.cpp $(SRC_DIR)/platform/lua_runtime.cpp $(SRC_DIR)/util/process_utils.cpp $(SRC_DIR)/util/string_utils.cpp $(SRC_DIR)/util/text_encoding_utils.cpp $(SRC_DIR)/util/position_utils.cpp $(SRC_DIR)/util/uri_utils.cpp $(SRC_DIR)/core/theme.cpp $(SRC_DIR)/core/services.cpp $(SRC_DIR)/platform/lsp_service.cpp $(SRC_DIR)/core/syntax.cpp
+TEST_SOURCES := $(TEST_DIR)/test_editor_core.cpp $(SRC_DIR)/editor/editor.cpp $(SRC_DIR)/editor/editor_ui.cpp $(SRC_DIR)/editor/editor_input.cpp $(SRC_DIR)/editor/editor_control.cpp $(SRC_DIR)/editor/editor_ex_commands.cpp $(SRC_DIR)/editor/editor_ex_command_completion.cpp $(SRC_DIR)/core/editor_core.cpp $(SRC_DIR)/core/editor_commands.cpp $(SRC_DIR)/core/editor_session.cpp $(SRC_DIR)/editor/editor_windows.cpp $(SRC_DIR)/platform/clipboard.cpp $(SRC_DIR)/platform/control_server.cpp $(SRC_DIR)/editor/command_recording.cpp $(SRC_DIR)/core/config.cpp $(SRC_DIR)/util/json.cpp $(SRC_DIR)/util/logger.cpp $(SRC_DIR)/platform/lua_runtime.cpp $(SRC_DIR)/util/process_utils.cpp $(SRC_DIR)/util/string_utils.cpp $(SRC_DIR)/util/text_encoding_utils.cpp $(SRC_DIR)/util/position_utils.cpp $(SRC_DIR)/util/uri_utils.cpp $(SRC_DIR)/core/theme.cpp $(SRC_DIR)/core/services.cpp $(SRC_DIR)/platform/lsp_service.cpp $(SRC_DIR)/core/syntax.cpp
 APP_OBJECTS := $(patsubst %.cpp,$(BUILD_DIR)/%.o,$(APP_SOURCES))
 TEST_OBJECTS := $(patsubst %.cpp,$(BUILD_DIR)/%.o,$(TEST_SOURCES))
 SHARED_OBJECTS := $(sort $(APP_OBJECTS) $(TEST_OBJECTS))
