@@ -214,6 +214,20 @@ std::string shell_printf_lines_command(const std::vector<std::string> &lines) {
     return command;
 }
 
+void restore_editor_terminal_state_after_shell_command(EditorState &state) {
+    reset_prog_mode();
+    raw();
+    noecho();
+    keypad(stdscr, TRUE);
+    refresh();
+    clearok(stdscr, TRUE);
+    flushinp();
+    state.pending.tokens.clear();
+    state.pending.motion = PendingMotion::None;
+    state.pending.motion_repeat_count = 1;
+    state.pending.repeat_digits.clear();
+}
+
 std::optional<std::string> EditorState::run_picker_command(const std::string &pipeline_command, std::string &error_message) {
 #if defined(__unix__) || defined(__APPLE__)
     if (std::optional<std::string> missing = missing_executable_in_pipeline(pipeline_command)) {
@@ -244,9 +258,7 @@ std::optional<std::string> EditorState::run_picker_command(const std::string &pi
     endwin();
     restore_shell_terminal_state();
     int result = std::system(shell_command.c_str());
-    reset_prog_mode();
-    refresh();
-    clearok(stdscr, TRUE);
+    restore_editor_terminal_state_after_shell_command(*this);
     log_debug("picker exit code=" + std::to_string(result));
     log_debug("external command kind=picker exit command=" + shell_command + " status=" + std::to_string(result));
 
@@ -436,9 +448,7 @@ bool EditorState::run_filter_command(
     endwin();
     restore_shell_terminal_state();
     int result = std::system(shell_command.c_str());
-    reset_prog_mode();
-    refresh();
-    clearok(stdscr, TRUE);
+    restore_editor_terminal_state_after_shell_command(*this);
     log_debug("external command kind=selection-filter exit command=" + shell_command + " status=" + std::to_string(result));
 
     std::ifstream output_file(output_path, std::ios::binary);
