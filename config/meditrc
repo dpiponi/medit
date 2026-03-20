@@ -1,7 +1,7 @@
 # Copy this file to ./.config/meditrc or ~/.config/meditrc.
 # Paths are resolved relative to .config/medit/ unless absolute.
 keybindings = keybindings.json
-colors = themes/forest.json
+colors = themes/andromeda_strain.json
 lsp = lsp.json
 syntax_config = syntax.json
 lua = init.lua

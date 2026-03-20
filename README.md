@@ -279,15 +279,7 @@ The checked-in example config is:
 - [`config/medit/keybindings.json`](/home/dan/de/config/medit/keybindings.json)
 - [`config/medit/lsp.json`](/home/dan/de/config/medit/lsp.json)
 - [`config/medit/syntax.json`](/home/dan/de/config/medit/syntax.json)
-- [`config/medit/themes/default.json`](/home/dan/de/config/medit/themes/default.json)
-- [`config/medit/themes/neon.json`](/home/dan/de/config/medit/themes/neon.json)
-- [`config/medit/themes/forest.json`](/home/dan/de/config/medit/themes/forest.json)
-- [`config/medit/themes/dragon.json`](/home/dan/de/config/medit/themes/dragon.json)
-- [`config/medit/themes/tiger.json`](/home/dan/de/config/medit/themes/tiger.json)
-- [`config/medit/themes/seaside.json`](/home/dan/de/config/medit/themes/seaside.json)
-- [`config/medit/themes/luxor.json`](/home/dan/de/config/medit/themes/luxor.json)
 - [`config/medit/themes/matrix.json`](/home/dan/de/config/medit/themes/matrix.json)
-- [`config/medit/themes/assassin.json`](/home/dan/de/config/medit/themes/assassin.json)
 - [`config/medit/themes/terminator.json`](/home/dan/medit/config/medit/themes/terminator.json)
 - [`config/medit/themes/blade_runner.json`](/home/dan/medit/config/medit/themes/blade_runner.json)
 - [`config/medit/themes/2001.json`](/home/dan/medit/config/medit/themes/2001.json)
@@ -310,7 +302,6 @@ The checked-in example config is:
 - [`config/medit/themes/annihilation.json`](/home/dan/medit/config/medit/themes/annihilation.json)
 - [`config/medit/themes/oblivion.json`](/home/dan/medit/config/medit/themes/oblivion.json)
 - [`config/medit/themes/interstellar.json`](/home/dan/medit/config/medit/themes/interstellar.json)
-- [`config/medit/themes/ghost.json`](/home/dan/de/config/medit/themes/ghost.json)
 
 If `meditrc` is absent, `medit` falls back to default file names in `./.config/medit/` and then `~/.config/medit/`. If those files are also absent, it falls back to embedded defaults.
 
@@ -325,13 +316,13 @@ Then edit `./.config/meditrc` and the JSON files under `./.config/medit/` for yo
 To switch themes, update `colors = ...` in your `meditrc`, for example:
 
 ```ini
-colors = themes/neon.json
+colors = themes/terminator.json
 ```
 
 or:
 
 ```ini
-colors = themes/forest.json
+colors = themes/andromeda_strain.json
 ```
 
 Theme color values can use:
