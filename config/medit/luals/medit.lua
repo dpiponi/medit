@@ -70,6 +70,15 @@ function M.set_status(message) end
 ---@return string
 function M.current_working_directory() end
 
+---@return string|nil
+function M.current_file_path() end
+
+---@return string|nil
+function M.workspace_root() end
+
+---@return string|nil
+function M.token_under_cursor() end
+
 ---@param title string
 ---@param text string
 function M.show_popup(title, text) end
@@ -93,6 +102,10 @@ function M.open_location(path, position) end
 ---@param name string
 ---@return boolean
 function M.executable_exists(name) end
+
+---@param path string
+---@return boolean
+function M.file_exists(path) end
 
 ---@param text string
 ---@return string

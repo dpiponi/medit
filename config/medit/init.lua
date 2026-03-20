@@ -85,6 +85,133 @@ local function resolve_path(path)
   return medit.current_working_directory() .. "/" .. path
 end
 
+local function split_lines(text)
+  local lines = {}
+  for line in string.gmatch(text, "([^\n]+)") do
+    table.insert(lines, line)
+  end
+  return lines
+end
+
+local function dirname(path)
+  if not path or path == "" then
+    return nil
+  end
+  local normalized = string.gsub(path, "\\", "/")
+  local dir = string.match(normalized, "^(.*)/[^/]*$")
+  return dir
+end
+
+local function resolve_direct_file_reference(token)
+  if not token or token == "" then
+    return nil
+  end
+  if string.sub(token, 1, 1) == "/" then
+    return medit.file_exists(token) and token or nil
+  end
+
+  local roots = {}
+  local current_file = medit.current_file_path()
+  if current_file then
+    local current_dir = dirname(current_file)
+    if current_dir then
+      table.insert(roots, current_dir)
+    end
+  end
+  local workspace_root = medit.workspace_root()
+  if workspace_root and workspace_root ~= "" then
+    table.insert(roots, workspace_root)
+  end
+  table.insert(roots, medit.current_working_directory())
+
+  for _, root in ipairs(roots) do
+    local candidate = root .. "/" .. token
+    if medit.file_exists(candidate) then
+      return candidate
+    end
+  end
+  return nil
+end
+
+local function workspace_file_matches(token)
+  local workspace_root = medit.workspace_root()
+  if not workspace_root or workspace_root == "" then
+    return {}
+  end
+  local finder = nil
+  if medit.executable_exists("fdfind") then
+    finder = "fdfind"
+  elseif medit.executable_exists("fd") then
+    finder = "fd"
+  else
+    return {}
+  end
+
+  local pattern = token
+  if not string.match(token, "/") then
+    local filename = string.match(token, "([^/\\]+)$")
+    pattern = filename or token
+  else
+    pattern = "*" .. token
+  end
+
+  local command = finder ..
+    " -a -t f -g " .. medit.shell_quote(pattern) ..
+    " " .. medit.shell_quote(workspace_root) ..
+    " 2>/dev/null"
+  local output, err = medit.run_filter(command, "")
+  if not output then
+    return nil, err
+  end
+
+  local matches = {}
+  local seen = {}
+  for _, line in ipairs(split_lines(output)) do
+    if medit.file_exists(line) and not seen[line] then
+      seen[line] = true
+      table.insert(matches, line)
+    end
+  end
+  table.sort(matches)
+  return matches
+end
+
+local function open_file_under_cursor()
+  local token = medit.token_under_cursor()
+  if not token then
+    medit.set_status("No file reference under cursor")
+    return
+  end
+
+  local direct = resolve_direct_file_reference(token)
+  if direct then
+    medit.open_file(direct)
+    medit.set_status("Opened " .. direct)
+    return
+  end
+
+  local matches, err = workspace_file_matches(token)
+  if matches == nil then
+    medit.set_status(err or "file lookup failed")
+    return
+  end
+  if #matches == 0 then
+    if not medit.executable_exists("fdfind") and not medit.executable_exists("fd") then
+      medit.set_status("Missing executable: fdfind/fd")
+    else
+      medit.set_status("File not found: " .. token)
+    end
+    return
+  end
+  if #matches > 1 then
+    medit.set_status("Ambiguous file reference: " .. token)
+    return
+  end
+
+  medit.open_file(matches[1])
+  medit.set_status("Opened " .. matches[1])
+end
+
 local function grep(argument)
   if argument == nil or argument == "" then
     medit.set_status("No grep pattern")
@@ -326,6 +453,7 @@ end
 medit.register_command("lua-status", show_status_summary)
 medit.register_command("edit-lua-init", edit_lua_init)
 medit.register_command("find-file", find_file)
+medit.register_command("open-file-under-cursor", open_file_under_cursor)
 medit.register_command("grep", grep)
 medit.register_command("pick-theme", pick_theme)
 medit.register_command("ai", ai_edit)

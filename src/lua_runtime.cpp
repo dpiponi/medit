@@ -136,6 +136,67 @@ std::filesystem::path theme_directory_for_config(const EditorConfig &config) {
     return {};
 }
 
+std::optional<std::string> path_token_under_cursor(const EditorCore &core) {
+    Position cursor = core.cursor();
+    if (cursor.row >= core.line_count()) {
+        return std::nullopt;
+    }
+    const std::u32string &line = core.lines()[cursor.row];
+    if (line.empty()) {
+        return std::nullopt;
+    }
+
+    auto is_path_char = [](char32_t ch) {
+        return (ch >= U'a' && ch <= U'z') || (ch >= U'A' && ch <= U'Z') || (ch >= U'0' && ch <= U'9') ||
+            ch == U'_' || ch == U'-' || ch == U'.' || ch == U'/' || ch == U'\\';
+    };
+
+    std::size_t column = cursor.column;
+    if (column >= line.size()) {
+        if (column == 0) {
+            return std::nullopt;
+        }
+        column = line.size() - 1;
+    } else if (!is_path_char(line[column]) && column > 0 && is_path_char(line[column - 1])) {
+        --column;
+    }
+
+    if (!is_path_char(line[column])) {
+        return std::nullopt;
+    }
+
+    std::size_t start = column;
+    while (start > 0 && is_path_char(line[start - 1])) {
+        --start;
+    }
+    std::size_t end = column + 1;
+    while (end < line.size() && is_path_char(line[end])) {
+        ++end;
+    }
+
+    std::string token = u32_to_utf8(line.substr(start, end - start));
+    while (!token.empty() && (token.front() == '"' || token.front() == '\'')) {
+        token.erase(token.begin());
+    }
+    while (!token.empty() && (token.back() == '"' || token.back() == '\'' || token.back() == ',' || token.back() == ';')) {
+        token.pop_back();
+    }
+    if (token.empty()) {
+        return std::nullopt;
+    }
+    return token;
+}
+
+std::filesystem::path workspace_root_for_core(const EditorState &state, const EditorCore &core) {
+    if (const LspServerConfig *server = matching_lsp_server(state.config, core.file_path())) {
+        return infer_workspace_root(*server, core.file_path());
+    }
+    if (core.file_path()) {
+        return std::filesystem::path(*core.file_path()).parent_path();
+    }
+    return std::filesystem::current_path();
+}
+
 std::optional<std::string> resolve_ai_command(const EditorConfig &config) {
     if (config.ai_command && !config.ai_command->empty()) {
         return config.ai_command;
@@ -311,6 +372,51 @@ struct LuaRuntime::Impl {
     static int lua_current_working_directory(lua_State *lua_state) {
         std::string cwd = std::filesystem::current_path().string();
         lua_pushlstring(lua_state, cwd.data(), cwd.size());
+        return 1;
+    }
+
+    static int lua_current_file_path(lua_State *lua_state) {
+        LuaRuntime::Impl *impl = from_upvalue(lua_state);
+        if (!impl->with_current_state(lua_state)) {
+            return lua_error(lua_state);
+        }
+
+        if (const std::optional<std::string> &path = impl->current_state->active_core().file_path(); path && !path->empty()) {
+            lua_pushlstring(lua_state, path->data(), path->size());
+        } else {
+            lua_pushnil(lua_state);
+        }
+        return 1;
+    }
+
+    static int lua_workspace_root(lua_State *lua_state) {
+        LuaRuntime::Impl *impl = from_upvalue(lua_state);
+        if (!impl->with_current_state(lua_state)) {
+            return lua_error(lua_state);
+        }
+
+        std::filesystem::path root = workspace_root_for_core(*impl->current_state, impl->current_state->active_core());
+        if (root.empty()) {
+            lua_pushnil(lua_state);
+        } else {
+            std::string text = root.string();
+            lua_pushlstring(lua_state, text.data(), text.size());
+        }
+        return 1;
+    }
+
+    static int lua_token_under_cursor(lua_State *lua_state) {
+        LuaRuntime::Impl *impl = from_upvalue(lua_state);
+        if (!impl->with_current_state(lua_state)) {
+            return lua_error(lua_state);
+        }
+
+        std::optional<std::string> token = path_token_under_cursor(impl->current_state->active_core());
+        if (!token) {
+            lua_pushnil(lua_state);
+        } else {
+            lua_pushlstring(lua_state, token->data(), token->size());
+        }
         return 1;
     }
 
@@ -595,6 +701,12 @@ struct LuaRuntime::Impl {
         return 1;
     }
 
+    static int lua_file_exists(lua_State *lua_state) {
+        std::filesystem::path path = luaL_checkstring(lua_state, 1);
+        lua_pushboolean(lua_state, std::filesystem::exists(path) && std::filesystem::is_regular_file(path) ? 1 : 0);
+        return 1;
+    }
+
     static int lua_run_picker(lua_State *lua_state) {
         LuaRuntime::Impl *impl = from_upvalue(lua_state);
         if (!impl->with_current_state(lua_state)) {
@@ -762,6 +874,18 @@ struct LuaRuntime::Impl {
         lua_setfield(lua, -2, "current_working_directory");
 
         lua_pushlightuserdata(lua, this);
+        lua_pushcclosure(lua, &LuaRuntime::Impl::lua_current_file_path, 1);
+        lua_setfield(lua, -2, "current_file_path");
+
+        lua_pushlightuserdata(lua, this);
+        lua_pushcclosure(lua, &LuaRuntime::Impl::lua_workspace_root, 1);
+        lua_setfield(lua, -2, "workspace_root");
+
+        lua_pushlightuserdata(lua, this);
+        lua_pushcclosure(lua, &LuaRuntime::Impl::lua_token_under_cursor, 1);
+        lua_setfield(lua, -2, "token_under_cursor");
+
+        lua_pushlightuserdata(lua, this);
         lua_pushcclosure(lua, &LuaRuntime::Impl::lua_get_cursor, 1);
         lua_setfield(lua, -2, "get_cursor");
 
@@ -828,6 +952,9 @@ struct LuaRuntime::Impl {
         lua_pushlightuserdata(lua, this);
         lua_pushcclosure(lua, &LuaRuntime::Impl::lua_executable_exists, 1);
         lua_setfield(lua, -2, "executable_exists");
+
+        lua_pushcfunction(lua, &LuaRuntime::Impl::lua_file_exists);
+        lua_setfield(lua, -2, "file_exists");
 
         lua_pushlightuserdata(lua, this);
         lua_pushcclosure(lua, &LuaRuntime::Impl::lua_run_picker, 1);

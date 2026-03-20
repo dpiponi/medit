@@ -35,8 +35,8 @@ Goal: shrink the C++ core down to editor-engine responsibilities and move comman
 
 - [x] Move AI command orchestration to Lua
   - Done: `:ai` and `:ai-popup` now use Lua-owned text/process APIs
-- [ ] Move file-under-cursor policy to Lua
-  - Needed API: current path, cursor, token/text queries, location open
+- [x] Move file-under-cursor policy to Lua
+  - Done: `go to file under cursor` is now owned by the Lua `open-file-under-cursor` command
 - [ ] Move diagnostics summaries and custom quickfix workflows to Lua
   - Needed API: diagnostics query, popup/menu APIs, location jumps
 - [ ] Move command metadata registration to Lua
@@ -68,7 +68,7 @@ Goal: shrink the C++ core down to editor-engine responsibilities and move comman
 - [x] `medit.resolve_ai_command()`
 - [x] `medit.resolve_ai_provider()`
 - [x] `medit.resolve_ai_model(provider?)`
-- [ ] `medit.reload_config()`
+- [x] `medit.reload_config()`
 - [ ] `medit.read_file(path)` / `medit.write_file(path, text)` or a narrower config helper
 - [ ] `medit.get_diagnostics()`
 - [ ] `medit.show_menu(...)`
@@ -77,4 +77,4 @@ Goal: shrink the C++ core down to editor-engine responsibilities and move comman
 ## Current Focus
 
 - [x] Add buffer/selection text APIs for AI-command migration
-- [ ] Add config mutation or reload helpers for Lua-owned workflows
+- [x] Add config mutation or reload helpers for Lua-owned workflows

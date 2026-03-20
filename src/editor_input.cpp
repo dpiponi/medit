@@ -1259,9 +1259,14 @@ bool handle_runtime_action(EditorState &state, EditorAction action) {
         case EditorAction::SelectInnerAst:
             state.select_inner_ast();
             return true;
-        case EditorAction::GoToFileUnderCursor:
-            state.open_file_under_cursor();
+        case EditorAction::GoToFileUnderCursor: {
+            std::string error_message;
+            if (state.lua.execute_command(state, "open-file-under-cursor", std::string(), error_message)) {
+                return true;
+            }
+            state.set_status(error_message);
             return true;
+        }
         case EditorAction::JumpBack:
             navigate_jump_history(state, state.jump_stack.back, state.jump_stack.forward, "No older jump", "Jumped back");
             return true;

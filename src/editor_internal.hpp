@@ -347,7 +347,6 @@ struct EditorState {
     void handle_lua_command(const std::string &argument);
     bool reload_editor_configuration(std::string &error_message);
     void open_startup_file_picker(const std::optional<std::filesystem::path> &root = std::nullopt);
-    void open_file_under_cursor();
     bool popup_accepts_input() const;
     bool split_active_window(WindowSplitDirection direction);
     bool close_active_window();
@@ -451,7 +450,6 @@ void request_hover(EditorState &state);
 void request_completion(EditorState &state);
 void select_enclosing_ast(EditorState &state);
 void select_inner_ast(EditorState &state);
-void open_file_under_cursor(EditorState &state);
 EditorState::JumpLocation current_jump_location(const EditorState &state);
 bool same_jump_location(const EditorState::JumpLocation &left, const EditorState::JumpLocation &right);
 void navigate_jump_history(
