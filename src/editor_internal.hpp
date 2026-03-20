@@ -239,6 +239,11 @@ struct EditorState {
         }
     };
 
+    struct CommandSelectionSnapshot {
+        std::size_t buffer_id = 0;
+        Range range;
+    };
+
     EditorSession session;
     EditorRuntime runtime;
     LuaRuntime lua;
@@ -260,6 +265,8 @@ struct EditorState {
     PopupState popup;
     bool diagnostics_visible = true;
     bool insert_session_active = false;
+    bool pending_config_reload = false;
+    std::optional<CommandSelectionSnapshot> command_selection_snapshot;
     PendingInputState pending;
     CommandRecordingState recording;
     JumpStackState jump_stack;
@@ -288,6 +295,11 @@ struct EditorState {
     const WindowUiState &active_buffer_ui() const;
     Position displayed_cursor(std::size_t window_id) const;
     std::optional<Range> displayed_selection_range(std::size_t window_id) const;
+    void capture_command_selection_snapshot();
+    void clear_command_selection_snapshot();
+    std::optional<CommandSelectionSnapshot> selection_snapshot_for_commands() const;
+    std::optional<std::u32string> selection_text_for_commands() const;
+    bool replace_selection_for_commands(const std::u32string &text);
     void sync_window_view_from_core(std::size_t window_id);
     void sync_core_view_from_window(std::size_t window_id);
     PromptHistory &active_prompt_history();
@@ -319,6 +331,8 @@ struct EditorState {
     void show_diagnostics_summary();
     void show_lsp_status();
     void show_tree_sitter_status();
+    void request_config_reload();
+    bool apply_pending_config_reload();
     void set_search_status(const std::string &suffix = "");
     void show_command_completion();
     void execute_command();
@@ -355,6 +369,11 @@ struct EditorState {
     void execute_sed_command();
     void handle_substitute_command(const SubstituteCommand &command);
     std::optional<std::string> run_picker_command(const std::string &pipeline_command, std::string &error_message);
+    bool run_filter_command(
+        const std::string &command,
+        const std::u32string &input_text,
+        std::u32string &output_text,
+        std::string &error_message);
 };
 
 struct ClickedBufferPosition {
@@ -463,6 +482,9 @@ void handle_input(EditorState &state);
 void update_input_timeout(const EditorState &state);
 void handle_service_events(EditorState &state);
 std::string handle_control_request(EditorState &state, std::string_view request_text);
+std::optional<Position> matching_pair_cursor(const EditorCore &core);
+std::optional<Position> matching_pair_position(const EditorCore &core, Position pair_position);
+bool jump_to_matching_pair(EditorState &state, bool extend_selection);
 void run_editor(EditorState &state);
 std::optional<std::string> open_startup_files(EditorState &state, int argc, char **argv);
 int line_number_width(const EditorCore &core);

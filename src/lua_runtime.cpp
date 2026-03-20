@@ -6,6 +6,8 @@
 #include "string_utils.hpp"
 
 #include <algorithm>
+#include <fstream>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <string>
@@ -62,6 +64,20 @@ Position lua_check_position(lua_State *lua, int index) {
     return {static_cast<std::size_t>(row), static_cast<std::size_t>(column)};
 }
 
+Range lua_check_range(lua_State *lua, int index) {
+    luaL_checktype(lua, index, LUA_TTABLE);
+    lua_getfield(lua, index, "start");
+    lua_getfield(lua, index, "end");
+    if (!lua_istable(lua, -2) || !lua_istable(lua, -1)) {
+        lua_pop(lua, 2);
+        luaL_error(lua, "range must contain start and end positions");
+    }
+    Position start = lua_check_position(lua, -2);
+    Position end = lua_check_position(lua, -1);
+    lua_pop(lua, 2);
+    return {start, end};
+}
+
 void push_range(lua_State *lua, const Range &range) {
     lua_createtable(lua, 0, 2);
     push_position(lua, range.start);
@@ -105,6 +121,131 @@ class ScopedLuaEditorState {
     EditorState *&slot_;
     EditorState *previous_ = nullptr;
 };
+
+std::filesystem::path theme_directory_for_config(const EditorConfig &config) {
+    if (!config.source_path.empty()) {
+        return std::filesystem::path(config.source_path).parent_path() / "medit" / "themes";
+    }
+    if (config.colors_path) {
+        std::filesystem::path parent = config.colors_path->parent_path();
+        if (parent.filename() == "themes") {
+            return parent;
+        }
+        return parent / "themes";
+    }
+    return {};
+}
+
+std::optional<std::string> resolve_ai_command(const EditorConfig &config) {
+    if (config.ai_command && !config.ai_command->empty()) {
+        return config.ai_command;
+    }
+    if (executable_exists("medit-ai")) {
+        return std::string("medit-ai");
+    }
+    if (executable_exists("./tools/medit_ai.py")) {
+        return std::string("./tools/medit_ai.py");
+    }
+    if (executable_exists("tools/medit_ai.py")) {
+        return std::string("tools/medit_ai.py");
+    }
+    return std::nullopt;
+}
+
+std::string resolve_ai_provider(const EditorConfig &config) {
+    if (config.ai_provider && !config.ai_provider->empty()) {
+        return *config.ai_provider;
+    }
+    const char *llm_provider = std::getenv("LLM_PROVIDER");
+    if (llm_provider != nullptr) {
+        std::string normalized = ascii_lowercase(llm_provider);
+        if (normalized == "openai" || normalized == "mistral") {
+            return normalized;
+        }
+    }
+    const char *openai_key = std::getenv("OPENAI_API_KEY");
+    if (openai_key != nullptr && *openai_key != '\0') {
+        return "openai";
+    }
+    const char *mistral_key = std::getenv("MISTRAL_API_KEY");
+    if (mistral_key != nullptr && *mistral_key != '\0') {
+        return "mistral";
+    }
+    return "openai";
+}
+
+std::string resolve_ai_model(const EditorConfig &config, std::string_view provider) {
+    if (config.ai_model && !config.ai_model->empty()) {
+        return *config.ai_model;
+    }
+    const char *llm_model = std::getenv("LLM_MODEL");
+    if (llm_model != nullptr && *llm_model != '\0') {
+        return llm_model;
+    }
+    if (provider == "mistral") {
+        const char *mistral_model = std::getenv("MISTRAL_MODEL");
+        if (mistral_model != nullptr && *mistral_model != '\0') {
+            return mistral_model;
+        }
+        return "mistral-small-latest";
+    }
+    const char *openai_model = std::getenv("OPENAI_MODEL");
+    if (openai_model != nullptr && *openai_model != '\0') {
+        return openai_model;
+    }
+    return "gpt-5-nano";
+}
+
+Range full_buffer_range(const EditorCore &core) {
+    const Lines &lines = core.lines();
+    if (lines.empty()) {
+        return {{0, 0}, {0, 0}};
+    }
+    return {{0, 0}, {lines.size() - 1, lines.back().size()}};
+}
+
+bool update_meditrc_setting(
+    const std::filesystem::path &meditrc_path,
+    const std::string &key,
+    const std::string &value,
+    std::string &error_message) {
+    std::ifstream input(meditrc_path);
+    if (!input) {
+        error_message = "could not open meditrc";
+        return false;
+    }
+
+    std::vector<std::string> lines;
+    std::string line;
+    bool replaced = false;
+    while (std::getline(input, line)) {
+        std::string trimmed = trim_ascii_whitespace(line);
+        std::size_t separator = trimmed.find('=');
+        if (!trimmed.empty() && trimmed[0] != '#' && separator != std::string::npos &&
+            trim_ascii_whitespace(trimmed.substr(0, separator)) == key) {
+            lines.push_back(key + " = " + value);
+            replaced = true;
+        } else {
+            lines.push_back(line);
+        }
+    }
+    if (!replaced) {
+        lines.push_back(key + " = " + value);
+    }
+
+    std::ofstream output(meditrc_path, std::ios::trunc);
+    if (!output) {
+        error_message = "could not write meditrc";
+        return false;
+    }
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+        output << lines[index];
+        if (index + 1 < lines.size()) {
+            output << '\n';
+        }
+    }
+    return true;
+}
 
 #endif
 
@@ -183,6 +324,84 @@ struct LuaRuntime::Impl {
         return 1;
     }
 
+    static int lua_get_selection(lua_State *lua_state) {
+        LuaRuntime::Impl *impl = from_upvalue(lua_state);
+        if (!impl->with_current_state(lua_state)) {
+            return lua_error(lua_state);
+        }
+
+        std::optional<EditorState::CommandSelectionSnapshot> snapshot =
+            impl->current_state->selection_snapshot_for_commands();
+        if (!snapshot) {
+            lua_pushnil(lua_state);
+            return 1;
+        }
+        push_range(lua_state, snapshot->range);
+        return 1;
+    }
+
+    static int lua_get_selection_text(lua_State *lua_state) {
+        LuaRuntime::Impl *impl = from_upvalue(lua_state);
+        if (!impl->with_current_state(lua_state)) {
+            return lua_error(lua_state);
+        }
+
+        std::optional<std::u32string> text = impl->current_state->selection_text_for_commands();
+        if (!text) {
+            lua_pushnil(lua_state);
+            return 1;
+        }
+        std::string text_utf8 = u32_to_utf8(*text);
+        lua_pushlstring(lua_state, text_utf8.data(), text_utf8.size());
+        return 1;
+    }
+
+    static int lua_get_buffer_text(lua_State *lua_state) {
+        LuaRuntime::Impl *impl = from_upvalue(lua_state);
+        if (!impl->with_current_state(lua_state)) {
+            return lua_error(lua_state);
+        }
+
+        std::string text = buffer_text_utf8(impl->current_state->active_buffer());
+        lua_pushlstring(lua_state, text.data(), text.size());
+        return 1;
+    }
+
+    static int lua_get_line_text(lua_State *lua_state) {
+        LuaRuntime::Impl *impl = from_upvalue(lua_state);
+        if (!impl->with_current_state(lua_state)) {
+            return lua_error(lua_state);
+        }
+
+        lua_Integer row = luaL_checkinteger(lua_state, 1);
+        if (row < 0) {
+            return luaL_error(lua_state, "row must be non-negative");
+        }
+
+        const EditorCore &core = impl->current_state->active_core();
+        std::size_t row_index = static_cast<std::size_t>(row);
+        if (row_index >= core.line_count()) {
+            return luaL_error(lua_state, "row out of range");
+        }
+
+        const std::u32string &line = core.lines()[row_index];
+        std::string text = u32_to_utf8(line);
+        lua_pushlstring(lua_state, text.data(), text.size());
+        return 1;
+    }
+
+    static int lua_get_text(lua_State *lua_state) {
+        LuaRuntime::Impl *impl = from_upvalue(lua_state);
+        if (!impl->with_current_state(lua_state)) {
+            return lua_error(lua_state);
+        }
+
+        Range range = lua_check_range(lua_state, 1);
+        std::string text = u32_to_utf8(impl->current_state->active_core().read_text(range));
+        lua_pushlstring(lua_state, text.data(), text.size());
+        return 1;
+    }
+
     static int lua_set_cursor(lua_State *lua_state) {
         LuaRuntime::Impl *impl = from_upvalue(lua_state);
         if (!impl->with_current_state(lua_state)) {
@@ -192,6 +411,48 @@ struct LuaRuntime::Impl {
         Position position = lua_check_position(lua_state, 1);
         impl->current_state->active_core().set_cursor(position);
         return 0;
+    }
+
+    static int lua_replace_selection(lua_State *lua_state) {
+        LuaRuntime::Impl *impl = from_upvalue(lua_state);
+        if (!impl->with_current_state(lua_state)) {
+            return lua_error(lua_state);
+        }
+
+        if (!impl->current_state->selection_snapshot_for_commands()) {
+            return luaL_error(lua_state, "no selection");
+        }
+        std::string text = luaL_checkstring(lua_state, 1);
+        bool changed = impl->current_state->replace_selection_for_commands(utf8_to_u32(text));
+        lua_pushboolean(lua_state, changed ? 1 : 0);
+        return 1;
+    }
+
+    static int lua_replace_buffer(lua_State *lua_state) {
+        LuaRuntime::Impl *impl = from_upvalue(lua_state);
+        if (!impl->with_current_state(lua_state)) {
+            return lua_error(lua_state);
+        }
+
+        std::string text = luaL_checkstring(lua_state, 1);
+        bool changed = impl->current_state->active_core().replace_range(
+            full_buffer_range(impl->current_state->active_core()),
+            utf8_to_u32(text));
+        lua_pushboolean(lua_state, changed ? 1 : 0);
+        return 1;
+    }
+
+    static int lua_replace_range(lua_State *lua_state) {
+        LuaRuntime::Impl *impl = from_upvalue(lua_state);
+        if (!impl->with_current_state(lua_state)) {
+            return lua_error(lua_state);
+        }
+
+        Range range = lua_check_range(lua_state, 1);
+        std::string text = luaL_checkstring(lua_state, 2);
+        bool changed = impl->current_state->active_core().replace_range(range, utf8_to_u32(text));
+        lua_pushboolean(lua_state, changed ? 1 : 0);
+        return 1;
     }
 
     static int lua_open_file(lua_State *lua_state) {
@@ -257,6 +518,62 @@ struct LuaRuntime::Impl {
         return 0;
     }
 
+    static int lua_list_themes(lua_State *lua_state) {
+        LuaRuntime::Impl *impl = from_upvalue(lua_state);
+        if (!impl->with_current_state(lua_state)) {
+            return lua_error(lua_state);
+        }
+
+        std::filesystem::path theme_dir = theme_directory_for_config(impl->current_state->config);
+        lua_createtable(lua_state, 0, 0);
+        if (theme_dir.empty() || !std::filesystem::exists(theme_dir)) {
+            return 1;
+        }
+
+        std::vector<std::string> theme_names;
+        for (const auto &entry : std::filesystem::directory_iterator(theme_dir)) {
+            if (!entry.is_regular_file() || entry.path().extension() != ".json") {
+                continue;
+            }
+            theme_names.push_back("themes/" + entry.path().filename().string());
+        }
+        std::sort(theme_names.begin(), theme_names.end());
+        for (std::size_t index = 0; index < theme_names.size(); ++index) {
+            lua_pushinteger(lua_state, static_cast<lua_Integer>(index + 1));
+            lua_pushlstring(lua_state, theme_names[index].data(), theme_names[index].size());
+            lua_settable(lua_state, -3);
+        }
+        return 1;
+    }
+
+    static int lua_set_config_value(lua_State *lua_state) {
+        LuaRuntime::Impl *impl = from_upvalue(lua_state);
+        if (!impl->with_current_state(lua_state)) {
+            return lua_error(lua_state);
+        }
+
+        if (impl->current_state->config.source_path.empty()) {
+            return luaL_error(lua_state, "config update requires a meditrc");
+        }
+
+        std::string key = luaL_checkstring(lua_state, 1);
+        std::string value = luaL_checkstring(lua_state, 2);
+        std::string error_message;
+        if (!update_meditrc_setting(impl->current_state->config.source_path, key, value, error_message)) {
+            return luaL_error(lua_state, "%s", error_message.c_str());
+        }
+        return 0;
+    }
+
+    static int lua_reload_config(lua_State *lua_state) {
+        LuaRuntime::Impl *impl = from_upvalue(lua_state);
+        if (!impl->with_current_state(lua_state)) {
+            return lua_error(lua_state);
+        }
+        impl->current_state->request_config_reload();
+        return 0;
+    }
+
     static int lua_shell_quote(lua_State *lua_state) {
         std::string text = luaL_checkstring(lua_state, 1);
         std::string quoted = "'";
@@ -293,6 +610,70 @@ struct LuaRuntime::Impl {
             return 2;
         }
         lua_pushlstring(lua_state, selection->data(), selection->size());
+        return 1;
+    }
+
+    static int lua_run_filter(lua_State *lua_state) {
+        LuaRuntime::Impl *impl = from_upvalue(lua_state);
+        if (!impl->with_current_state(lua_state)) {
+            return lua_error(lua_state);
+        }
+
+        std::string command = luaL_checkstring(lua_state, 1);
+        std::string input = luaL_checkstring(lua_state, 2);
+        std::u32string output_text;
+        std::string error_message;
+        if (!impl->current_state->run_filter_command(command, utf8_to_u32(input), output_text, error_message)) {
+            lua_pushnil(lua_state);
+            lua_pushlstring(lua_state, error_message.data(), error_message.size());
+            return 2;
+        }
+
+        std::string output = u32_to_utf8(output_text);
+        lua_pushlstring(lua_state, output.data(), output.size());
+        return 1;
+    }
+
+    static int lua_resolve_ai_command(lua_State *lua_state) {
+        LuaRuntime::Impl *impl = from_upvalue(lua_state);
+        if (!impl->with_current_state(lua_state)) {
+            return lua_error(lua_state);
+        }
+
+        std::optional<std::string> command = resolve_ai_command(impl->current_state->config);
+        if (!command) {
+            lua_pushnil(lua_state);
+            return 1;
+        }
+        lua_pushlstring(lua_state, command->data(), command->size());
+        return 1;
+    }
+
+    static int lua_resolve_ai_provider(lua_State *lua_state) {
+        LuaRuntime::Impl *impl = from_upvalue(lua_state);
+        if (!impl->with_current_state(lua_state)) {
+            return lua_error(lua_state);
+        }
+
+        std::string provider = resolve_ai_provider(impl->current_state->config);
+        lua_pushlstring(lua_state, provider.data(), provider.size());
+        return 1;
+    }
+
+    static int lua_resolve_ai_model(lua_State *lua_state) {
+        LuaRuntime::Impl *impl = from_upvalue(lua_state);
+        if (!impl->with_current_state(lua_state)) {
+            return lua_error(lua_state);
+        }
+
+        std::string provider;
+        if (lua_gettop(lua_state) >= 1 && !lua_isnil(lua_state, 1)) {
+            provider = luaL_checkstring(lua_state, 1);
+        } else {
+            provider = resolve_ai_provider(impl->current_state->config);
+        }
+        std::string model = resolve_ai_model(impl->current_state->config, provider);
+        lua_pushlstring(lua_state, model.data(), model.size());
         return 1;
     }
 
@@ -385,8 +766,40 @@ struct LuaRuntime::Impl {
         lua_setfield(lua, -2, "get_cursor");
 
         lua_pushlightuserdata(lua, this);
+        lua_pushcclosure(lua, &LuaRuntime::Impl::lua_get_selection, 1);
+        lua_setfield(lua, -2, "get_selection");
+
+        lua_pushlightuserdata(lua, this);
+        lua_pushcclosure(lua, &LuaRuntime::Impl::lua_get_selection_text, 1);
+        lua_setfield(lua, -2, "get_selection_text");
+
+        lua_pushlightuserdata(lua, this);
+        lua_pushcclosure(lua, &LuaRuntime::Impl::lua_get_buffer_text, 1);
+        lua_setfield(lua, -2, "get_buffer_text");
+
+        lua_pushlightuserdata(lua, this);
+        lua_pushcclosure(lua, &LuaRuntime::Impl::lua_get_line_text, 1);
+        lua_setfield(lua, -2, "get_line_text");
+
+        lua_pushlightuserdata(lua, this);
+        lua_pushcclosure(lua, &LuaRuntime::Impl::lua_get_text, 1);
+        lua_setfield(lua, -2, "get_text");
+
+        lua_pushlightuserdata(lua, this);
         lua_pushcclosure(lua, &LuaRuntime::Impl::lua_set_cursor, 1);
         lua_setfield(lua, -2, "set_cursor");
+
+        lua_pushlightuserdata(lua, this);
+        lua_pushcclosure(lua, &LuaRuntime::Impl::lua_replace_selection, 1);
+        lua_setfield(lua, -2, "replace_selection");
+
+        lua_pushlightuserdata(lua, this);
+        lua_pushcclosure(lua, &LuaRuntime::Impl::lua_replace_buffer, 1);
+        lua_setfield(lua, -2, "replace_buffer");
+
+        lua_pushlightuserdata(lua, this);
+        lua_pushcclosure(lua, &LuaRuntime::Impl::lua_replace_range, 1);
+        lua_setfield(lua, -2, "replace_range");
 
         lua_pushlightuserdata(lua, this);
         lua_pushcclosure(lua, &LuaRuntime::Impl::lua_open_file, 1);
@@ -395,6 +808,18 @@ struct LuaRuntime::Impl {
         lua_pushlightuserdata(lua, this);
         lua_pushcclosure(lua, &LuaRuntime::Impl::lua_open_location, 1);
         lua_setfield(lua, -2, "open_location");
+
+        lua_pushlightuserdata(lua, this);
+        lua_pushcclosure(lua, &LuaRuntime::Impl::lua_list_themes, 1);
+        lua_setfield(lua, -2, "list_themes");
+
+        lua_pushlightuserdata(lua, this);
+        lua_pushcclosure(lua, &LuaRuntime::Impl::lua_set_config_value, 1);
+        lua_setfield(lua, -2, "set_config_value");
+
+        lua_pushlightuserdata(lua, this);
+        lua_pushcclosure(lua, &LuaRuntime::Impl::lua_reload_config, 1);
+        lua_setfield(lua, -2, "reload_config");
 
         lua_pushlightuserdata(lua, this);
         lua_pushcclosure(lua, &LuaRuntime::Impl::lua_show_popup, 1);
@@ -408,8 +833,24 @@ struct LuaRuntime::Impl {
         lua_pushcclosure(lua, &LuaRuntime::Impl::lua_run_picker, 1);
         lua_setfield(lua, -2, "run_picker");
 
+        lua_pushlightuserdata(lua, this);
+        lua_pushcclosure(lua, &LuaRuntime::Impl::lua_run_filter, 1);
+        lua_setfield(lua, -2, "run_filter");
+
         lua_pushcfunction(lua, &LuaRuntime::Impl::lua_shell_quote);
         lua_setfield(lua, -2, "shell_quote");
+
+        lua_pushlightuserdata(lua, this);
+        lua_pushcclosure(lua, &LuaRuntime::Impl::lua_resolve_ai_command, 1);
+        lua_setfield(lua, -2, "resolve_ai_command");
+
+        lua_pushlightuserdata(lua, this);
+        lua_pushcclosure(lua, &LuaRuntime::Impl::lua_resolve_ai_provider, 1);
+        lua_setfield(lua, -2, "resolve_ai_provider");
+
+        lua_pushlightuserdata(lua, this);
+        lua_pushcclosure(lua, &LuaRuntime::Impl::lua_resolve_ai_model, 1);
+        lua_setfield(lua, -2, "resolve_ai_model");
 
         lua_pushlightuserdata(lua, this);
         lua_pushcclosure(lua, &LuaRuntime::Impl::lua_register_command, 1);

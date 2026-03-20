@@ -24,8 +24,7 @@ Goal: shrink the C++ core down to editor-engine responsibilities and move comman
 
 - [x] Move `find-file` to Lua
 - [x] Move `grep` to Lua
-- [ ] Move `pick-theme` to Lua
-  - Needed API: config mutation or narrow config-setting helper, config reload
+- [x] Move `pick-theme` to Lua
 - [ ] Move startup file picker policy to Lua
   - Needed API: startup hook or startup-command delegation
 - [~] Move optional dependency health checks toward Lua ownership
@@ -34,8 +33,8 @@ Goal: shrink the C++ core down to editor-engine responsibilities and move comman
 
 ## Tier 2
 
-- [ ] Move AI command orchestration to Lua
-  - Needed API: selection/buffer text read/replace, popup display, process helpers
+- [x] Move AI command orchestration to Lua
+  - Done: `:ai` and `:ai-popup` now use Lua-owned text/process APIs
 - [ ] Move file-under-cursor policy to Lua
   - Needed API: current path, cursor, token/text queries, location open
 - [ ] Move diagnostics summaries and custom quickfix workflows to Lua
@@ -60,11 +59,15 @@ Goal: shrink the C++ core down to editor-engine responsibilities and move comman
 - [x] `medit.open_location(path, position)`
 - [x] `medit.show_popup(title, text)`
 - [x] `medit.shell_quote(text)`
-- [ ] `medit.get_selection()`
-- [ ] `medit.get_selection_text()`
-- [ ] `medit.get_buffer_text()`
-- [ ] `medit.replace_selection(text)`
-- [ ] `medit.replace_buffer(text)`
+- [x] `medit.get_selection()`
+- [x] `medit.get_selection_text()`
+- [x] `medit.get_buffer_text()`
+- [x] `medit.replace_selection(text)`
+- [x] `medit.replace_buffer(text)`
+- [x] `medit.run_filter(command, input)`
+- [x] `medit.resolve_ai_command()`
+- [x] `medit.resolve_ai_provider()`
+- [x] `medit.resolve_ai_model(provider?)`
 - [ ] `medit.reload_config()`
 - [ ] `medit.read_file(path)` / `medit.write_file(path, text)` or a narrower config helper
 - [ ] `medit.get_diagnostics()`
@@ -73,6 +76,5 @@ Goal: shrink the C++ core down to editor-engine responsibilities and move comman
 
 ## Current Focus
 
-- [ ] Move `pick-theme` to Lua
-- [ ] Add buffer/selection text APIs for AI-command migration
+- [x] Add buffer/selection text APIs for AI-command migration
 - [ ] Add config mutation or reload helpers for Lua-owned workflows

@@ -4,7 +4,7 @@
 
 namespace {
 
-constexpr std::array<NamedEditorCommandInfo, 19> kNamedEditorCommands{{
+constexpr std::array<NamedEditorCommandInfo, 16> kNamedEditorCommands{{
     {"w", "write current buffer", "w", NamedEditorCommand::Write},
     {"q", "quit", "q", NamedEditorCommand::Quit},
     {"q!", "force quit", "q!", NamedEditorCommand::ForceQuit},
@@ -17,10 +17,7 @@ constexpr std::array<NamedEditorCommandInfo, 19> kNamedEditorCommands{{
     {"bprev", "previous buffer", "bprev", NamedEditorCommand::PreviousBuffer},
     {"bd", "close current buffer", "bd", NamedEditorCommand::DeleteBuffer},
     {"bd!", "force close current buffer", "bd!", NamedEditorCommand::ForceDeleteBuffer},
-    {"pick-theme", "pick a color theme", "pick-theme", NamedEditorCommand::PickTheme},
     {"reload-config", "reload medit configuration", "reload-config", NamedEditorCommand::ReloadConfig},
-    {"ai", "rewrite selection or buffer with AI", "ai ", NamedEditorCommand::Ai},
-    {"ai-popup", "show an AI response for selection or buffer", "ai-popup ", NamedEditorCommand::AiPopup},
     {"diagnostics", "show diagnostics summary", "diagnostics", NamedEditorCommand::Diagnostics},
     {"lsp-status", "show language server status", "lsp-status", NamedEditorCommand::LspStatus},
     {"tree-sitter-status", "show tree-sitter syntax status", "tree-sitter-status", NamedEditorCommand::TreeSitterStatus},

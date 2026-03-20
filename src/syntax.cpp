@@ -96,32 +96,6 @@ struct LoadedTreeSitterLanguage {
     std::vector<std::string> capture_names;
 };
 
-bool is_ascii_identifier_start(char32_t codepoint) {
-    return (codepoint >= U'a' && codepoint <= U'z') || (codepoint >= U'A' && codepoint <= U'Z') || codepoint == U'_';
-}
-
-bool is_ascii_identifier_continue(char32_t codepoint) {
-    return is_ascii_identifier_start(codepoint) || (codepoint >= U'0' && codepoint <= U'9');
-}
-
-bool is_space(char32_t codepoint) {
-    return codepoint == U' ' || codepoint == U'\t';
-}
-
-bool is_cpp_keyword(const std::u32string &token) {
-    static const std::unordered_set<std::string> keywords = {
-        "alignas", "alignof", "asm", "auto", "bool", "break", "case", "catch", "char", "char8_t",
-        "char16_t", "char32_t", "class", "concept", "const", "consteval", "constexpr", "constinit",
-        "const_cast", "continue", "co_await", "co_return", "co_yield", "decltype", "default", "delete",
-        "do", "double", "dynamic_cast", "else", "enum", "explicit", "export", "extern", "false", "float",
-        "for", "friend", "goto", "if", "inline", "int", "long", "mutable", "namespace", "new", "noexcept",
-        "nullptr", "operator", "private", "protected", "public", "register", "reinterpret_cast", "requires",
-        "return", "short", "signed", "sizeof", "static", "static_assert", "static_cast", "struct", "switch",
-        "template", "this", "thread_local", "throw", "true", "try", "typedef", "typeid", "typename",
-        "union", "unsigned", "using", "virtual", "void", "volatile", "wchar_t", "while"};
-    return keywords.find(u32_to_utf8(token)) != keywords.end();
-}
-
 void push_span(
     std::vector<HighlightSpans> &spans_by_line,
     std::size_t row,
@@ -133,119 +107,6 @@ void push_span(
         return;
     }
     spans_by_line[row].push_back({{{row, start}, {row, end}}, role, priority});
-}
-
-std::vector<HighlightSpans> highlight_cpp_document(const Lines &lines) {
-    std::vector<HighlightSpans> spans_by_line(lines.size());
-    bool in_block_comment = false;
-
-    for (std::size_t row = 0; row < lines.size(); ++row) {
-        const std::u32string &line = lines[row];
-        std::size_t column = 0;
-        bool leading_only = true;
-
-        while (column < line.size()) {
-            if (in_block_comment) {
-                std::size_t start = column;
-                while (column + 1 < line.size() && !(line[column] == U'*' && line[column + 1] == U'/')) {
-                    ++column;
-                }
-                if (column + 1 < line.size()) {
-                    column += 2;
-                    in_block_comment = false;
-                } else {
-                    column = line.size();
-                }
-                push_span(spans_by_line, row, start, column, StyleRole::SyntaxComment);
-                leading_only = false;
-                continue;
-            }
-
-            char32_t codepoint = line[column];
-            if (leading_only && is_space(codepoint)) {
-                ++column;
-                continue;
-            }
-
-            if (leading_only && codepoint == U'#') {
-                std::size_t start = column;
-                ++column;
-                while (column < line.size() && is_space(line[column])) {
-                    ++column;
-                }
-                while (column < line.size() && is_ascii_identifier_continue(line[column])) {
-                    ++column;
-                }
-                push_span(spans_by_line, row, start, column, StyleRole::SyntaxKeyword);
-                leading_only = false;
-                continue;
-            }
-
-            leading_only = false;
-
-            if (codepoint == U'/' && column + 1 < line.size() && line[column + 1] == U'/') {
-                push_span(spans_by_line, row, column, line.size(), StyleRole::SyntaxComment);
-                break;
-            }
-
-            if (codepoint == U'/' && column + 1 < line.size() && line[column + 1] == U'*') {
-                std::size_t start = column;
-                column += 2;
-                while (column + 1 < line.size() && !(line[column] == U'*' && line[column + 1] == U'/')) {
-                    ++column;
-                }
-                if (column + 1 < line.size()) {
-                    column += 2;
-                } else {
-                    in_block_comment = true;
-                    column = line.size();
-                }
-                push_span(spans_by_line, row, start, column, StyleRole::SyntaxComment);
-                continue;
-            }
-
-            if (codepoint == U'"' || codepoint == U'\'') {
-                char32_t quote = codepoint;
-                std::size_t start = column;
-                ++column;
-                bool escaped = false;
-                while (column < line.size()) {
-                    char32_t current = line[column];
-                    ++column;
-                    if (escaped) {
-                        escaped = false;
-                        continue;
-                    }
-                    if (current == U'\\') {
-                        escaped = true;
-                        continue;
-                    }
-                    if (current == quote) {
-                        break;
-                    }
-                }
-                push_span(spans_by_line, row, start, column, StyleRole::SyntaxString);
-                continue;
-            }
-
-            if (is_ascii_identifier_start(codepoint)) {
-                std::size_t start = column;
-                ++column;
-                while (column < line.size() && is_ascii_identifier_continue(line[column])) {
-                    ++column;
-                }
-                std::u32string token = line.substr(start, column - start);
-                if (is_cpp_keyword(token)) {
-                    push_span(spans_by_line, row, start, column, StyleRole::SyntaxKeyword);
-                }
-                continue;
-            }
-
-            ++column;
-        }
-    }
-
-    return spans_by_line;
 }
 
 std::optional<const SyntaxLanguageConfig *> syntax_language_by_name(const EditorConfig &config, const std::string &name) {
@@ -271,16 +132,6 @@ std::optional<const SyntaxLanguageConfig *> syntax_language_for_file(
         }
     }
     return std::nullopt;
-}
-
-bool is_legacy_cpp_extension(const std::optional<std::string> &file_path) {
-    if (!file_path || file_path->empty()) {
-        return false;
-    }
-    static const std::string patterns[] = {"*.c", "*.cc", "*.cpp", "*.cxx", "*.h", "*.hh", "*.hpp", "*.hxx"};
-    return std::ranges::find_if(patterns, [file_path](const std::string &pattern) {
-        return file_path_matches_glob(*file_path, pattern);
-    }) != std::end(patterns);
 }
 
 TreeSitterApi load_tree_sitter_api() {
@@ -619,8 +470,6 @@ std::string syntax_engine_name(SyntaxEngine engine) {
     switch (engine) {
         case SyntaxEngine::None:
             return "none";
-        case SyntaxEngine::LegacyCpp:
-            return "legacy-cpp";
         case SyntaxEngine::TreeSitter:
             return "tree-sitter";
     }
@@ -645,17 +494,11 @@ SyntaxSelection resolve_syntax_selection(const EditorConfig &config, const std::
         if (std::optional<const SyntaxLanguageConfig *> language = syntax_language_by_name(config, *config.syntax_name)) {
             return {SyntaxEngine::TreeSitter, (*language)->name};
         }
-        if (*config.syntax_name == "cpp") {
-            return {SyntaxEngine::LegacyCpp, "cpp"};
-        }
         throw std::runtime_error("unknown syntax: " + *config.syntax_name);
     }
 
     if (std::optional<const SyntaxLanguageConfig *> language = syntax_language_for_file(config, file_path)) {
         return {SyntaxEngine::TreeSitter, (*language)->name};
-    }
-    if (is_legacy_cpp_extension(file_path)) {
-        return {SyntaxEngine::LegacyCpp, "cpp"};
     }
     return {};
 }
@@ -667,8 +510,6 @@ std::expected<std::vector<HighlightSpans>, std::string> highlight_document_synta
     switch (selection.engine) {
         case SyntaxEngine::None:
             return std::vector<HighlightSpans>(lines.size());
-        case SyntaxEngine::LegacyCpp:
-            return highlight_cpp_document(lines);
         case SyntaxEngine::TreeSitter:
             for (const SyntaxLanguageConfig &language : config.syntax_languages) {
                 if (language.name == selection.language_name) {
@@ -729,6 +570,39 @@ std::string tree_sitter_status_summary(const EditorConfig &config, const std::op
 
     status << "language loaded: yes\n";
     status << "capture count: " << (*loaded)->capture_names.size();
+    return status.str();
+}
+
+std::string tree_sitter_health_summary(const EditorConfig &config) {
+    std::ostringstream status;
+    status << "syntax config: "
+           << (config.syntax_config_path ? config.syntax_config_path->string() : "(default/none)") << "\n";
+    status << "configured languages: " << config.syntax_languages.size() << "\n";
+
+    TreeSitterApi &api = tree_sitter_api();
+    status << "runtime loaded: " << (api.loaded() ? "yes" : "no") << "\n";
+    if (!api.loaded()) {
+        status << "runtime error: " << api.error;
+        return status.str();
+    }
+
+    for (const SyntaxLanguageConfig &language : config.syntax_languages) {
+        status << "\n[" << language.name << "]\n";
+        status << "grammar path: " << language.grammar_path.string() << "\n";
+        status << "grammar exists: " << (std::filesystem::exists(language.grammar_path) ? "yes" : "no") << "\n";
+        status << "highlights path: " << language.highlights_path.string() << "\n";
+        status << "highlights exists: " << (std::filesystem::exists(language.highlights_path) ? "yes" : "no") << "\n";
+
+        std::expected<LoadedTreeSitterLanguage *, std::string> loaded = load_tree_sitter_language(language);
+        if (!loaded) {
+            status << "loadable: no\n";
+            status << "error: " << loaded.error() << "\n";
+            continue;
+        }
+        status << "loadable: yes\n";
+        status << "capture count: " << (*loaded)->capture_names.size() << "\n";
+    }
+
     return status.str();
 }
 

@@ -222,6 +222,57 @@ std::optional<Range> EditorState::displayed_selection_range(std::size_t window_i
     return Range{anchor, cursor_extent};
 }
 
+void EditorState::capture_command_selection_snapshot() {
+    std::optional<Range> selection = displayed_selection_range(windows.active_window_id());
+    if (!selection) {
+        command_selection_snapshot.reset();
+        return;
+    }
+    command_selection_snapshot = CommandSelectionSnapshot{active_buffer().id, *selection};
+}
+
+void EditorState::clear_command_selection_snapshot() {
+    command_selection_snapshot.reset();
+}
+
+std::optional<EditorState::CommandSelectionSnapshot> EditorState::selection_snapshot_for_commands() const {
+    if (std::optional<Range> selection = displayed_selection_range(windows.active_window_id())) {
+        return CommandSelectionSnapshot{active_buffer().id, *selection};
+    }
+    if (mode == Mode::Command && command_prompt_kind == CommandPromptKind::EditorCommand && command_selection_snapshot) {
+        return command_selection_snapshot;
+    }
+    return std::nullopt;
+}
+
+std::optional<std::u32string> EditorState::selection_text_for_commands() const {
+    std::optional<CommandSelectionSnapshot> snapshot = selection_snapshot_for_commands();
+    if (!snapshot) {
+        return std::nullopt;
+    }
+    const EditorBuffer *buffer = session.find_buffer_by_id(snapshot->buffer_id);
+    if (buffer == nullptr) {
+        return std::nullopt;
+    }
+    return buffer->core.read_text(snapshot->range);
+}
+
+bool EditorState::replace_selection_for_commands(const std::u32string &text) {
+    std::optional<CommandSelectionSnapshot> snapshot = selection_snapshot_for_commands();
+    if (!snapshot) {
+        return false;
+    }
+    EditorBuffer *buffer = session.find_buffer_by_id(snapshot->buffer_id);
+    if (buffer == nullptr) {
+        return false;
+    }
+    bool changed = buffer->core.replace_range(snapshot->range, text);
+    if (mode == Mode::Command && command_prompt_kind == CommandPromptKind::EditorCommand) {
+        command_selection_snapshot.reset();
+    }
+    return changed;
+}
+
 void EditorState::sync_window_view_from_core(std::size_t window_id) {
 EditorState::WindowUiState &ui = window_ui(window_id);
     EditorViewState previous = ui.view_state;
@@ -385,6 +436,92 @@ std::string count_label(std::size_t count, const char *singular) {
     return std::to_string(count) + " " + singular + (count == 1 ? "" : "s");
 }
 
+bool is_open_pair(char32_t codepoint) {
+    return codepoint == U'(' || codepoint == U'[' || codepoint == U'{';
+}
+
+bool is_close_pair(char32_t codepoint) {
+    return codepoint == U')' || codepoint == U']' || codepoint == U'}';
+}
+
+char32_t matching_pair_codepoint(char32_t codepoint) {
+    switch (codepoint) {
+        case U'(': return U')';
+        case U')': return U'(';
+        case U'[': return U']';
+        case U']': return U'[';
+        case U'{': return U'}';
+        case U'}': return U'{';
+        default: return U'\0';
+    }
+}
+
+std::optional<char32_t> codepoint_at(const EditorCore &core, Position position) {
+    if (position.row >= core.line_count()) {
+        return std::nullopt;
+    }
+    const std::u32string &line = core.lines()[position.row];
+    if (position.column >= line.size()) {
+        return std::nullopt;
+    }
+    return line[position.column];
+}
+
+Position next_position(const EditorCore &core, Position position) {
+    if (position.row >= core.line_count()) {
+        return position;
+    }
+    const std::u32string &line = core.lines()[position.row];
+    if (position.column + 1 < line.size()) {
+        return {position.row, position.column + 1};
+    }
+    if (position.row + 1 < core.line_count()) {
+        return {position.row + 1, 0};
+    }
+    return {core.line_count(), 0};
+}
+
+Position previous_position(const EditorCore &core, Position position) {
+    if (position.row == 0 && position.column == 0) {
+        return position;
+    }
+    if (position.row >= core.line_count()) {
+        if (core.line_count() == 0) {
+            return {0, 0};
+        }
+        std::size_t row = core.line_count() - 1;
+        std::size_t length = core.line_length(row);
+        return {row, length == 0 ? 0 : length - 1};
+    }
+    if (position.column > 0) {
+        return {position.row, position.column - 1};
+    }
+    if (position.row == 0) {
+        return {0, 0};
+    }
+    std::size_t row = position.row - 1;
+    std::size_t length = core.line_length(row);
+    return {row, length == 0 ? 0 : length - 1};
+}
+
+bool is_before_end(const EditorCore &core, Position position) {
+    return position.row < core.line_count();
+}
+
+std::optional<Position> pair_position_for_cursor(const EditorCore &core) {
+    Position cursor = core.cursor();
+    if (std::optional<char32_t> current = codepoint_at(core, cursor); current && (is_open_pair(*current) || is_close_pair(*current))) {
+        return cursor;
+    }
+    if (cursor.column > 0) {
+        Position left{cursor.row, cursor.column - 1};
+        if (std::optional<char32_t> current = codepoint_at(core, left); current && (is_open_pair(*current) || is_close_pair(*current))) {
+            return left;
+        }
+    }
+    return std::nullopt;
+}
+
 std::string make_status_bar_left_text(
     const EditorState &state,
     const EditorCore &core,
@@ -439,6 +576,23 @@ popup.visible = true;
     popup.selected_index = 0;
     popup.scroll_offset = 0;
     popup.originating_mode = mode;
+}
+
+void EditorState::request_config_reload() {
+    pending_config_reload = true;
+}
+
+bool EditorState::apply_pending_config_reload() {
+    if (!pending_config_reload) {
+        return true;
+    }
+    pending_config_reload = false;
+    std::string error_message;
+    if (reload_editor_configuration(error_message)) {
+        return true;
+    }
+    set_status("Config reload failed: " + error_message);
+    return false;
 }
 
 void show_menu_popup(
@@ -754,6 +908,7 @@ EditorCore &core = active_core();
     if (mode == Mode::Visual || mode == Mode::VisualLine) {
         core.clear_selection();
     }
+    clear_command_selection_snapshot();
     mode = Mode::Normal;
     command_buffer.clear();
     prompt_cursor = 0;
@@ -774,6 +929,7 @@ EditorCore &core = active_core();
 }
 
 void EditorState::enter_insert_mode() {
+clear_command_selection_snapshot();
 active_core().clear_selection();
     begin_insert_session();
     mode = Mode::Insert;
@@ -787,6 +943,10 @@ active_core().clear_selection();
 }
 
 void EditorState::enter_command_mode() {
+if (mode == Mode::Insert || insert_session_active) {
+        end_insert_session();
+    }
+capture_command_selection_snapshot();
 active_core().clear_selection();
     mode = Mode::Command;
     command_prompt_kind = CommandPromptKind::EditorCommand;
@@ -807,6 +967,10 @@ if (!active_core().has_selection()) {
         set_status("No selection");
         return;
     }
+    if (mode == Mode::Insert || insert_session_active) {
+        end_insert_session();
+    }
+    clear_command_selection_snapshot();
     mode = Mode::Command;
     command_prompt_kind = CommandPromptKind::FilterSelection;
     command_buffer.clear();
@@ -826,6 +990,10 @@ if (!active_core().has_selection()) {
         set_status("No selection");
         return;
     }
+    if (mode == Mode::Insert || insert_session_active) {
+        end_insert_session();
+    }
+    clear_command_selection_snapshot();
     mode = Mode::Command;
     command_prompt_kind = CommandPromptKind::SedSelection;
     command_buffer.clear();
@@ -843,6 +1011,10 @@ if (!active_core().has_selection()) {
 void EditorState::enter_search_mode() {
 EditorCore &core = active_core();
     EditorState::WindowUiState &window_state = active_buffer_ui();
+    if (mode == Mode::Insert || insert_session_active) {
+        end_insert_session();
+    }
+    clear_command_selection_snapshot();
     core.clear_selection();
     mode = Mode::Search;
     search_buffer.clear();
@@ -1541,6 +1713,19 @@ bool EditorState::reload_editor_configuration(std::string &error_message) {
         }
         if (!config.lsp_servers.empty()) {
             runtime.start_services();
+            for (EditorBuffer &buffer : session.buffers()) {
+                if (buffer.core.document_uri().empty()) {
+                    continue;
+                }
+                dispatch_editor_event({
+                    EditorEventType::DocumentOpened,
+                    buffer.core.document_uri(),
+                    buffer.core.document_version(),
+                    buffer.core.cursor(),
+                    std::nullopt,
+                    utf8_to_u32(buffer_text_utf8(buffer)),
+                });
+            }
         }
         std::string lua_error;
         if (!lua.initialize(*this, config.lua_path, lua_error)) {
@@ -1722,4 +1907,81 @@ EditorState::WindowUiState &window_state = active_buffer_ui();
     core.set_cursor(buffer_ui.search_matches[index].start);
     sync_window_view_from_core(windows.active_window_id());
     set_status(forward ? "Next match" : "Previous match");
+}
+
+std::optional<Position> matching_pair_cursor(const EditorCore &core) {
+    return pair_position_for_cursor(core);
+}
+
+std::optional<Position> matching_pair_position(const EditorCore &core, Position pair_position) {
+    std::optional<char32_t> codepoint = codepoint_at(core, pair_position);
+    if (!codepoint) {
+        return std::nullopt;
+    }
+
+    char32_t target = matching_pair_codepoint(*codepoint);
+    if (target == U'\0') {
+        return std::nullopt;
+    }
+
+    int depth = 0;
+    if (is_open_pair(*codepoint)) {
+        for (Position position = next_position(core, pair_position); is_before_end(core, position); position = next_position(core, position)) {
+            std::optional<char32_t> current = codepoint_at(core, position);
+            if (!current) {
+                continue;
+            }
+            if (*current == *codepoint) {
+                ++depth;
+            } else if (*current == target) {
+                if (depth == 0) {
+                    return position;
+                }
+                --depth;
+            }
+        }
+        return std::nullopt;
+    }
+
+    for (Position position = previous_position(core, pair_position); !(position == pair_position); position = previous_position(core, position)) {
+        std::optional<char32_t> current = codepoint_at(core, position);
+        if (current) {
+            if (*current == *codepoint) {
+                ++depth;
+            } else if (*current == target) {
+                if (depth == 0) {
+                    return position;
+                }
+                --depth;
+            }
+        }
+        if (position.row == 0 && position.column == 0) {
+            break;
+        }
+    }
+    return std::nullopt;
+}
+
+bool jump_to_matching_pair(EditorState &state, bool extend_selection) {
+    EditorCore &core = state.active_core();
+    std::optional<Position> pair = pair_position_for_cursor(core);
+    if (!pair) {
+        state.set_status("No matching pair");
+        return false;
+    }
+
+    std::optional<Position> match = matching_pair_position(core, *pair);
+    if (!match) {
+        state.set_status("Unmatched pair");
+        return false;
+    }
+
+    if (extend_selection && state.mode == Mode::Normal) {
+        state.mode = Mode::Visual;
+        core.begin_selection(SelectionMode::Character);
+    }
+    core.set_cursor(*match);
+    state.sync_window_view_from_core(state.windows.active_window_id());
+    state.set_status("Matching pair");
+    return true;
 }

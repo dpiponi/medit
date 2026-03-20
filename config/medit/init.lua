@@ -126,9 +126,213 @@ local function grep_health()
   return string.format("rg=%s fzf=%s", rg, fzf)
 end
 
+local function pick_theme()
+  local themes = medit.list_themes()
+  if #themes == 0 then
+    medit.set_status("No themes found")
+    return
+  end
+  if not medit.executable_exists("fzf") then
+    medit.set_status("Missing executable: fzf")
+    return
+  end
+
+  local command = "printf '%s\\n'"
+  for _, theme in ipairs(themes) do
+    command = command .. " " .. medit.shell_quote(theme)
+  end
+  command = command .. " | fzf"
+
+  local selection, err = medit.run_picker(command)
+  if not selection or selection == "" then
+    medit.set_status(err or "picker canceled")
+    return
+  end
+
+  medit.set_config_value("colors", selection)
+  medit.reload_config()
+  medit.set_status("Theme: " .. selection)
+end
+
+local function pick_theme_health()
+  local themes = medit.list_themes()
+  local fzf = medit.executable_exists("fzf") and "yes" or "no"
+  return string.format("themes=%d fzf=%s", #themes, fzf)
+end
+
+local function ai_command(argument, popup_only)
+  if argument == nil or argument == "" then
+    medit.set_status(popup_only and "No AI prompt" or "No AI instruction")
+    return
+  end
+
+  local command_prefix = medit.resolve_ai_command()
+  if not command_prefix then
+    medit.set_status("No AI helper found; install medit-ai or set ai_command")
+    return
+  end
+
+  local selection_text = medit.get_selection_text()
+  local input_text = selection_text or medit.get_buffer_text()
+  if not popup_only and input_text == "" then
+    medit.set_status("No selection or buffer text")
+    return
+  end
+
+  local provider = medit.resolve_ai_provider()
+  local model = medit.resolve_ai_model(provider)
+  local command = command_prefix ..
+    " --mode " .. medit.shell_quote(popup_only and "ask" or "edit") ..
+    " --provider " .. medit.shell_quote(provider) ..
+    " --model " .. medit.shell_quote(model) ..
+    " --prompt " .. medit.shell_quote(argument)
+
+  local output, err = medit.run_filter(command, input_text)
+  if not output then
+    medit.set_status(err or "AI command failed")
+    return
+  end
+
+  if popup_only then
+    medit.show_popup("AI", output)
+    medit.set_status("AI response ready")
+    return
+  end
+
+  local changed
+  if selection_text ~= nil then
+    changed = medit.replace_selection(output)
+  else
+    changed = medit.replace_buffer(output)
+  end
+  medit.set_status(changed and "AI edit applied" or "AI produced no changes")
+end
+
+local function ai_edit(argument)
+  ai_command(argument, false)
+end
+
+local function ai_popup(argument)
+  ai_command(argument, true)
+end
+
+local function ai_health()
+  local command = medit.resolve_ai_command()
+  local provider = medit.resolve_ai_provider()
+  local model = medit.resolve_ai_model(provider)
+  local auth = "no"
+  if provider == "openai" then
+    auth = (os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_API_KEY") ~= "") and "yes" or "no"
+  elseif provider == "mistral" then
+    auth = (os.getenv("MISTRAL_API_KEY") and os.getenv("MISTRAL_API_KEY") ~= "") and "yes" or "no"
+  end
+  return string.format(
+    "command=%s provider=%s model=%s auth=%s",
+    command or "missing",
+    provider,
+    model,
+    auth)
+end
+
+local function format_adjusted_number(original, value)
+  local digits = string.match(original, "^%-?(%d+)$")
+  if not digits then
+    return tostring(value)
+  end
+
+  if string.sub(digits, 1, 1) == "0" and #digits > 1 then
+    local sign = value < 0 and "-" or ""
+    return sign .. string.format("%0" .. tostring(#digits) .. "d", math.abs(value))
+  end
+
+  return tostring(value)
+end
+
+local function char_at(row, column)
+  return medit.get_text({
+    start = { row = row, column = column },
+    ["end"] = { row = row, column = column + 1 }
+  })
+end
+
+local function is_digit_char(ch)
+  return ch ~= nil and string.match(ch, "^%d$") ~= nil
+end
+
+local function adjust_number_under_cursor(delta)
+  local cursor = medit.get_cursor()
+  local row = cursor.row
+  local column = cursor.column
+  local current = char_at(row, column)
+  local start_column = nil
+  local end_column = nil
+
+  if is_digit_char(current) then
+    start_column = column
+    end_column = column + 1
+  elseif current == "-" and is_digit_char(char_at(row, column + 1)) then
+    start_column = column
+    end_column = column + 2
+  elseif column > 0 and is_digit_char(char_at(row, column - 1)) then
+    start_column = column - 1
+    end_column = column
+  else
+    medit.set_status("No number under cursor")
+    return
+  end
+
+  while start_column > 0 and is_digit_char(char_at(row, start_column - 1)) do
+    start_column = start_column - 1
+  end
+  if start_column > 0 and char_at(row, start_column - 1) == "-" then
+    start_column = start_column - 1
+  end
+  while is_digit_char(char_at(row, end_column)) do
+    end_column = end_column + 1
+  end
+
+  local matched = medit.get_text({
+    start = { row = row, column = start_column },
+    ["end"] = { row = row, column = end_column }
+  })
+  local value = tonumber(matched)
+  if value == nil then
+    medit.set_status("Could not parse number")
+    return
+  end
+
+  local updated = format_adjusted_number(matched, value + delta)
+  local changed = medit.replace_range(
+    {
+      start = { row = row, column = start_column },
+      ["end"] = { row = row, column = end_column }
+    },
+    updated)
+
+  local relative_column = column - start_column
+  local new_column = start_column + math.min(relative_column, #updated > 0 and #updated - 1 or 0)
+  medit.set_cursor({ row = row, column = new_column })
+  medit.set_status(changed and ("Number: " .. updated) or "Number unchanged")
+end
+
+local function increment_number()
+  adjust_number_under_cursor(1)
+end
+
+local function decrement_number()
+  adjust_number_under_cursor(-1)
+end
+
 medit.register_command("lua-status", show_status_summary)
 medit.register_command("edit-lua-init", edit_lua_init)
 medit.register_command("find-file", find_file)
 medit.register_command("grep", grep)
+medit.register_command("pick-theme", pick_theme)
+medit.register_command("ai", ai_edit)
+medit.register_command("ai-popup", ai_popup)
+medit.register_command("increment-number", increment_number)
+medit.register_command("decrement-number", decrement_number)
 medit.register_health_check("find-file", find_file_health)
 medit.register_health_check("grep", grep_health)
+medit.register_health_check("pick-theme", pick_theme_health)
+medit.register_health_check("ai", ai_health)
