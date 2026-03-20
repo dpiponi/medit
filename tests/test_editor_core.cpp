@@ -249,6 +249,29 @@ void test_yank_and_paste() {
     expect_text(core, "abcdab", "paste after cursor");
 }
 
+void test_matching_pair_navigation() {
+    EditorCore core;
+    expect(core.insert_text({0, 0}, utf8_to_u32("alpha(foo[bar{baz}])\nomega")), "seed matching pair buffer");
+
+    core.set_cursor({0, 5});
+    std::optional<Position> pair = matching_pair_cursor(core);
+    expect(pair.has_value() && *pair == Position{0, 5}, "cursor on opening paren should identify pair anchor");
+    std::optional<Position> match = matching_pair_position(core, *pair);
+    expect(match.has_value() && *match == Position{0, 19}, "opening paren should match closing paren");
+
+    core.set_cursor({0, 19});
+    pair = matching_pair_cursor(core);
+    expect(pair.has_value() && *pair == Position{0, 19}, "cursor on closing paren should identify pair anchor");
+    match = matching_pair_position(core, *pair);
+    expect(match.has_value() && *match == Position{0, 5}, "closing paren should match opening paren");
+
+    core.set_cursor({0, 13});
+    pair = matching_pair_cursor(core);
+    expect(pair.has_value() && *pair == Position{0, 13}, "cursor on opening brace should identify nested anchor");
+    match = matching_pair_position(core, *pair);
+    expect(match.has_value() && *match == Position{0, 17}, "opening brace should match closing brace");
+}
+
 void test_indent_and_outdent_lines() {
     EditorCore core;
     expect(core.insert_text({0, 0}, utf8_to_u32("one\ntwo\n\tthree")), "seed indent buffer");
@@ -917,6 +940,11 @@ void test_keybinding_dispatch() {
         sed.action.has_value() && *sed.action == EditorAction::SedSelection,
         "S should map to sed selection in visual mode");
 
+    KeyDispatch visual_command = dispatch_key_sequence(keybindings, "visual", pending, ":", false);
+    expect(
+        visual_command.action.has_value() && *visual_command.action == EditorAction::EnterCommandMode,
+        ": should enter command mode in visual mode");
+
     KeyDispatch command_history_previous = dispatch_key_sequence(keybindings, "command", pending, "up", false);
     expect(
         command_history_previous.action.has_value() &&
@@ -1130,8 +1158,8 @@ void test_keybinding_dispatch() {
 
     KeyDispatch select_all = dispatch_key_sequence(keybindings, "normal", pending, "%", false);
     expect(
-        select_all.action.has_value() && *select_all.action == EditorAction::SelectAll,
-        "% should map to select all");
+        select_all.action.has_value() && *select_all.action == EditorAction::JumpToMatchingPair,
+        "% should map to jump to matching pair");
 
     KeyDispatch visual_line_start = dispatch_key_sequence(keybindings, "normal", pending, ")", false);
     expect(
@@ -1425,6 +1453,7 @@ void test_infer_language_id() {
         {"json", "vscode-json-languageserver --stdio", "json", {"*.json", "*.jsonc"}, {}});
 
     expect(infer_language_id(config, std::optional<std::string>("test.py")) == "python", "python pattern should infer python");
+    expect(infer_language_id(config, std::optional<std::string>("init.lua")) == "lua", "lua extension should infer lua");
     expect(infer_language_id(config, std::optional<std::string>("settings.json")) == "json", "json pattern should infer json");
     expect(infer_language_id(config, std::optional<std::string>("main.cpp")) == "cpp", "cpp fallback should infer cpp");
     expect(infer_language_id(config, std::optional<std::string>("notes.txt")) == "text", "unknown filename should infer text");
@@ -1455,8 +1484,32 @@ void test_lua_runtime_registers_and_executes_command() {
     expect(error_message.empty(), "lua runtime init should not set an error");
     std::vector<std::string> commands = state.lua.registered_commands();
     expect(commands.size() == 1 && commands[0] == "hello", "lua runtime should register commands from startup script");
-    expect(state.lua.execute_command(state, "hello", error_message), "lua runtime should execute registered command");
+    expect(state.lua.execute_command(state, "hello", "", error_message), "lua runtime should execute registered command");
     expect(state.status_message == "hello from lua", "lua command should be able to set editor status");
+    state.lua.shutdown();
+    std::filesystem::remove_all(root);
+}
+
+void test_lua_runtime_passes_command_argument() {
+    std::filesystem::path root = std::filesystem::temp_directory_path() / "medit_lua_runtime_args";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+
+    std::filesystem::path script_path = root / "init.lua";
+    {
+        std::ofstream script(script_path);
+        script << "medit.register_command('echo', function(argument)\n"
+                  "  medit.set_status('arg=' .. argument)\n"
+                  "end)\n";
+    }
+
+    EditorState state;
+    initialize_windows(state);
+    std::string error_message;
+    expect(state.lua.initialize(state, script_path, error_message), "lua runtime should initialize for argument test");
+    expect(error_message.empty(), "lua runtime init should not set an error for argument test");
+    expect(state.lua.execute_command(state, "echo", "hello world", error_message), "lua runtime should pass command arguments");
+    expect(state.status_message == "arg=hello world", "lua command should receive ex command arguments");
     state.lua.shutdown();
     std::filesystem::remove_all(root);
 }
@@ -1516,6 +1569,13 @@ void test_command_execution_preserves_command_status() {
     state.execute_command();
     expect(state.mode == Mode::Normal, "executing a command should return to normal mode");
     expect(state.status_message != "NORMAL", "command result status should not be overwritten on exit");
+}
+
+void test_tree_sitter_health_summary_for_empty_config() {
+    EditorConfig config;
+    std::string summary = tree_sitter_health_summary(config);
+    expect(summary.contains("configured languages: 0"), "tree-sitter health should report zero configured languages");
+    expect(summary.contains("syntax config: (default/none)"), "tree-sitter health should show missing syntax config");
 }
 
 void test_infer_workspace_root() {
@@ -2174,6 +2234,7 @@ int main() {
         test_linewise_selection_range_and_delete();
         test_linewise_delete_and_paste();
         test_yank_and_paste();
+        test_matching_pair_navigation();
         test_indent_and_outdent_lines();
         test_substitute_regex();
         test_replace_selection_with_yank();
@@ -2201,8 +2262,10 @@ int main() {
         test_lsp_config_rejects_duplicate_patterns();
         test_infer_language_id();
         test_lua_runtime_registers_and_executes_command();
+        test_lua_runtime_passes_command_argument();
         test_lua_commands_are_top_level_ex_commands();
         test_command_execution_preserves_command_status();
+        test_tree_sitter_health_summary_for_empty_config();
         test_infer_workspace_root();
         test_process_utils_detect_missing_executables();
         test_cpp_syntax_highlighting();

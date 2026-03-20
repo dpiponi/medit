@@ -192,6 +192,74 @@ std::string shell_single_quote(const std::string &text) {
     return quoted;
 }
 
+std::optional<std::string> resolve_ai_command_prefix(const EditorConfig &config) {
+    if (config.ai_command && !config.ai_command->empty()) {
+        return config.ai_command;
+    }
+    if (executable_exists("medit-ai")) {
+        return std::string("medit-ai");
+    }
+    if (executable_exists("./tools/medit_ai.py")) {
+        return std::string("./tools/medit_ai.py");
+    }
+    if (executable_exists("tools/medit_ai.py")) {
+        return std::string("tools/medit_ai.py");
+    }
+    return std::nullopt;
+}
+
+std::string resolve_ai_provider(const EditorConfig &config) {
+    if (config.ai_provider && !config.ai_provider->empty()) {
+        return *config.ai_provider;
+    }
+    const char *llm_provider = std::getenv("LLM_PROVIDER");
+    if (llm_provider != nullptr) {
+        std::string normalized = ascii_lowercase(llm_provider);
+        if (normalized == "openai" || normalized == "mistral") {
+            return normalized;
+        }
+    }
+    const char *openai_key = std::getenv("OPENAI_API_KEY");
+    if (openai_key != nullptr && *openai_key != '\0') {
+        return "openai";
+    }
+    const char *mistral_key = std::getenv("MISTRAL_API_KEY");
+    if (mistral_key != nullptr && *mistral_key != '\0') {
+        return "mistral";
+    }
+    return "openai";
+}
+
+std::string resolve_ai_model(const EditorConfig &config, std::string_view provider) {
+    if (config.ai_model && !config.ai_model->empty()) {
+        return *config.ai_model;
+    }
+    const char *llm_model = std::getenv("LLM_MODEL");
+    if (llm_model != nullptr && *llm_model != '\0') {
+        return llm_model;
+    }
+    if (provider == "mistral") {
+        const char *mistral_model = std::getenv("MISTRAL_MODEL");
+        if (mistral_model != nullptr && *mistral_model != '\0') {
+            return mistral_model;
+        }
+        return "mistral-small-latest";
+    }
+    const char *openai_model = std::getenv("OPENAI_MODEL");
+    if (openai_model != nullptr && *openai_model != '\0') {
+        return openai_model;
+    }
+    return "gpt-5-nano";
+}
+
+Range full_buffer_range(const EditorCore &core) {
+    const Lines &lines = core.lines();
+    if (lines.empty()) {
+        return {{0, 0}, {0, 0}};
+    }
+    return {{0, 0}, {lines.size() - 1, lines.back().size()}};
+}
+
 std::string project_file_list_command(const std::optional<std::filesystem::path> &root = std::nullopt) {
     if (std::optional<std::string> fd = first_available_executable({"fd", "fdfind"})) {
         if (root && !root->empty()) {
@@ -614,6 +682,61 @@ void EditorState::handle_grep_command(const std::string &argument) {
     set_status("Opened " + path);
 }
 
+void EditorState::handle_ai_command(const std::string &argument, bool popup_only) {
+    if (argument.empty()) {
+        set_status(popup_only ? "No AI prompt" : "No AI instruction");
+        return;
+    }
+
+    std::optional<std::string> command_prefix = resolve_ai_command_prefix(config);
+    if (!command_prefix) {
+        set_status("No AI helper found; install medit-ai or set ai_command");
+        return;
+    }
+
+    EditorCore &core = active_core();
+    std::optional<Range> selection = displayed_selection_range(windows.active_window_id());
+    Range target_range = selection.value_or(full_buffer_range(core));
+    std::u32string input_text;
+    if (selection) {
+        input_text = core.read_text(*selection);
+    } else {
+        input_text = utf8_to_u32(buffer_text_utf8(active_buffer()));
+    }
+
+    if (!popup_only && input_text.empty()) {
+        set_status("No selection or buffer text");
+        return;
+    }
+
+    const std::string provider = resolve_ai_provider(config);
+    const std::string model = resolve_ai_model(config, provider);
+    std::string command = *command_prefix +
+        " --mode " + shell_single_quote(popup_only ? "ask" : "edit") +
+        " --provider " + shell_single_quote(provider) +
+        " --model " + shell_single_quote(model) +
+        " --prompt " + shell_single_quote(argument);
+
+    std::u32string output_text;
+    std::string error_message;
+    if (!run_selection_filter_command(*this, command, input_text, output_text, error_message)) {
+        set_status(error_message);
+        return;
+    }
+
+    if (popup_only) {
+        show_popup("AI", output_text);
+        set_status("AI response ready");
+        return;
+    }
+
+    if (core.replace_range(target_range, output_text)) {
+        set_status("AI edit applied");
+    } else {
+        set_status("AI produced no changes");
+    }
+}
+
 void EditorState::execute_filter_command() {
     EditorCore &core = active_core();
     std::optional<Range> selection = displayed_selection_range(windows.active_window_id());
@@ -717,10 +840,10 @@ enum class NamedEditorCommand {
     PreviousBuffer,
     DeleteBuffer,
     ForceDeleteBuffer,
-    FindFile,
-    Grep,
     PickTheme,
     ReloadConfig,
+    Ai,
+    AiPopup,
     Diagnostics,
     LspStatus,
     TreeSitterStatus,
@@ -747,10 +870,10 @@ constexpr std::array<NamedEditorCommandInfo, 20> kNamedEditorCommands{{
     {"bprev", "previous buffer", "bprev", NamedEditorCommand::PreviousBuffer},
     {"bd", "close current buffer", "bd", NamedEditorCommand::DeleteBuffer},
     {"bd!", "force close current buffer", "bd!", NamedEditorCommand::ForceDeleteBuffer},
-    {"find-file", "pick file with fzf", "find-file", NamedEditorCommand::FindFile},
-    {"grep", "grep with rg and fzf", "grep ", NamedEditorCommand::Grep},
     {"pick-theme", "pick a color theme", "pick-theme", NamedEditorCommand::PickTheme},
     {"reload-config", "reload medit configuration", "reload-config", NamedEditorCommand::ReloadConfig},
+    {"ai", "rewrite selection or buffer with AI", "ai ", NamedEditorCommand::Ai},
+    {"ai-popup", "show an AI response for selection or buffer", "ai-popup ", NamedEditorCommand::AiPopup},
     {"diagnostics", "show diagnostics summary", "diagnostics", NamedEditorCommand::Diagnostics},
     {"lsp-status", "show language server status", "lsp-status", NamedEditorCommand::LspStatus},
     {"tree-sitter-status", "show tree-sitter status", "tree-sitter-status", NamedEditorCommand::TreeSitterStatus},
@@ -845,13 +968,22 @@ void EditorState::handle_lua_command(const std::string &argument) {
         return;
     }
 
+    std::string name = argument;
+    std::string command_argument;
+    std::size_t separator = argument.find_first_of(" \t");
+    if (separator != std::string::npos) {
+        name = argument.substr(0, separator);
+        std::size_t argument_start = argument.find_first_not_of(" \t", separator);
+        command_argument = argument_start == std::string::npos ? std::string() : argument.substr(argument_start);
+    }
+
     std::string error_message;
-    if (!lua.execute_command(*this, argument, error_message)) {
+    if (!lua.execute_command(*this, name, command_argument, error_message)) {
         set_status(error_message);
         return;
     }
     if (status_message.empty() || status_message == ":") {
-        set_status("Lua command: " + argument);
+        set_status("Lua command: " + name);
     }
 }
 
@@ -933,12 +1065,6 @@ void execute_named_editor_command(
         case NamedEditorCommand::ForceDeleteBuffer:
             state.handle_buffer_delete_command(true);
             break;
-        case NamedEditorCommand::FindFile:
-            state.handle_find_file_command();
-            break;
-        case NamedEditorCommand::Grep:
-            state.handle_grep_command(argument);
-            break;
         case NamedEditorCommand::PickTheme:
             state.handle_pick_theme_command();
             break;
@@ -951,6 +1077,12 @@ void execute_named_editor_command(
             }
             break;
         }
+        case NamedEditorCommand::Ai:
+            state.handle_ai_command(argument, false);
+            break;
+        case NamedEditorCommand::AiPopup:
+            state.handle_ai_command(argument, true);
+            break;
         case NamedEditorCommand::Diagnostics:
             state.show_diagnostics_summary();
             break;
@@ -1062,20 +1194,24 @@ void EditorState::execute_command() {
         execute_named_editor_command(*this, *named, argument);
     } else if (argument.empty()) {
         std::string error_message;
-        if (lua.execute_command(*this, verb, error_message)) {
+        if (lua.execute_command(*this, verb, std::string(), error_message)) {
             if (status_message.empty() || status_message == ":") {
                 set_status("Lua command: " + verb);
             }
         } else {
             set_status("Unknown command: " + verb);
         }
-    } else {
-        std::vector<std::string> commands = lua_command_names(lua);
-        if (std::binary_search(commands.begin(), commands.end(), verb)) {
-            set_status("Lua commands do not take arguments");
+    } else if (std::vector<std::string> commands = lua_command_names(lua); std::binary_search(commands.begin(), commands.end(), verb)) {
+        std::string error_message;
+        if (lua.execute_command(*this, verb, argument, error_message)) {
+            if (status_message.empty() || status_message == ":") {
+                set_status("Lua command: " + verb);
+            }
         } else {
-            set_status("Unknown command: " + verb);
+            set_status(error_message);
         }
+    } else {
+        set_status("Unknown command: " + verb);
     }
     enter_normal_mode(true);
 }

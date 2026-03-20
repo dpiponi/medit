@@ -118,6 +118,9 @@ if [ "$INSTALL_CONTROL_CLI" -eq 1 ]; then
     log "installed $BIN_DIR/medit-ctl"
 fi
 
+install -m755 "$REPO_ROOT/tools/medit_ai.py" "$BIN_DIR/medit-ai"
+log "installed $BIN_DIR/medit-ai"
+
 install -m644 "$REPO_ROOT/tools/tree_sitter_languages.json" "$SHARE_DIR/tree_sitter_languages.json"
 log "installed $SHARE_DIR/tree_sitter_languages.json"
 

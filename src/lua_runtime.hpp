@@ -5,6 +5,7 @@ import editor_core;
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -25,9 +26,14 @@ class LuaRuntime {
         const std::optional<std::filesystem::path> &script_path,
         std::string &error_message);
     void shutdown();
-    bool execute_command(EditorState &state, const std::string &name, std::string &error_message);
+    bool execute_command(
+        EditorState &state,
+        const std::string &name,
+        const std::string &argument,
+        std::string &error_message);
     void dispatch_editor_event(EditorState &state, const EditorEvent &event);
     std::vector<std::string> registered_commands() const;
+    std::vector<std::pair<std::string, std::string>> run_health_checks(EditorState &state) const;
 
   private:
     struct Impl;

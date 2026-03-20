@@ -65,6 +65,8 @@ To install into your home directory with the default `~/.local/bin` prefix and `
 tools/install_home_local.sh
 ```
 
+That install also places `medit-ai` in `~/.local/bin/medit-ai`. If you are running from the repo without a local install, `medit` also falls back to `./tools/medit_ai.py`.
+
 Passing multiple files opens each one in its own buffer and leaves the first file active.
 Starting `./medit` with no file arguments opens a project file picker first. `medit` prefers `fd`/`fdfind` when available and otherwise falls back to `rg`, then pipes the results through `fzf`. If the picker is canceled or unsupported, `medit` falls back to an empty buffer.
 
@@ -150,6 +152,9 @@ If `lua = init.lua` is configured, `medit` runs that startup script at launch. T
 
 - `:lua-command lua-status` to show a compact status summary
 - `:lua-command edit-lua-init` to open your live Lua init file
+- `:find-file` as a Lua-backed file picker command using `fd`/`fdfind` or `rg`, then `fzf`
+
+For LuaLS, the example config tree also includes [config/medit/.luarc.json](/home/dan/medit/config/medit/.luarc.json) plus a stub library at [config/medit/luals/medit.lua](/home/dan/medit/config/medit/luals/medit.lua). That makes the global `medit` object known to the language server and provides completions for the current embedded API.
 
 For Makefiles, install the server separately before using the shipped config, for example:
 
@@ -251,6 +256,15 @@ To let Codex or another MCP client talk to a running `medit` instance:
 
 The bridge exposes tools for buffer/window inspection, reading buffer text and selection, opening files, switching buffers, applying text edits, and saving buffers.
 
+AI editing settings:
+
+- `ai_command = medit-ai` points `medit` at the helper command used by `:ai` and `:ai-popup`
+- `ai_provider = openai|mistral` picks the provider, otherwise `LLM_PROVIDER` or the available API key decides
+- `ai_model = ...` overrides the model, otherwise `LLM_MODEL`, `OPENAI_MODEL`, or `MISTRAL_MODEL` is used
+- `OPENAI_API_KEY` and `MISTRAL_API_KEY` are read from the environment by the helper script
+- `medit --health` reports the resolved AI helper command, whether it is executable, the selected provider/model, and whether the matching API key is present
+- `medit --health` also reports Lua plugin dependency health checks, including the example Lua `find-file` command's finder and `fzf` availability
+
 For direct local scripting without MCP, use the companion CLI:
 
 ```sh
@@ -274,6 +288,11 @@ The checked-in example config is:
 - [`config/medit/themes/luxor.json`](/home/dan/de/config/medit/themes/luxor.json)
 - [`config/medit/themes/matrix.json`](/home/dan/de/config/medit/themes/matrix.json)
 - [`config/medit/themes/assassin.json`](/home/dan/de/config/medit/themes/assassin.json)
+- [`config/medit/themes/terminator.json`](/home/dan/medit/config/medit/themes/terminator.json)
+- [`config/medit/themes/blade_runner.json`](/home/dan/medit/config/medit/themes/blade_runner.json)
+- [`config/medit/themes/2001.json`](/home/dan/medit/config/medit/themes/2001.json)
+- [`config/medit/themes/alien.json`](/home/dan/medit/config/medit/themes/alien.json)
+- [`config/medit/themes/star_trek.json`](/home/dan/medit/config/medit/themes/star_trek.json)
 - [`config/medit/themes/ghost.json`](/home/dan/de/config/medit/themes/ghost.json)
 
 If `meditrc` is absent, `medit` falls back to default file names in `./.config/medit/` and then `~/.config/medit/`. If those files are also absent, it falls back to embedded defaults.
@@ -388,10 +407,12 @@ On terminals with extended color support, `medit` uses those palette entries dir
 - `:bnext` / `:bprev` switch buffers
 - `:bd` close the current buffer if clean
 - `:bd!` force close the current buffer
-- `:find-file` open a project file via the external file picker (`fd`/`fdfind` or `rg`, then `fzf`)
-- `:grep pattern` search with `rg` and jump via `fzf`
+- `:find-file` open a project file via the Lua plugin in `init.lua` (`fd`/`fdfind` or `rg`, then `fzf`)
+- `:grep pattern` search with `rg` and jump via the Lua plugin in `init.lua`
 - `:pick-theme` choose a theme via `fzf`, update `meditrc`, and reload colors immediately
 - `:reload-config` reload `meditrc`, keybindings, colors, and logging
+- `:ai instruction` rewrites the current selection, or the whole buffer if nothing is selected
+- `:ai-popup question` shows an AI response for the current selection or buffer in a popup
 - `:diagnostics` show a diagnostics summary
 - `:lsp-status` show a popup with current LSP service state
 
