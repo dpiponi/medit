@@ -302,6 +302,10 @@ The checked-in example config is:
 - [`config/medit/themes/annihilation.json`](/home/dan/medit/config/medit/themes/annihilation.json)
 - [`config/medit/themes/oblivion.json`](/home/dan/medit/config/medit/themes/oblivion.json)
 - [`config/medit/themes/interstellar.json`](/home/dan/medit/config/medit/themes/interstellar.json)
+- [`config/medit/themes/battlestar_galactica.json`](/home/dan/medit/config/medit/themes/battlestar_galactica.json)
+- [`config/medit/themes/silent_running.json`](/home/dan/medit/config/medit/themes/silent_running.json)
+- [`config/medit/themes/demon_seed.json`](/home/dan/medit/config/medit/themes/demon_seed.json)
+- [`config/medit/themes/colossus_forbin_project.json`](/home/dan/medit/config/medit/themes/colossus_forbin_project.json)
 
 If `meditrc` is absent, `medit` falls back to default file names in `./.config/medit/` and then `~/.config/medit/`. If those files are also absent, it falls back to embedded defaults.
 
