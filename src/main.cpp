@@ -1,4 +1,4 @@
-#include "editor_internal.hpp"
+#include "editor_app.hpp"
 #include "config.hpp"
 #include "keybindings.hpp"
 #include "theme.hpp"
