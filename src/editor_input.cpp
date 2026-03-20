@@ -735,107 +735,174 @@ bool action_handles_own_repeat(EditorAction action) {
     return action == EditorAction::RepeatLastCommand;
 }
 
-void execute_action(EditorState &state, EditorAction action, wint_t key) {
+bool handle_motion_action(EditorState &state, EditorAction action) {
     EditorCore &core = state.active_core();
-    EditorState::BufferUiState &buffer_state = state.active_buffer_cache();
-    log_debug(
-        "action name=" + action_name(action) +
-        " key=" + std::to_string(static_cast<long long>(key)) +
-        " mode=" + mode_name(state.mode));
     switch (action) {
         case EditorAction::MoveLeft:
             core.move_left();
-            break;
+            return true;
         case EditorAction::VisualMoveLeft:
             prepare_visual_motion(state);
             core.move_left();
-            break;
+            return true;
         case EditorAction::MoveRight:
             core.move_right();
-            break;
+            return true;
         case EditorAction::VisualMoveRight:
             prepare_visual_motion(state);
             core.move_right();
-            break;
+            return true;
         case EditorAction::MoveUp:
             core.move_up();
-            break;
+            return true;
         case EditorAction::VisualMoveUp:
             prepare_visual_motion(state);
             core.move_up();
-            break;
+            return true;
         case EditorAction::MoveDown:
             core.move_down();
-            break;
+            return true;
         case EditorAction::VisualMoveDown:
             prepare_visual_motion(state);
             core.move_down();
-            break;
+            return true;
         case EditorAction::MoveLineStart:
             core.move_line_start();
-            break;
+            return true;
         case EditorAction::VisualMoveLineStart:
             prepare_visual_motion(state);
             core.move_line_start();
-            break;
+            return true;
         case EditorAction::MoveLineEnd:
             core.move_line_end();
-            break;
+            return true;
         case EditorAction::VisualMoveLineEnd:
             prepare_visual_motion(state);
             core.move_line_end();
-            break;
+            return true;
         case EditorAction::FindForward:
             begin_pending_motion(state, PendingMotion::FindForward, "f");
-            break;
+            return true;
         case EditorAction::VisualFindForward:
             prepare_visual_motion(state);
             begin_pending_motion(state, PendingMotion::FindForward, "F");
-            break;
+            return true;
         case EditorAction::FindBackward:
             begin_pending_motion(state, PendingMotion::FindBackward, "gf");
-            break;
+            return true;
         case EditorAction::VisualFindBackward:
             prepare_visual_motion(state);
             begin_pending_motion(state, PendingMotion::FindBackward, "gF");
-            break;
+            return true;
         case EditorAction::TillForward:
             begin_pending_motion(state, PendingMotion::TillForward, "t");
-            break;
+            return true;
         case EditorAction::VisualTillForward:
             prepare_visual_motion(state);
             begin_pending_motion(state, PendingMotion::TillForward, "T");
-            break;
+            return true;
         case EditorAction::TillBackward:
             begin_pending_motion(state, PendingMotion::TillBackward, "gt");
-            break;
+            return true;
         case EditorAction::VisualTillBackward:
             prepare_visual_motion(state);
             begin_pending_motion(state, PendingMotion::TillBackward, "gT");
-            break;
+            return true;
+        case EditorAction::GotoTop:
+            core.move_to_first_line();
+            core.move_line_start();
+            state.set_status("Top of file");
+            return true;
+        case EditorAction::VisualGotoTop:
+            prepare_visual_motion(state);
+            core.move_to_first_line();
+            core.move_line_start();
+            state.set_status("Top of file");
+            return true;
+        case EditorAction::GotoBottom:
+            core.move_to_last_line();
+            core.move_line_start();
+            state.set_status("Bottom of file");
+            return true;
+        case EditorAction::VisualGotoBottom:
+            prepare_visual_motion(state);
+            core.move_to_last_line();
+            core.move_line_start();
+            state.set_status("Bottom of file");
+            return true;
+        case EditorAction::HalfPageDown:
+            half_page_down(state);
+            return true;
+        case EditorAction::HalfPageUp:
+            half_page_up(state);
+            return true;
+        case EditorAction::PageUp:
+            page_up(state);
+            return true;
+        case EditorAction::PageDown:
+            page_down(state);
+            return true;
+        case EditorAction::SearchNext:
+            state.refresh_search_matches(false);
+            state.navigate_search_match(true);
+            return true;
+        case EditorAction::VisualSearchNext:
+            prepare_visual_motion(state);
+            state.refresh_search_matches(false);
+            state.navigate_search_match(true);
+            return true;
+        case EditorAction::SearchPrevious:
+            state.refresh_search_matches(false);
+            state.navigate_search_match(false);
+            return true;
+        case EditorAction::VisualSearchPrevious:
+            prepare_visual_motion(state);
+            state.refresh_search_matches(false);
+            state.navigate_search_match(false);
+            return true;
+        case EditorAction::NextDiagnostic:
+            state.navigate_diagnostic(true);
+            return true;
+        case EditorAction::PreviousDiagnostic:
+            state.navigate_diagnostic(false);
+            return true;
+        case EditorAction::JumpToMatchingPair:
+            jump_to_matching_pair(state, false);
+            return true;
+        case EditorAction::VisualJumpToMatchingPair:
+            jump_to_matching_pair(state, true);
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool handle_mode_and_insert_action(EditorState &state, EditorAction action, wint_t key) {
+    EditorCore &core = state.active_core();
+    switch (action) {
         case EditorAction::EnterInsertMode:
             state.enter_insert_mode();
-            break;
+            return true;
         case EditorAction::AppendAfterCursor:
             append_after_cursor(state);
-            break;
+            return true;
         case EditorAction::EnterVisualMode:
             enter_visual_mode(state);
-            break;
+            return true;
         case EditorAction::EnterVisualLineMode:
             enter_visual_line_mode(state);
-            break;
+            return true;
         case EditorAction::AppendLineEndInsert: {
             Position cursor = core.cursor();
             core.set_cursor({cursor.row, core.line_length(cursor.row)});
             state.enter_insert_mode();
-            break;
+            return true;
         }
         case EditorAction::InsertLineStartInsert: {
             Position cursor = core.cursor();
             core.set_cursor({cursor.row, 0});
             state.enter_insert_mode();
-            break;
+            return true;
         }
         case EditorAction::OpenLineBelow:
             state.begin_insert_session();
@@ -846,138 +913,24 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             }
             state.mode = Mode::Insert;
             state.set_status(mode_name(state.mode));
-            break;
+            return true;
         case EditorAction::OpenLineAbove:
             state.begin_insert_session();
             core.open_line_above();
             state.mode = Mode::Insert;
             state.set_status(mode_name(state.mode));
-            break;
-        case EditorAction::DeleteChar:
-            core.delete_character_under_cursor();
-            state.set_status("Deleted character");
-            break;
-        case EditorAction::ReplaceChar:
-            state.pending.replace_count = take_repeat_count(state);
-            state.set_status("r");
-            break;
-        case EditorAction::RepeatLastCommand:
-            state.recording.recording_nonrepeatable = true;
-            state.recording.repeat_last_command(state);
-            break;
-        case EditorAction::Undo:
-            state.recording.recording_nonrepeatable = true;
-            state.set_status(core.undo() ? "Undid change" : "Nothing to undo");
-            break;
-        case EditorAction::Redo:
-            state.recording.recording_nonrepeatable = true;
-            state.set_status(core.redo() ? "Redid change" : "Nothing to redo");
-            break;
-        case EditorAction::PasteAfter:
-            state.session.sync_active_clipboard();
-            state.set_status(core.paste_after_cursor() ? "Pasted" : "Yank buffer empty");
-            break;
-        case EditorAction::PasteBefore:
-            state.session.sync_active_clipboard();
-            state.set_status(core.paste_before_cursor() ? "Pasted" : "Yank buffer empty");
-            break;
-        case EditorAction::GotoTop:
-            core.move_to_first_line();
-            core.move_line_start();
-            state.set_status("Top of file");
-            break;
-        case EditorAction::VisualGotoTop:
-            prepare_visual_motion(state);
-            core.move_to_first_line();
-            core.move_line_start();
-            state.set_status("Top of file");
-            break;
-        case EditorAction::GotoBottom:
-            core.move_to_last_line();
-            core.move_line_start();
-            state.set_status("Bottom of file");
-            break;
-        case EditorAction::VisualGotoBottom:
-            prepare_visual_motion(state);
-            core.move_to_last_line();
-            core.move_line_start();
-            state.set_status("Bottom of file");
-            break;
+            return true;
         case EditorAction::EnterCommandMode:
             state.enter_command_mode();
-            break;
+            return true;
         case EditorAction::EnterSearchMode:
             state.enter_search_mode();
             state.refresh_search_matches(true);
             state.set_search_status();
-            break;
-        case EditorAction::DeleteLine:
-            core.delete_current_line();
-            state.set_status("Deleted line");
-            break;
-        case EditorAction::HalfPageDown:
-            half_page_down(state);
-            break;
-        case EditorAction::HalfPageUp:
-            half_page_up(state);
-            break;
-        case EditorAction::PageUp:
-            page_up(state);
-            break;
-        case EditorAction::PageDown:
-            page_down(state);
-            break;
-        case EditorAction::Indent:
-            state.set_status(indent_selection_or_line(state, true) ? "Indented" : "Nothing to indent");
-            break;
-        case EditorAction::Outdent:
-            state.set_status(indent_selection_or_line(state, false) ? "Outdented" : "Nothing to outdent");
-            break;
-        case EditorAction::NextBuffer:
-            state.session.switch_to_id(state.active_window().buffer_id);
-            state.session.next_buffer();
-            state.show_buffer_in_active_window(state.session.active_buffer_id());
-            state.set_status("Switched to " + state.active_core().display_file_name());
-            break;
-        case EditorAction::PreviousBuffer:
-            state.session.switch_to_id(state.active_window().buffer_id);
-            state.session.previous_buffer();
-            state.show_buffer_in_active_window(state.session.active_buffer_id());
-            state.set_status("Switched to " + state.active_core().display_file_name());
-            break;
-        case EditorAction::SplitHorizontal:
-            state.set_status(state.split_active_window(WindowSplitDirection::Horizontal) ? "Split window" : "Could not split window");
-            break;
-        case EditorAction::SplitVertical:
-            state.set_status(state.split_active_window(WindowSplitDirection::Vertical) ? "Split window" : "Could not split window");
-            break;
-        case EditorAction::CloseWindow:
-            if (!state.close_active_window() && !state.should_quit) {
-                state.set_status("Could not close window");
-            }
-            break;
-        case EditorAction::CloseOtherWindows:
-            state.set_status(state.close_other_windows() ? "Closed other windows" : "No other windows");
-            break;
-        case EditorAction::FocusWindowLeft:
-            state.set_status(focus_window_direction(state, WindowMoveDirection::Left) ? "Window left" : "No window left");
-            break;
-        case EditorAction::FocusWindowRight:
-            state.set_status(focus_window_direction(state, WindowMoveDirection::Right) ? "Window right" : "No window right");
-            break;
-        case EditorAction::FocusWindowUp:
-            state.set_status(focus_window_direction(state, WindowMoveDirection::Up) ? "Window up" : "No window up");
-            break;
-        case EditorAction::FocusWindowDown:
-            state.set_status(focus_window_direction(state, WindowMoveDirection::Down) ? "Window down" : "No window down");
-            break;
-        case EditorAction::Suspend:
-            log_debug("Suspend action triggered - calling suspend_editor");
-            suspend_editor(state);
-            break;
+            return true;
         case EditorAction::EnterNormalMode:
             state.enter_normal_mode();
-            break;
+            return true;
         case EditorAction::InsertNewline:
             state.begin_insert_session();
             if (effective_autoindent(state.config, core.file_path())) {
@@ -985,189 +938,91 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             } else {
                 core.insert_newline();
             }
-            break;
+            return true;
         case EditorAction::InsertSoftTab:
             state.begin_insert_session();
             core.insert_soft_tab(
                 effective_tabstop(state.config, core.file_path()),
                 effective_softtabstop(state.config, core.file_path()),
                 effective_expandtab(state.config, core.file_path()));
-            break;
+            return true;
         case EditorAction::InsertOutdent:
             state.begin_insert_session();
             core.outdent_before_cursor(
                 effective_tabstop(state.config, core.file_path()),
                 effective_softtabstop(state.config, core.file_path()));
-            break;
+            return true;
         case EditorAction::Backspace:
             state.begin_insert_session();
             core.backspace_character();
-            break;
-        case EditorAction::CommandExecute:
-            state.execute_command();
-            break;
-        case EditorAction::CommandBackspace:
-            if (state.prompt_cursor > 0) {
-                state.command_buffer.erase(state.prompt_cursor - 1, 1);
-                --state.prompt_cursor;
-            }
-            break;
-        case EditorAction::PromptMoveLeft:
-            if (state.prompt_cursor > 0) {
-                --state.prompt_cursor;
-            }
-            break;
-        case EditorAction::PromptMoveRight:
-            move_prompt_cursor(state, state.prompt_cursor + 1);
-            break;
-        case EditorAction::PromptMoveStart:
-            state.prompt_cursor = 0;
-            break;
-        case EditorAction::PromptMoveEnd:
-            move_prompt_cursor(state, std::numeric_limits<std::size_t>::max());
-            break;
-        case EditorAction::CommandHistoryPrevious:
-            state.browse_prompt_history(true);
-            break;
-        case EditorAction::CommandHistoryNext:
-            state.browse_prompt_history(false);
-            break;
-        case EditorAction::ShowCommandCompletion:
-            state.show_command_completion();
-            break;
+            return true;
         case EditorAction::SelfInsert:
             state.begin_insert_session();
             core.insert_codepoint(static_cast<char32_t>(key));
-            break;
-        case EditorAction::CommandInsert:
-            state.command_buffer.insert(
-                state.command_buffer.begin() + static_cast<std::ptrdiff_t>(state.prompt_cursor),
-                static_cast<char32_t>(key));
-            ++state.prompt_cursor;
-            break;
-        case EditorAction::SearchExecute:
-            state.add_prompt_history_entry(state.search_buffer);
-            buffer_state.active_search_pattern = state.search_buffer;
-            state.refresh_search_matches(true);
-            if (!buffer_state.search_pattern_valid) {
-                state.set_search_status("invalid regex");
-                break;
-            }
-            state.mode = Mode::Normal;
-            state.set_status(buffer_state.search_matches.empty() ? "No search matches" : "Search applied");
-            break;
-        case EditorAction::SearchBackspace:
-            if (state.prompt_cursor > 0) {
-                state.search_buffer.erase(state.prompt_cursor - 1, 1);
-                --state.prompt_cursor;
-            }
-            buffer_state.active_search_pattern = state.search_buffer;
-            state.refresh_search_matches(true);
-            state.set_search_status(buffer_state.search_pattern_valid ? "" : "invalid regex");
-            break;
-        case EditorAction::SearchInsert:
-            state.search_buffer.insert(
-                state.search_buffer.begin() + static_cast<std::ptrdiff_t>(state.prompt_cursor),
-                static_cast<char32_t>(key));
-            ++state.prompt_cursor;
-            buffer_state.active_search_pattern = state.search_buffer;
-            state.refresh_search_matches(true);
-            state.set_search_status(buffer_state.search_pattern_valid ? "" : "invalid regex");
-            break;
-        case EditorAction::SearchHistoryPrevious:
-            state.browse_prompt_history(true);
-            buffer_state.active_search_pattern = state.search_buffer;
-            state.refresh_search_matches(true);
-            state.set_search_status(buffer_state.search_pattern_valid ? "" : "invalid regex");
-            break;
-        case EditorAction::SearchHistoryNext:
-            state.browse_prompt_history(false);
-            buffer_state.active_search_pattern = state.search_buffer;
-            state.refresh_search_matches(true);
-            state.set_search_status(buffer_state.search_pattern_valid ? "" : "invalid regex");
-            break;
-        case EditorAction::SearchNext:
-            state.refresh_search_matches(false);
-            state.navigate_search_match(true);
-            break;
-        case EditorAction::VisualSearchNext:
-            prepare_visual_motion(state);
-            state.refresh_search_matches(false);
-            state.navigate_search_match(true);
-            break;
-        case EditorAction::SearchPrevious:
-            state.refresh_search_matches(false);
-            state.navigate_search_match(false);
-            break;
-        case EditorAction::VisualSearchPrevious:
-            prepare_visual_motion(state);
-            state.refresh_search_matches(false);
-            state.navigate_search_match(false);
-            break;
-        case EditorAction::GoToDefinition:
-            state.request_definition();
-            break;
-        case EditorAction::ShowHover:
-            state.request_hover();
-            break;
-        case EditorAction::ShowCompletion:
-            state.request_completion();
-            break;
-        case EditorAction::ShowKeyHints:
-            if (popup_is_key_hints(state) && state.popup.sticky) {
-                state.dismiss_popup();
-                state.set_status(mode_name(state.mode));
-            } else {
-                refresh_key_hint_popup(state, true);
-                state.set_status("Key hints");
-            }
-            break;
-        case EditorAction::SelectEnclosingAst:
-            state.select_enclosing_ast();
-            break;
-        case EditorAction::SelectInnerAst:
-            state.select_inner_ast();
-            break;
-        case EditorAction::GoToFileUnderCursor:
-            state.open_file_under_cursor();
-            break;
-        case EditorAction::JumpBack:
-            navigate_jump_history(state, state.jump_stack.back, state.jump_stack.forward, "No older jump", "Jumped back");
-            break;
-        case EditorAction::JumpForward:
-            navigate_jump_history(state, state.jump_stack.forward, state.jump_stack.back, "No newer jump", "Jumped forward");
-            break;
-        case EditorAction::NextDiagnostic:
-            state.navigate_diagnostic(true);
-            break;
-        case EditorAction::PreviousDiagnostic:
-            state.navigate_diagnostic(false);
-            break;
-        case EditorAction::ToggleDiagnosticsVisibility:
-            state.diagnostics_visible = !state.diagnostics_visible;
-            state.set_status(state.diagnostics_visible ? "Diagnostics shown" : "Diagnostics hidden");
-            break;
-        case EditorAction::ToggleDiagnosticsPanel:
-            state.show_diagnostics_summary();
-            break;
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool handle_edit_action(EditorState &state, EditorAction action) {
+    EditorCore &core = state.active_core();
+    switch (action) {
+        case EditorAction::DeleteChar:
+            core.delete_character_under_cursor();
+            state.set_status("Deleted character");
+            return true;
+        case EditorAction::ReplaceChar:
+            state.pending.replace_count = take_repeat_count(state);
+            state.set_status("r");
+            return true;
+        case EditorAction::RepeatLastCommand:
+            state.recording.recording_nonrepeatable = true;
+            state.recording.repeat_last_command(state);
+            return true;
+        case EditorAction::Undo:
+            state.recording.recording_nonrepeatable = true;
+            state.set_status(core.undo() ? "Undid change" : "Nothing to undo");
+            return true;
+        case EditorAction::Redo:
+            state.recording.recording_nonrepeatable = true;
+            state.set_status(core.redo() ? "Redid change" : "Nothing to redo");
+            return true;
+        case EditorAction::PasteAfter:
+            state.session.sync_active_clipboard();
+            state.set_status(core.paste_after_cursor() ? "Pasted" : "Yank buffer empty");
+            return true;
+        case EditorAction::PasteBefore:
+            state.session.sync_active_clipboard();
+            state.set_status(core.paste_before_cursor() ? "Pasted" : "Yank buffer empty");
+            return true;
+        case EditorAction::DeleteLine:
+            core.delete_current_line();
+            state.set_status("Deleted line");
+            return true;
+        case EditorAction::Indent:
+            state.set_status(indent_selection_or_line(state, true) ? "Indented" : "Nothing to indent");
+            return true;
+        case EditorAction::Outdent:
+            state.set_status(indent_selection_or_line(state, false) ? "Outdented" : "Nothing to outdent");
+            return true;
         case EditorAction::DeleteSelection: {
             SelectionMode selection_mode = core.selection_mode();
             if (core.delete_selection()) {
                 state.session.capture_active_clipboard();
                 state.mode = Mode::Normal;
-                state.set_status(
-                    selection_mode == SelectionMode::Line ? "Deleted lines" : "Deleted selection");
+                state.set_status(selection_mode == SelectionMode::Line ? "Deleted lines" : "Deleted selection");
             } else {
                 state.set_status("No selection");
             }
-            break;
+            return true;
         }
         case EditorAction::FilterSelection:
             state.enter_filter_command_mode();
-            break;
+            return true;
         case EditorAction::SedSelection:
             state.enter_sed_command_mode();
-            break;
+            return true;
         case EditorAction::YankSelection:
             if (core.yank_selection()) {
                 SelectionMode selection_mode = core.selection_mode();
@@ -1178,8 +1033,8 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
             } else {
                 state.set_status("No selection");
             }
-            break;
-        case EditorAction::ChangeSelection: {
+            return true;
+        case EditorAction::ChangeSelection:
             state.begin_insert_session();
             if (core.delete_selection()) {
                 state.session.capture_active_clipboard();
@@ -1188,35 +1043,33 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
                 state.end_insert_session();
                 state.set_status("No selection");
             }
-            break;
-        }
+            return true;
         case EditorAction::ReplaceSelectionWithYank: {
             state.session.sync_active_clipboard();
             SelectionMode selection_mode = core.selection_mode();
             if (core.replace_selection_with_yank()) {
                 state.mode = Mode::Normal;
-                state.set_status(
-                    selection_mode == SelectionMode::Line ? "Replaced lines" : "Replaced selection");
+                state.set_status(selection_mode == SelectionMode::Line ? "Replaced lines" : "Replaced selection");
             } else {
                 state.set_status("Yank buffer empty");
             }
-            break;
+            return true;
         }
         case EditorAction::SelectAll:
             if (!select_entire_buffer(state)) {
                 state.set_status("Selection empty");
             }
-            break;
+            return true;
         case EditorAction::MoveToSelectionStart:
             if (!move_cursor_to_selection_boundary(state, false)) {
                 state.set_status("No selection");
             }
-            break;
+            return true;
         case EditorAction::MoveToSelectionEnd:
             if (!move_cursor_to_selection_boundary(state, true)) {
                 state.set_status("No selection");
             }
-            break;
+            return true;
         case EditorAction::SelectInnerWord:
             if (state.mode == Mode::Visual || state.mode == Mode::VisualLine) {
                 std::optional<Range> range = core.inner_word_range();
@@ -1227,7 +1080,7 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
                     state.set_status("No word");
                 }
             }
-            break;
+            return true;
         case EditorAction::SelectAroundWord:
             if (state.mode == Mode::Visual || state.mode == Mode::VisualLine) {
                 std::optional<Range> range = core.a_word_range();
@@ -1238,7 +1091,207 @@ void execute_action(EditorState &state, EditorAction action, wint_t key) {
                     state.set_status("No word");
                 }
             }
-            break;
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool handle_window_action(EditorState &state, EditorAction action) {
+    switch (action) {
+        case EditorAction::NextBuffer:
+            state.session.switch_to_id(state.active_window().buffer_id);
+            state.session.next_buffer();
+            state.show_buffer_in_active_window(state.session.active_buffer_id());
+            state.set_status("Switched to " + state.active_core().display_file_name());
+            return true;
+        case EditorAction::PreviousBuffer:
+            state.session.switch_to_id(state.active_window().buffer_id);
+            state.session.previous_buffer();
+            state.show_buffer_in_active_window(state.session.active_buffer_id());
+            state.set_status("Switched to " + state.active_core().display_file_name());
+            return true;
+        case EditorAction::SplitHorizontal:
+            state.set_status(state.split_active_window(WindowSplitDirection::Horizontal) ? "Split window" : "Could not split window");
+            return true;
+        case EditorAction::SplitVertical:
+            state.set_status(state.split_active_window(WindowSplitDirection::Vertical) ? "Split window" : "Could not split window");
+            return true;
+        case EditorAction::CloseWindow:
+            if (!state.close_active_window() && !state.should_quit) {
+                state.set_status("Could not close window");
+            }
+            return true;
+        case EditorAction::CloseOtherWindows:
+            state.set_status(state.close_other_windows() ? "Closed other windows" : "No other windows");
+            return true;
+        case EditorAction::FocusWindowLeft:
+            state.set_status(focus_window_direction(state, WindowMoveDirection::Left) ? "Window left" : "No window left");
+            return true;
+        case EditorAction::FocusWindowRight:
+            state.set_status(focus_window_direction(state, WindowMoveDirection::Right) ? "Window right" : "No window right");
+            return true;
+        case EditorAction::FocusWindowUp:
+            state.set_status(focus_window_direction(state, WindowMoveDirection::Up) ? "Window up" : "No window up");
+            return true;
+        case EditorAction::FocusWindowDown:
+            state.set_status(focus_window_direction(state, WindowMoveDirection::Down) ? "Window down" : "No window down");
+            return true;
+        case EditorAction::Suspend:
+            log_debug("Suspend action triggered - calling suspend_editor");
+            suspend_editor(state);
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool handle_prompt_action(EditorState &state, EditorAction action, wint_t key) {
+    EditorState::BufferUiState &buffer_state = state.active_buffer_cache();
+    switch (action) {
+        case EditorAction::CommandExecute:
+            state.execute_command();
+            return true;
+        case EditorAction::CommandBackspace:
+            if (state.prompt_cursor > 0) {
+                state.command_buffer.erase(state.prompt_cursor - 1, 1);
+                --state.prompt_cursor;
+            }
+            return true;
+        case EditorAction::PromptMoveLeft:
+            if (state.prompt_cursor > 0) {
+                --state.prompt_cursor;
+            }
+            return true;
+        case EditorAction::PromptMoveRight:
+            move_prompt_cursor(state, state.prompt_cursor + 1);
+            return true;
+        case EditorAction::PromptMoveStart:
+            state.prompt_cursor = 0;
+            return true;
+        case EditorAction::PromptMoveEnd:
+            move_prompt_cursor(state, std::numeric_limits<std::size_t>::max());
+            return true;
+        case EditorAction::CommandHistoryPrevious:
+            state.browse_prompt_history(true);
+            return true;
+        case EditorAction::CommandHistoryNext:
+            state.browse_prompt_history(false);
+            return true;
+        case EditorAction::ShowCommandCompletion:
+            state.show_command_completion();
+            return true;
+        case EditorAction::CommandInsert:
+            state.command_buffer.insert(
+                state.command_buffer.begin() + static_cast<std::ptrdiff_t>(state.prompt_cursor),
+                static_cast<char32_t>(key));
+            ++state.prompt_cursor;
+            return true;
+        case EditorAction::SearchExecute:
+            state.add_prompt_history_entry(state.search_buffer);
+            buffer_state.active_search_pattern = state.search_buffer;
+            state.refresh_search_matches(true);
+            if (!buffer_state.search_pattern_valid) {
+                state.set_search_status("invalid regex");
+                return true;
+            }
+            state.mode = Mode::Normal;
+            state.set_status(buffer_state.search_matches.empty() ? "No search matches" : "Search applied");
+            return true;
+        case EditorAction::SearchBackspace:
+            if (state.prompt_cursor > 0) {
+                state.search_buffer.erase(state.prompt_cursor - 1, 1);
+                --state.prompt_cursor;
+            }
+            buffer_state.active_search_pattern = state.search_buffer;
+            state.refresh_search_matches(true);
+            state.set_search_status(buffer_state.search_pattern_valid ? "" : "invalid regex");
+            return true;
+        case EditorAction::SearchInsert:
+            state.search_buffer.insert(
+                state.search_buffer.begin() + static_cast<std::ptrdiff_t>(state.prompt_cursor),
+                static_cast<char32_t>(key));
+            ++state.prompt_cursor;
+            buffer_state.active_search_pattern = state.search_buffer;
+            state.refresh_search_matches(true);
+            state.set_search_status(buffer_state.search_pattern_valid ? "" : "invalid regex");
+            return true;
+        case EditorAction::SearchHistoryPrevious:
+            state.browse_prompt_history(true);
+            buffer_state.active_search_pattern = state.search_buffer;
+            state.refresh_search_matches(true);
+            state.set_search_status(buffer_state.search_pattern_valid ? "" : "invalid regex");
+            return true;
+        case EditorAction::SearchHistoryNext:
+            state.browse_prompt_history(false);
+            buffer_state.active_search_pattern = state.search_buffer;
+            state.refresh_search_matches(true);
+            state.set_search_status(buffer_state.search_pattern_valid ? "" : "invalid regex");
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool handle_runtime_action(EditorState &state, EditorAction action) {
+    switch (action) {
+        case EditorAction::GoToDefinition:
+            state.request_definition();
+            return true;
+        case EditorAction::ShowHover:
+            state.request_hover();
+            return true;
+        case EditorAction::ShowCompletion:
+            state.request_completion();
+            return true;
+        case EditorAction::ShowKeyHints:
+            if (popup_is_key_hints(state) && state.popup.sticky) {
+                state.dismiss_popup();
+                state.set_status(mode_name(state.mode));
+            } else {
+                refresh_key_hint_popup(state, true);
+                state.set_status("Key hints");
+            }
+            return true;
+        case EditorAction::SelectEnclosingAst:
+            state.select_enclosing_ast();
+            return true;
+        case EditorAction::SelectInnerAst:
+            state.select_inner_ast();
+            return true;
+        case EditorAction::GoToFileUnderCursor:
+            state.open_file_under_cursor();
+            return true;
+        case EditorAction::JumpBack:
+            navigate_jump_history(state, state.jump_stack.back, state.jump_stack.forward, "No older jump", "Jumped back");
+            return true;
+        case EditorAction::JumpForward:
+            navigate_jump_history(state, state.jump_stack.forward, state.jump_stack.back, "No newer jump", "Jumped forward");
+            return true;
+        case EditorAction::ToggleDiagnosticsVisibility:
+            state.diagnostics_visible = !state.diagnostics_visible;
+            state.set_status(state.diagnostics_visible ? "Diagnostics shown" : "Diagnostics hidden");
+            return true;
+        case EditorAction::ToggleDiagnosticsPanel:
+            state.show_diagnostics_summary();
+            return true;
+        default:
+            return false;
+    }
+}
+
+void execute_action(EditorState &state, EditorAction action, wint_t key) {
+    log_debug(
+        "action name=" + action_name(action) +
+        " key=" + std::to_string(static_cast<long long>(key)) +
+        " mode=" + mode_name(state.mode));
+    if (!handle_motion_action(state, action) &&
+        !handle_mode_and_insert_action(state, action, key) &&
+        !handle_edit_action(state, action) &&
+        !handle_window_action(state, action) &&
+        !handle_prompt_action(state, action, key) &&
+        !handle_runtime_action(state, action)) {
+        return;
     }
     if (!state.should_quit && state.windows.active_window()) {
         state.sync_window_view_from_core(state.windows.active_window_id());
@@ -1380,6 +1433,11 @@ void process_input_token(EditorState &state, const std::string &token, wint_t ke
             state.recording.record_command_input( token, key, printable);
             state.pending.repeat_digits += token;
             state.set_status(state.pending.repeat_digits);
+            return;
+        }
+        if (token == "%" && (state.mode == Mode::Normal || state.mode == Mode::Visual || state.mode == Mode::VisualLine)) {
+            jump_to_matching_pair(state, state.mode != Mode::Normal);
+            state.recording.finalize(state);
             return;
         }
     }

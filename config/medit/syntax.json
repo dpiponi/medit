@@ -38,6 +38,21 @@
       "highlights_path": "queries/json/highlights.scm"
     },
     {
+      "name": "lua",
+      "patterns": ["*.lua"],
+      "grammar_path": "grammars/libtree-sitter-lua.so",
+      "symbol_name": "tree_sitter_lua",
+      "highlights_path": "queries/lua/highlights.scm",
+      "editor": {
+        "shiftwidth": 2,
+        "tabstop": 2,
+        "softtabstop": 2,
+        "expandtab": true,
+        "autoindent": true,
+        "show_diagnostics_in_insert_mode": false
+      }
+    },
+    {
       "name": "markdown",
       "patterns": ["*.md", "*.markdown"],
       "grammar_path": "grammars/libtree-sitter-markdown.so",

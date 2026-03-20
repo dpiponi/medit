@@ -1,4 +1,5 @@
-#include "config.hpp"
+module;
+
 #include "json.hpp"
 #include "string_utils.hpp"
 
@@ -9,6 +10,8 @@
 #include <fstream>
 #include <optional>
 #include <ranges>
+
+module config;
 
 namespace {
 
@@ -38,6 +41,14 @@ std::size_t parse_non_negative_size_value(const std::string &value, const std::s
         throw std::runtime_error("invalid " + key + " value: " + value);
     }
     return parsed;
+}
+
+std::string parse_ai_provider_value(const std::string &value) {
+    std::string normalized = ascii_lowercase(value);
+    if (normalized == "openai" || normalized == "mistral") {
+        return normalized;
+    }
+    throw std::runtime_error("invalid ai_provider: " + value);
 }
 
 ClipboardMode parse_clipboard_mode(const std::string &value) {
@@ -412,6 +423,12 @@ EditorConfig load_editor_config_from_path(const std::filesystem::path &path) {
             if (!config.control_socket_path->is_absolute()) {
                 config.control_socket_path = resolve_config_reference(path, value);
             }
+        } else if (key == "ai_command") {
+            config.ai_command = value;
+        } else if (key == "ai_provider") {
+            config.ai_provider = parse_ai_provider_value(value);
+        } else if (key == "ai_model") {
+            config.ai_model = value;
         } else if (key == "lsp_command") {
             config.lsp_command = value;
         } else if (key == "lsp_language_id") {
@@ -538,6 +555,9 @@ std::string infer_language_id(const EditorConfig &config, const std::optional<st
         }
         if (extension == ".py" || extension == ".pyi" || extension == ".pyw") {
             return "python";
+        }
+        if (extension == ".lua") {
+            return "lua";
         }
         if (extension == ".json" || extension == ".jsonc") {
             return "json";

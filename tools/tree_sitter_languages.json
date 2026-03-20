@@ -31,6 +31,14 @@
       "query_path": "queries/highlights.scm"
     },
     {
+      "name": "lua",
+      "repo": "https://github.com/tree-sitter-grammars/tree-sitter-lua.git",
+      "ref": "10fe0054734eec83049514ea2e718b2a56acd0c9",
+      "extensions": [".lua"],
+      "symbol_name": "tree_sitter_lua",
+      "query_path": "queries/highlights.scm"
+    },
+    {
       "name": "markdown",
       "repo": "https://github.com/tree-sitter-grammars/tree-sitter-markdown.git",
       "ref": "f969cd3ae3f9fbd4e43205431d0ae286014c05b5",

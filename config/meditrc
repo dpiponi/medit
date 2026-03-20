@@ -14,3 +14,8 @@ show_diagnostics_in_insert_mode = false
 
 # Optional local control socket for the MCP bridge.
 # control_socket = /tmp/medit.sock
+
+# Optional AI editing helper.
+# ai_command = medit-ai
+# ai_provider = openai
+# ai_model = gpt-5-nano

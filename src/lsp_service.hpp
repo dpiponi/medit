@@ -6,6 +6,7 @@
 #include <atomic>
 #include <array>
 #include <chrono>
+#include <filesystem>
 #include <map>
 #include <set>
 #include <mutex>

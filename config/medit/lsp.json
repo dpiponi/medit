@@ -31,6 +31,16 @@
       }
     },
     {
+      "name": "lua",
+      "command": "lua-language-server",
+      "language_id": "lua",
+      "patterns": ["*.lua"],
+      "workspace": {
+        "markers": [".luarc.json", ".luarc.jsonc", ".git"],
+        "fallback": "file_directory"
+      }
+    },
+    {
       "name": "make",
       "command": "autotools-language-server",
       "language_id": "make",

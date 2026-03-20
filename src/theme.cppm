@@ -4,10 +4,9 @@ module;
 #include <filesystem>
 #include <string>
 
-struct EditorConfig;
-
 export module theme;
 
+export import config;
 import editor_core;
 
 export struct Theme {

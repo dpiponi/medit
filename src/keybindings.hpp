@@ -105,6 +105,8 @@ enum class EditorAction {
     PreviousDiagnostic,
     ToggleDiagnosticsVisibility,
     ToggleDiagnosticsPanel,
+    JumpToMatchingPair,
+    VisualJumpToMatchingPair,
     DeleteSelection,
     FilterSelection,
     SedSelection,

@@ -286,6 +286,16 @@ HighlightSpans collect_line_highlights(const EditorState &state, std::size_t win
     if (state.displayed_cursor(window_id).row == row) {
         spans.push_back({entire_line, StyleRole::CursorLine, 10});
     }
+    if (std::optional<Position> pair = matching_pair_cursor(core)) {
+        if (std::optional<Position> match = matching_pair_position(core, *pair)) {
+            if (pair->row == row) {
+                spans.push_back({{*pair, {pair->row, pair->column + 1}}, StyleRole::SearchMatchCurrent, 96});
+            }
+            if (match->row == row) {
+                spans.push_back({{*match, {match->row, match->column + 1}}, StyleRole::SearchMatchCurrent, 96});
+            }
+        }
+    }
     std::optional<Range> selection = core.selection_range();
     if (selection && row >= selection->start.row && row <= selection->end.row) {
         Range line_selection{
