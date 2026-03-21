@@ -720,6 +720,10 @@ bool action_accepts_repeat(EditorAction action) {
         case EditorAction::VisualMoveUp:
         case EditorAction::MoveDown:
         case EditorAction::VisualMoveDown:
+        case EditorAction::MoveScreenUp:
+        case EditorAction::VisualMoveScreenUp:
+        case EditorAction::MoveScreenDown:
+        case EditorAction::VisualMoveScreenDown:
         case EditorAction::MoveLineStart:
         case EditorAction::VisualMoveLineStart:
         case EditorAction::MoveLineEnd:
@@ -798,6 +802,24 @@ bool handle_motion_action(EditorState &state, EditorAction action) {
             disable_panel_follow_if_active(state);
             prepare_visual_motion(state);
             core.move_down();
+            return true;
+        case EditorAction::MoveScreenUp:
+            disable_panel_follow_if_active(state);
+            move_cursor_by_visual_rows(state, state.windows.active_window_id(), -1);
+            return true;
+        case EditorAction::VisualMoveScreenUp:
+            disable_panel_follow_if_active(state);
+            prepare_visual_motion(state);
+            move_cursor_by_visual_rows(state, state.windows.active_window_id(), -1);
+            return true;
+        case EditorAction::MoveScreenDown:
+            disable_panel_follow_if_active(state);
+            move_cursor_by_visual_rows(state, state.windows.active_window_id(), 1);
+            return true;
+        case EditorAction::VisualMoveScreenDown:
+            disable_panel_follow_if_active(state);
+            prepare_visual_motion(state);
+            move_cursor_by_visual_rows(state, state.windows.active_window_id(), 1);
             return true;
         case EditorAction::MoveLineStart:
             core.move_line_start();

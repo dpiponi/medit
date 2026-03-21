@@ -277,6 +277,13 @@ bool EditorState::replace_selection_for_commands(const std::u32string &text) {
         return false;
     }
     bool changed = buffer->core.replace_range(snapshot->range, text);
+    if (changed) {
+        for (const EditorWindow &window : windows.windows()) {
+            if (window.buffer_id == buffer->id) {
+                sync_window_view_from_core(window.id);
+            }
+        }
+    }
     if (mode == Mode::Command && command_prompt_kind == CommandPromptKind::EditorCommand) {
         command_selection_snapshot.reset();
     }
@@ -1422,13 +1429,72 @@ Lines wrap_annotation_text(const std::u32string &text, int max_cols) {
     return wrapped;
 }
 
+namespace {
+
+int wrapped_line_content_cols(int buffer_cols, bool continuation) {
+    (void)continuation;
+    return buffer_cols;
+}
+
+std::size_t source_line_display_width_until(const std::u32string &line, std::size_t limit, std::size_t tabstop) {
+    std::size_t width = 0;
+    std::size_t capped = limit > line.size() ? line.size() : limit;
+    for (std::size_t index = 0; index < capped; ++index) {
+        width += codepoint_display_width(line[index], width, tabstop);
+    }
+    return width;
+}
+
+}  // namespace
+
+std::vector<std::size_t> source_line_wrap_starts(const std::u32string &line, int buffer_cols, std::size_t tabstop) {
+    std::vector<std::size_t> starts;
+    starts.push_back(0);
+    if (buffer_cols <= 1 || line.empty()) {
+        return starts;
+    }
+
+    std::size_t absolute_width = 0;
+    std::size_t segment_start_width = 0;
+    int segment_cols = wrapped_line_content_cols(buffer_cols, false);
+    for (char32_t codepoint : line) {
+        std::size_t codepoint_width_value = codepoint_display_width(codepoint, absolute_width, tabstop);
+        if (absolute_width > segment_start_width &&
+            absolute_width + codepoint_width_value - segment_start_width > static_cast<std::size_t>(segment_cols)) {
+            starts.push_back(absolute_width);
+            segment_start_width = absolute_width;
+            segment_cols = wrapped_line_content_cols(buffer_cols, true);
+        }
+        absolute_width += codepoint_width_value;
+    }
+    return starts;
+}
+
+std::size_t source_line_wrap_index_for_column(
+    const std::u32string &line,
+    std::size_t column,
+    int buffer_cols,
+    std::size_t tabstop) {
+    std::vector<std::size_t> starts = source_line_wrap_starts(line, buffer_cols, tabstop);
+    std::size_t target_width = source_line_display_width_until(line, column, tabstop);
+    auto found = std::upper_bound(starts.begin(), starts.end(), target_width);
+    if (found == starts.begin()) {
+        return 0;
+    }
+    return static_cast<std::size_t>(found - starts.begin() - 1);
+}
+
 VisualRows build_visual_rows(const EditorState &state, std::size_t window_id, int buffer_cols) {
     VisualRows rows;
     std::vector<AnnotationEntryView> annotations = sorted_annotations(state, window_id);
     std::size_t annotation_index = 0;
+    std::size_t tabstop = effective_tabstop(state.config, state.window_core(window_id).file_path());
 
     for (std::size_t row = 0; row < state.window_core(window_id).line_count(); ++row) {
-        rows.push_back({VisualRowKind::SourceLine, row, 0, std::nullopt});
+        std::vector<std::size_t> starts = source_line_wrap_starts(state.window_core(window_id).lines()[row], buffer_cols, tabstop);
+        for (std::size_t wrap_index = 0; wrap_index < starts.size(); ++wrap_index) {
+            rows.push_back({VisualRowKind::SourceLine, row, wrap_index, std::nullopt});
+        }
         while (annotation_index < annotations.size()) {
             Range range = normalized_range(annotations[annotation_index].annotation.range);
             if (range.end.row != row) {
@@ -1468,7 +1534,7 @@ const VisualRows &visual_rows_for_window(const EditorState &state, std::size_t w
 
 std::size_t visual_row_for_buffer_row(const VisualRows &rows, std::size_t buffer_row) {
     for (std::size_t index = 0; index < rows.size(); ++index) {
-        if (rows[index].kind == VisualRowKind::SourceLine && rows[index].buffer_row == buffer_row) {
+        if (rows[index].kind == VisualRowKind::SourceLine && rows[index].buffer_row == buffer_row && rows[index].wrap_offset == 0) {
             return index;
         }
     }

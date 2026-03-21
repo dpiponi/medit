@@ -22,6 +22,7 @@ const EditorCore &active_core(const EditorState &state);
 std::wstring u32_to_wstring(const std::u32string &text);
 int codepoint_width(char32_t codepoint);
 std::size_t codepoint_display_width(char32_t codepoint, std::size_t visual_column, std::size_t tabstop);
+std::size_t column_for_display_width(const std::u32string &line, std::size_t target_width, std::size_t tabstop);
 std::string mode_name(Mode mode);
 std::string prefixed_message(const char *prefix, const std::string &value);
 std::string count_label(std::size_t count, const char *singular);
@@ -37,6 +38,13 @@ void browse_prompt_history(EditorState &state, bool previous);
 std::size_t popup_menu_visible_rows_for_screen(int screen_rows);
 bool should_render_diagnostics(const EditorState &state, std::size_t window_id);
 Lines wrap_annotation_text(const std::u32string &text, int max_cols);
+std::vector<std::size_t> source_line_wrap_starts(const std::u32string &line, int buffer_cols, std::size_t tabstop);
+std::size_t source_line_wrap_index_for_column(
+    const std::u32string &line,
+    std::size_t column,
+    int buffer_cols,
+    std::size_t tabstop);
+bool move_cursor_by_visual_rows(EditorState &state, std::size_t window_id, int delta);
 const VisualRows &visual_rows_for_window(const EditorState &state, std::size_t window_id, int buffer_cols);
 std::size_t visual_row_for_buffer_row(const VisualRows &rows, std::size_t buffer_row);
 void show_diagnostics_summary(EditorState &state);

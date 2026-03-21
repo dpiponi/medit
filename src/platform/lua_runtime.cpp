@@ -639,6 +639,13 @@ struct LuaRuntime::Impl {
         bool changed = impl->current_state->active_core().replace_range(
             full_buffer_range(impl->current_state->active_core()),
             utf8_to_u32(text));
+        if (changed) {
+            for (const EditorWindow &window : impl->current_state->windows.windows()) {
+                if (window.buffer_id == impl->current_state->active_buffer().id) {
+                    impl->current_state->sync_window_view_from_core(window.id);
+                }
+            }
+        }
         lua_pushboolean(lua_state, changed ? 1 : 0);
         return 1;
     }
