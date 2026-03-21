@@ -314,7 +314,7 @@ std::string handle_control_request(EditorState &state, std::string_view request_
                 return error_control_result("buffer not found").dump();
             }
             state.show_buffer_in_active_window(*buffer_id);
-            state.set_status(prefixed_message("Switched to ", state.active_core().display_file_name()));
+            state.set_status(prefixed_message("Switched to ", buffer_display_name(state.active_buffer())));
             return success_control_result(json_buffer_summary(state, state.active_buffer())).dump();
         }
 
@@ -393,7 +393,7 @@ std::string handle_control_request(EditorState &state, std::string_view request_
             if (!target) {
                 return error_control_result("buffer not found").dump();
             }
-            const std::string closed_name = target->core.display_file_name();
+            const std::string closed_name = buffer_display_name(*target);
             state.session.switch_to_id(target_buffer_id);
             EditorEvents closed_events;
             if (!state.session.close_active_buffer(force, &closed_events)) {
@@ -514,6 +514,7 @@ void run_editor(EditorState &state) {
         }
         state.runtime.poll_services();
         state.handle_service_events();
+        state.lua.poll_async(state);
         state.control_server.poll([&state](std::string_view request) { return handle_control_request(state, request); });
         render_frame(state);
         update_input_timeout(state);

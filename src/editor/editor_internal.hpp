@@ -11,6 +11,7 @@ EditorWindow &active_window(EditorState &state);
 const EditorWindow &active_window(const EditorState &state);
 EditorBuffer &active_buffer(EditorState &state);
 const EditorBuffer &active_buffer(const EditorState &state);
+std::string buffer_display_name(const EditorBuffer &buffer);
 std::string buffer_text_utf8(const EditorBuffer &buffer);
 JsonValue json_position(Position position);
 JsonValue json_range(const Range &range);
@@ -29,7 +30,7 @@ std::string make_status_bar_left_text(
     const EditorCore &core,
     const std::string &language,
     const std::string &workspace);
-std::string make_status_bar_right_text(const EditorCore &core, Position cursor);
+std::string make_status_bar_right_text(const EditorState &state, const EditorCore &core, Position cursor);
 bool handle_popup_input(EditorState &state, const std::string &token);
 void add_prompt_history_entry(EditorState &state, const std::u32string &entry);
 void browse_prompt_history(EditorState &state, bool previous);
@@ -52,6 +53,7 @@ void teardown_terminal();
 void suspend_editor(EditorState &state);
 void sync_active_window_buffer(EditorState &state);
 void show_buffer_in_active_window(EditorState &state, std::size_t buffer_id, bool reset_view = true);
+void show_buffer_in_panel(EditorState &state, std::size_t buffer_id, bool focus_panel = false);
 void focus_window(EditorState &state, std::size_t window_id);
 void begin_insert_session(EditorState &state);
 void end_insert_session(EditorState &state);

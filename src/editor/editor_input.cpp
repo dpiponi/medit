@@ -189,6 +189,9 @@ bool EditorState::close_active_window() {
     if (!windows.close_active()) {
         return false;
     }
+    if (panel_window_id && *panel_window_id == closing_window_id) {
+        panel_window_id.reset();
+    }
     window_ui_map.erase(closing_window_id);
     sync_active_window_buffer();
     active_buffer_ui();
@@ -200,6 +203,9 @@ bool EditorState::close_other_windows() {
         return false;
     }
     std::size_t active_window_id = windows.active_window_id();
+    if (panel_window_id && *panel_window_id != active_window_id) {
+        panel_window_id.reset();
+    }
     auto kept = window_ui_map.find(active_window_id);
     if (kept == window_ui_map.end()) {
         window_ui_map.clear();
@@ -211,6 +217,15 @@ bool EditorState::close_other_windows() {
     sync_active_window_buffer();
     active_buffer_ui();
     return true;
+}
+
+bool ensure_active_buffer_editable(EditorState &state) {
+    if (state.active_buffer_is_user_editable()) {
+        return true;
+    }
+    state.enter_normal_mode(true);
+    state.set_status("Buffer is read-only");
+    return false;
 }
 
 bool focus_window_direction(EditorState &state, WindowMoveDirection direction) {
@@ -881,9 +896,15 @@ bool handle_mode_and_insert_action(EditorState &state, EditorAction action, wint
     EditorCore &core = state.active_core();
     switch (action) {
         case EditorAction::EnterInsertMode:
+            if (!ensure_active_buffer_editable(state)) {
+                return true;
+            }
             state.enter_insert_mode();
             return true;
         case EditorAction::AppendAfterCursor:
+            if (!ensure_active_buffer_editable(state)) {
+                return true;
+            }
             append_after_cursor(state);
             return true;
         case EditorAction::EnterVisualMode:
@@ -893,18 +914,27 @@ bool handle_mode_and_insert_action(EditorState &state, EditorAction action, wint
             enter_visual_line_mode(state);
             return true;
         case EditorAction::AppendLineEndInsert: {
+            if (!ensure_active_buffer_editable(state)) {
+                return true;
+            }
             Position cursor = core.cursor();
             core.set_cursor({cursor.row, core.line_length(cursor.row)});
             state.enter_insert_mode();
             return true;
         }
         case EditorAction::InsertLineStartInsert: {
+            if (!ensure_active_buffer_editable(state)) {
+                return true;
+            }
             Position cursor = core.cursor();
             core.set_cursor({cursor.row, 0});
             state.enter_insert_mode();
             return true;
         }
         case EditorAction::OpenLineBelow:
+            if (!ensure_active_buffer_editable(state)) {
+                return true;
+            }
             state.begin_insert_session();
             if (effective_autoindent(state.config, core.file_path())) {
                 core.open_line_below_with_autoindent();
@@ -915,6 +945,9 @@ bool handle_mode_and_insert_action(EditorState &state, EditorAction action, wint
             state.set_status(mode_name(state.mode));
             return true;
         case EditorAction::OpenLineAbove:
+            if (!ensure_active_buffer_editable(state)) {
+                return true;
+            }
             state.begin_insert_session();
             core.open_line_above();
             state.mode = Mode::Insert;
@@ -932,6 +965,9 @@ bool handle_mode_and_insert_action(EditorState &state, EditorAction action, wint
             state.enter_normal_mode();
             return true;
         case EditorAction::InsertNewline:
+            if (!ensure_active_buffer_editable(state)) {
+                return true;
+            }
             state.begin_insert_session();
             if (effective_autoindent(state.config, core.file_path())) {
                 core.insert_newline_with_autoindent();
@@ -940,6 +976,9 @@ bool handle_mode_and_insert_action(EditorState &state, EditorAction action, wint
             }
             return true;
         case EditorAction::InsertSoftTab:
+            if (!ensure_active_buffer_editable(state)) {
+                return true;
+            }
             state.begin_insert_session();
             core.insert_soft_tab(
                 effective_tabstop(state.config, core.file_path()),
@@ -947,16 +986,25 @@ bool handle_mode_and_insert_action(EditorState &state, EditorAction action, wint
                 effective_expandtab(state.config, core.file_path()));
             return true;
         case EditorAction::InsertOutdent:
+            if (!ensure_active_buffer_editable(state)) {
+                return true;
+            }
             state.begin_insert_session();
             core.outdent_before_cursor(
                 effective_tabstop(state.config, core.file_path()),
                 effective_softtabstop(state.config, core.file_path()));
             return true;
         case EditorAction::Backspace:
+            if (!ensure_active_buffer_editable(state)) {
+                return true;
+            }
             state.begin_insert_session();
             core.backspace_character();
             return true;
         case EditorAction::SelfInsert:
+            if (!ensure_active_buffer_editable(state)) {
+                return true;
+            }
             state.begin_insert_session();
             core.insert_codepoint(static_cast<char32_t>(key));
             return true;
@@ -969,6 +1017,9 @@ bool handle_edit_action(EditorState &state, EditorAction action) {
     EditorCore &core = state.active_core();
     switch (action) {
         case EditorAction::DeleteChar:
+            if (!ensure_active_buffer_editable(state)) {
+                return true;
+            }
             core.delete_character_under_cursor();
             state.set_status("Deleted character");
             return true;
@@ -989,24 +1040,42 @@ bool handle_edit_action(EditorState &state, EditorAction action) {
             state.set_status(core.redo() ? "Redid change" : "Nothing to redo");
             return true;
         case EditorAction::PasteAfter:
+            if (!ensure_active_buffer_editable(state)) {
+                return true;
+            }
             state.session.sync_active_clipboard();
             state.set_status(core.paste_after_cursor() ? "Pasted" : "Yank buffer empty");
             return true;
         case EditorAction::PasteBefore:
+            if (!ensure_active_buffer_editable(state)) {
+                return true;
+            }
             state.session.sync_active_clipboard();
             state.set_status(core.paste_before_cursor() ? "Pasted" : "Yank buffer empty");
             return true;
         case EditorAction::DeleteLine:
+            if (!ensure_active_buffer_editable(state)) {
+                return true;
+            }
             core.delete_current_line();
             state.set_status("Deleted line");
             return true;
         case EditorAction::Indent:
+            if (!ensure_active_buffer_editable(state)) {
+                return true;
+            }
             state.set_status(indent_selection_or_line(state, true) ? "Indented" : "Nothing to indent");
             return true;
         case EditorAction::Outdent:
+            if (!ensure_active_buffer_editable(state)) {
+                return true;
+            }
             state.set_status(indent_selection_or_line(state, false) ? "Outdented" : "Nothing to outdent");
             return true;
         case EditorAction::DeleteSelection: {
+            if (!ensure_active_buffer_editable(state)) {
+                return true;
+            }
             SelectionMode selection_mode = core.selection_mode();
             if (core.delete_selection()) {
                 state.session.capture_active_clipboard();
@@ -1035,6 +1104,9 @@ bool handle_edit_action(EditorState &state, EditorAction action) {
             }
             return true;
         case EditorAction::ChangeSelection:
+            if (!ensure_active_buffer_editable(state)) {
+                return true;
+            }
             state.begin_insert_session();
             if (core.delete_selection()) {
                 state.session.capture_active_clipboard();
@@ -1045,6 +1117,9 @@ bool handle_edit_action(EditorState &state, EditorAction action) {
             }
             return true;
         case EditorAction::ReplaceSelectionWithYank: {
+            if (!ensure_active_buffer_editable(state)) {
+                return true;
+            }
             state.session.sync_active_clipboard();
             SelectionMode selection_mode = core.selection_mode();
             if (core.replace_selection_with_yank()) {
@@ -1103,13 +1178,13 @@ bool handle_window_action(EditorState &state, EditorAction action) {
             state.session.switch_to_id(state.active_window().buffer_id);
             state.session.next_buffer();
             state.show_buffer_in_active_window(state.session.active_buffer_id());
-            state.set_status("Switched to " + state.active_core().display_file_name());
+            state.set_status("Switched to " + buffer_display_name(state.active_buffer()));
             return true;
         case EditorAction::PreviousBuffer:
             state.session.switch_to_id(state.active_window().buffer_id);
             state.session.previous_buffer();
             state.show_buffer_in_active_window(state.session.active_buffer_id());
-            state.set_status("Switched to " + state.active_core().display_file_name());
+            state.set_status("Switched to " + buffer_display_name(state.active_buffer()));
             return true;
         case EditorAction::SplitHorizontal:
             state.set_status(state.split_active_window(WindowSplitDirection::Horizontal) ? "Split window" : "Could not split window");
@@ -1602,6 +1677,11 @@ void EditorState::handle_input() {
 
 void update_input_timeout(const EditorState &state) {
     std::optional<int> timeout_ms = state.runtime.idle_wait_timeout_ms();
+    if (std::optional<int> lua_timeout = state.lua.idle_wait_timeout_ms()) {
+        if (!timeout_ms || *lua_timeout < *timeout_ms) {
+            timeout_ms = lua_timeout;
+        }
+    }
     timeout(timeout_ms.has_value() ? *timeout_ms : -1);
 }
 

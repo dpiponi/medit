@@ -53,6 +53,13 @@ const EditorBuffer &EditorState::active_buffer() const {
     return window_buffer(windows.active_window_id());
 }
 
+std::string buffer_display_name(const EditorBuffer &buffer) {
+    if (!buffer.title.empty()) {
+        return buffer.title;
+    }
+    return buffer.core.display_file_name();
+}
+
 std::string buffer_text_utf8(const EditorBuffer &buffer) {
     std::string text;
     const auto &lines = buffer.core.lines();
@@ -89,8 +96,10 @@ JsonValue json_buffer_summary(const EditorState &state, const EditorBuffer &buff
         {"id", buffer.id},
         {"document_uri", buffer.core.document_uri()},
         {"file_path", buffer.core.file_path() ? JsonValue(*buffer.core.file_path()) : JsonValue(nullptr)},
-        {"display_name", buffer.core.display_file_name()},
-        {"dirty", buffer.core.is_dirty()},
+        {"display_name", buffer_display_name(buffer)},
+        {"dirty", !buffer.ephemeral && buffer.core.is_dirty()},
+        {"editable", buffer.editable},
+        {"ephemeral", buffer.ephemeral},
         {"line_count", buffer.core.line_count()},
         {"document_version", buffer.core.document_version()},
         {"active", active},
@@ -271,6 +280,63 @@ bool EditorState::replace_selection_for_commands(const std::u32string &text) {
         command_selection_snapshot.reset();
     }
     return changed;
+}
+
+bool EditorState::buffer_is_user_editable(std::size_t buffer_id) const {
+    const EditorBuffer *buffer = session.find_buffer_by_id(buffer_id);
+    return buffer != nullptr && buffer->editable;
+}
+
+bool EditorState::active_buffer_is_user_editable() const {
+    return active_buffer().editable;
+}
+
+EditorBuffer &EditorState::ensure_named_special_buffer(
+    const std::string &name,
+    EditorBufferKind kind,
+    bool editable,
+    bool activate) {
+    if (auto found = named_special_buffers.find(name); found != named_special_buffers.end()) {
+        if (EditorBuffer *buffer = session.find_buffer_by_id(found->second)) {
+            return *buffer;
+        }
+        named_special_buffers.erase(found);
+    }
+
+    EditorBuffer &buffer = session.new_special_buffer(kind, name, activate, editable, true);
+    named_special_buffers[name] = buffer.id;
+    return buffer;
+}
+
+void EditorState::append_to_buffer(std::size_t buffer_id, const std::u32string &text, bool move_cursor_to_end) {
+    EditorBuffer *buffer = session.find_buffer_by_id(buffer_id);
+    if (buffer == nullptr || text.empty()) {
+        return;
+    }
+
+    EditorCore &core = buffer->core;
+    const Position end{core.line_count() - 1, core.line_length(core.line_count() - 1)};
+    core.insert_text(end, text);
+    if (move_cursor_to_end) {
+        core.set_cursor(EditorCommandAccess::position_after_text(core, end, text));
+    }
+}
+
+void EditorState::clear_buffer_contents(std::size_t buffer_id) {
+    EditorBuffer *buffer = session.find_buffer_by_id(buffer_id);
+    if (buffer == nullptr) {
+        return;
+    }
+
+    EditorCore &core = buffer->core;
+    core.replace_range({{0, 0}, {core.line_count() - 1, core.line_length(core.line_count() - 1)}}, U"");
+    core.set_cursor({0, 0});
+    for (const EditorWindow &window : windows.windows()) {
+        if (window.buffer_id == buffer_id) {
+            window_ui(window.id) = EditorState::WindowUiState{};
+            sync_window_view_from_core(window.id);
+        }
+    }
 }
 
 void EditorState::sync_window_view_from_core(std::size_t window_id) {
@@ -527,8 +593,9 @@ std::string make_status_bar_left_text(
     const EditorCore &core,
     const std::string &language,
     const std::string &workspace) {
+    (void)core;
     return mode_name(state.mode) +
-           "  " + core.display_file_name() +
+           "  " + buffer_display_name(state.active_buffer()) +
            "  [b " + std::to_string(state.session.index_for_buffer_id(state.active_window().buffer_id).value_or(0) + 1) +
            "/" + std::to_string(state.session.buffer_count()) +
            "] [w " + std::to_string(state.windows.active_window_index() + 1) +
@@ -537,8 +604,8 @@ std::string make_status_bar_left_text(
            "  ws:" + workspace;
 }
 
-std::string make_status_bar_right_text(const EditorCore &core, Position cursor) {
-    return std::string(core.is_dirty() ? " [+]" : "") +
+std::string make_status_bar_right_text(const EditorState &state, const EditorCore &core, Position cursor) {
+    return std::string((!state.active_buffer().ephemeral && core.is_dirty()) ? " [+]" : "") +
            "  " + std::to_string(cursor.row + 1) +
            ":" + std::to_string(cursor.column + 1) +
            "  rev " + std::to_string(core.current_revision());
@@ -845,6 +912,33 @@ void EditorState::show_buffer_in_active_window(std::size_t buffer_id, bool reset
         sync_window_view_from_core(windows.active_window_id());
     } else {
         sync_core_view_from_window(windows.active_window_id());
+    }
+}
+
+void EditorState::show_buffer_in_panel(std::size_t buffer_id, bool focus_panel) {
+    std::optional<std::size_t> existing_window_id = windows.find_window_showing_buffer(buffer_id);
+    std::size_t original_window_id = windows.active_window_id();
+    if (existing_window_id) {
+        panel_window_id = *existing_window_id;
+        if (focus_panel) {
+            focus_window(*existing_window_id);
+        }
+        return;
+    }
+
+    if (panel_window_id && windows.find_window(*panel_window_id)) {
+        focus_window(*panel_window_id);
+        show_buffer_in_active_window(buffer_id);
+    } else {
+        if (!split_active_window(WindowSplitDirection::Horizontal)) {
+            return;
+        }
+        panel_window_id = windows.active_window_id();
+        show_buffer_in_active_window(buffer_id);
+    }
+
+    if (!focus_panel) {
+        focus_window(original_window_id);
     }
 }
 

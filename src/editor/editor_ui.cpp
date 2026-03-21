@@ -759,7 +759,7 @@ std::string build_status_text(const EditorState &state) {
     }
 
     std::string left_text = make_status_bar_left_text(state, core, language, workspace);
-    std::string right_text = make_status_bar_right_text(core, cursor);
+    std::string right_text = make_status_bar_right_text(state, core, cursor);
     return left_text + right_text;
 }
 
@@ -779,7 +779,7 @@ void draw_status_bar(const EditorState &state, int screen_rows, int screen_cols)
         }
     }
     std::string left_text = make_status_bar_left_text(state, core, language, workspace);
-    std::string right_text = make_status_bar_right_text(core, cursor);
+    std::string right_text = make_status_bar_right_text(state, core, cursor);
     std::size_t total_width = screen_cols > 0 ? static_cast<std::size_t>(screen_cols) : 0;
     std::string status;
     if (right_text.size() >= total_width) {

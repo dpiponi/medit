@@ -271,6 +271,8 @@ struct EditorState {
     PendingInputState pending;
     CommandRecordingState recording;
     JumpStackState jump_stack;
+    std::map<std::string, std::size_t> named_special_buffers;
+    std::optional<std::size_t> panel_window_id;
     EditorControlServer control_server;
 
     EditorWindow &active_window();
@@ -300,6 +302,15 @@ struct EditorState {
     std::optional<CommandSelectionSnapshot> selection_snapshot_for_commands() const;
     std::optional<std::u32string> selection_text_for_commands() const;
     bool replace_selection_for_commands(const std::u32string &text);
+    bool buffer_is_user_editable(std::size_t buffer_id) const;
+    bool active_buffer_is_user_editable() const;
+    EditorBuffer &ensure_named_special_buffer(
+        const std::string &name,
+        EditorBufferKind kind,
+        bool editable = false,
+        bool activate = false);
+    void append_to_buffer(std::size_t buffer_id, const std::u32string &text, bool move_cursor_to_end = false);
+    void clear_buffer_contents(std::size_t buffer_id);
     void sync_window_view_from_core(std::size_t window_id);
     void sync_core_view_from_window(std::size_t window_id);
     PromptHistory &active_prompt_history();
@@ -310,6 +321,7 @@ struct EditorState {
     void end_insert_session();
     void sync_active_window_buffer();
     void show_buffer_in_active_window(std::size_t buffer_id, bool reset_view = true);
+    void show_buffer_in_panel(std::size_t buffer_id, bool focus_panel = false);
     void focus_window(std::size_t window_id);
     void enter_normal_mode(bool preserve_status = false);
     void enter_insert_mode();

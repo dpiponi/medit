@@ -22,6 +22,17 @@
 ---@field range MeditEventRange|nil
 ---@field text string
 
+---@class MeditJobSpec
+---@field command string
+---@field buffer_id integer|nil
+---@field on_exit fun(job_id: integer, exit_code: integer)|nil
+
+---@class MeditJobStatus
+---@field running boolean
+---@field exit_code integer
+---@field command string
+---@field buffer_id integer|nil
+
 ---@class medit
 local M = {}
 
@@ -63,6 +74,22 @@ function M.replace_buffer(text) end
 ---@param text string
 ---@return boolean
 function M.replace_range(range, text) end
+
+---@param name string
+---@param kind string|nil
+---@return integer
+function M.create_buffer(name, kind) end
+
+---@param buffer_id integer
+---@param text string
+function M.append_buffer(buffer_id, text) end
+
+---@param buffer_id integer
+function M.clear_buffer(buffer_id) end
+
+---@param buffer_id integer
+---@param focus_panel boolean|nil
+function M.show_buffer_in_panel(buffer_id, focus_panel) end
 
 ---@param message string
 function M.set_status(message) end
@@ -121,6 +148,14 @@ function M.run_picker(command) end
 ---@return string|nil output
 ---@return string|nil error
 function M.run_filter(command, input) end
+
+---@param spec MeditJobSpec
+---@return integer
+function M.job_start(spec) end
+
+---@param job_id integer
+---@return MeditJobStatus|nil
+function M.job_status(job_id) end
 
 ---@return string|nil
 function M.resolve_ai_command() end

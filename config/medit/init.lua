@@ -450,6 +450,43 @@ local function decrement_number()
   adjust_number_under_cursor(-1)
 end
 
+local function make_health()
+  local make = medit.executable_exists("make") and "yes" or "no"
+  return string.format("make=%s", make)
+end
+
+local function make_command(argument)
+  if not medit.executable_exists("make") then
+    medit.set_status("Missing executable: make")
+    return
+  end
+
+  local command = "make"
+  if argument ~= nil and argument ~= "" then
+    command = command .. " " .. argument
+  end
+
+  local buffer_id = medit.create_buffer("make", "output")
+  medit.clear_buffer(buffer_id)
+  medit.append_buffer(buffer_id, "$ " .. command .. "\n\n")
+  medit.show_buffer_in_panel(buffer_id, false)
+
+  local job_id = medit.job_start({
+    command = command,
+    buffer_id = buffer_id,
+    on_exit = function(_, exit_code)
+      medit.append_buffer(buffer_id, string.format("\n[make exited %d]\n", exit_code))
+      if exit_code == 0 then
+        medit.set_status("make finished")
+      else
+        medit.set_status(string.format("make failed (%d)", exit_code))
+      end
+    end
+  })
+
+  medit.set_status(string.format("Started make job %d", job_id))
+end
+
 medit.register_command("lua-status", show_status_summary)
 medit.register_command("edit-lua-init", edit_lua_init)
 medit.register_command("find-file", find_file)
@@ -460,7 +497,9 @@ medit.register_command("ai", ai_edit)
 medit.register_command("ai-popup", ai_popup)
 medit.register_command("increment-number", increment_number)
 medit.register_command("decrement-number", decrement_number)
+medit.register_command("make", make_command)
 medit.register_health_check("find-file", find_file_health)
 medit.register_health_check("grep", grep_health)
 medit.register_health_check("pick-theme", pick_theme_health)
 medit.register_health_check("ai", ai_health)
+medit.register_health_check("make", make_health)

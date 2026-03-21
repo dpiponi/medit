@@ -31,6 +31,8 @@ class LuaRuntime {
         const std::string &name,
         const std::string &argument,
         std::string &error_message);
+    void poll_async(EditorState &state);
+    std::optional<int> idle_wait_timeout_ms() const;
     void dispatch_editor_event(EditorState &state, const EditorEvent &event);
     std::vector<std::string> registered_commands() const;
     std::vector<std::pair<std::string, std::string>> run_health_checks(EditorState &state) const;

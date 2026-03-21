@@ -41,7 +41,7 @@ const std::vector<EditorBuffer> &EditorSession::buffers() const {
 
 bool EditorSession::has_dirty_buffers() const {
     for (const EditorBuffer &buffer : buffers_) {
-        if (buffer.core.is_dirty()) {
+        if (!buffer.ephemeral && buffer.core.is_dirty()) {
             return true;
         }
     }
@@ -86,8 +86,21 @@ EditorBuffer &EditorSession::new_buffer(bool activate) {
     return create_buffer(activate);
 }
 
+EditorBuffer &EditorSession::new_special_buffer(
+    EditorBufferKind kind,
+    std::string title,
+    bool activate,
+    bool editable,
+    bool ephemeral) {
+    return create_buffer(activate, kind, std::move(title), editable, ephemeral);
+}
+
 EditorBuffer *EditorSession::open_file(const std::string &path, bool activate) {
     EditorBuffer &buffer = create_buffer(activate);
+    buffer.kind = EditorBufferKind::File;
+    buffer.title.clear();
+    buffer.editable = true;
+    buffer.ephemeral = false;
     if (!buffer.core.load_file(path)) {
         if (std::filesystem::exists(path)) {
             std::size_t opened_index = buffers_.size() - 1;
@@ -142,7 +155,7 @@ bool EditorSession::close_active_buffer(bool force, EditorEvents *closed_events)
     if (buffers_.empty()) {
         return false;
     }
-    if (!force && active_buffer().core.is_dirty()) {
+    if (!force && !active_buffer().ephemeral && active_buffer().core.is_dirty()) {
         return false;
     }
 
@@ -212,9 +225,18 @@ std::optional<std::size_t> EditorSession::index_for_buffer_id(std::size_t id) co
     return std::nullopt;
 }
 
-EditorBuffer &EditorSession::create_buffer(bool activate) {
+EditorBuffer &EditorSession::create_buffer(
+    bool activate,
+    EditorBufferKind kind,
+    std::string title,
+    bool editable,
+    bool ephemeral) {
     EditorBuffer buffer;
     buffer.id = next_buffer_id_++;
+    buffer.kind = kind;
+    buffer.title = std::move(title);
+    buffer.editable = editable;
+    buffer.ephemeral = ephemeral;
     sync_clipboard_into(buffer);
     buffers_.push_back(std::move(buffer));
     if (activate) {

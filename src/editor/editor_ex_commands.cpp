@@ -31,7 +31,7 @@ void EditorState::handle_write_command(const std::string &argument) {
     EditorCore &core = active_core();
     if (argument.empty()) {
         if (core.save_current_file()) {
-            set_status(prefixed_message("Wrote ", core.display_file_name()));
+            set_status(prefixed_message("Wrote ", buffer_display_name(active_buffer())));
         } else {
             set_status(core.file_path() ? "Write failed" : "No file name");
         }
@@ -100,7 +100,7 @@ std::string buffers_summary(const EditorState &state) {
         if (buffer.id == state.active_window().buffer_id) {
             message << "*";
         }
-        message << buffer.id << ":" << buffer.core.display_file_name();
+        message << buffer.id << ":" << buffer_display_name(buffer);
         if (buffer.core.is_dirty()) {
             message << "[+]";
         }
@@ -122,7 +122,7 @@ void EditorState::handle_buffer_switch_command(const std::string &argument) {
     }
     if (session.find_buffer_by_id(buffer_id)) {
         show_buffer_in_active_window(buffer_id);
-        set_status(prefixed_message("Switched to ", active_core().display_file_name()));
+        set_status(prefixed_message("Switched to ", buffer_display_name(active_buffer())));
     } else {
         set_status("No such buffer");
     }
@@ -130,7 +130,7 @@ void EditorState::handle_buffer_switch_command(const std::string &argument) {
 
 void EditorState::handle_buffer_delete_command(bool force) {
     std::size_t closing_id = active_window().buffer_id;
-    std::string closing_name = active_core().display_file_name();
+    std::string closing_name = buffer_display_name(active_buffer());
     session.switch_to_id(closing_id);
     EditorEvents closed_events;
     if (!session.close_active_buffer(force, &closed_events)) {
@@ -935,11 +935,11 @@ void execute_named_editor_command(
             break;
         case NamedEditorCommand::NextBuffer:
             state.session.next_buffer();
-            state.set_status(prefixed_message("Switched to ", state.active_core().display_file_name()));
+            state.set_status(prefixed_message("Switched to ", buffer_display_name(state.active_buffer())));
             break;
         case NamedEditorCommand::PreviousBuffer:
             state.session.previous_buffer();
-            state.set_status(prefixed_message("Switched to ", state.active_core().display_file_name()));
+            state.set_status(prefixed_message("Switched to ", buffer_display_name(state.active_buffer())));
             break;
         case NamedEditorCommand::DeleteBuffer:
             state.handle_buffer_delete_command(false);

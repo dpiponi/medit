@@ -4,6 +4,7 @@
 
 JsonValue json_position(Position position);
 JsonValue json_range(const Range &range);
+std::string buffer_display_name(const EditorBuffer &buffer);
 std::string buffer_text_utf8(const EditorBuffer &buffer);
 JsonValue json_buffer_summary(const EditorState &state, const EditorBuffer &buffer);
 const char *selection_mode_name(SelectionMode mode);
