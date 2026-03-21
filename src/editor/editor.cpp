@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <fstream>
 #include <filesystem>
+#include <optional>
 #include <sstream>
 #include <string>
 

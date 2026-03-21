@@ -4,6 +4,7 @@ module;
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <new>
 #include <optional>
 #include <string>
 #include <vector>

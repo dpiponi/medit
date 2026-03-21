@@ -14,6 +14,7 @@
 #include <cerrno>
 #include <cstring>
 #include <filesystem>
+#include <optional>
 #include <ranges>
 #include <sstream>
 #include <utility>

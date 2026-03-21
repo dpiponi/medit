@@ -1,7 +1,15 @@
-CXX := clang++-20
+ifeq ($(origin CXX),default)
+CXX := $(or $(shell command -v clang++-20 2>/dev/null),$(shell if command -v brew >/dev/null 2>&1; then prefix=$$(brew --prefix llvm 2>/dev/null); if [ -x "$$prefix/bin/clang++" ]; then printf '%s' "$$prefix/bin/clang++"; fi; fi),clang++)
+endif
+ifeq ($(origin CXX),undefined)
+CXX := $(or $(shell command -v clang++-20 2>/dev/null),$(shell if command -v brew >/dev/null 2>&1; then prefix=$$(brew --prefix llvm 2>/dev/null); if [ -x "$$prefix/bin/clang++" ]; then printf '%s' "$$prefix/bin/clang++"; fi; fi),clang++)
+endif
 PYTHON ?= python3
 UNAME_S := $(shell uname -s)
 HAVE_PKGCONFIG := $(shell command -v pkg-config >/dev/null 2>&1 && echo yes)
+CXX_VERSION_LINE := $(shell $(CXX) --version 2>/dev/null | sed -n '1p')
+CXX_CLANG_MAJOR := $(shell $(CXX) --version 2>/dev/null | sed -n 's/.*clang version \([0-9][0-9]*\)\..*/\1/p' | sed -n '1p')
+SDKROOT ?= $(shell xcrun --show-sdk-path 2>/dev/null)
 
 BASE_CPPFLAGS := -Isrc -Isrc/app -Isrc/editor -Isrc/core -Isrc/platform -Isrc/util -Ithird_party -D_XOPEN_SOURCE_EXTENDED=1
 BASE_CXXFLAGS := -std=c++23 -Wall -Wextra -pedantic
@@ -10,6 +18,10 @@ BASE_LDLIBS :=
 
 ifeq ($(UNAME_S),Darwin)
 BASE_CPPFLAGS += -D_DARWIN_C_SOURCE
+ifneq ($(strip $(SDKROOT)),)
+BASE_CPPFLAGS += -isysroot $(SDKROOT)
+BASE_LDFLAGS += -isysroot $(SDKROOT)
+endif
 else
 BASE_LDLIBS += -ldl
 endif
@@ -18,20 +30,29 @@ CURSES_CFLAGS :=
 CURSES_LIBS :=
 LUA_CFLAGS :=
 LUA_LIBS :=
+BREW_NCURSES_PREFIX := $(shell if command -v brew >/dev/null 2>&1; then brew --prefix ncurses 2>/dev/null; fi)
+BREW_LUA54_PREFIX := $(shell if command -v brew >/dev/null 2>&1; then brew --prefix lua@5.4 2>/dev/null; fi)
+
+ifneq ($(strip $(BREW_LUA54_PREFIX)),)
+ifneq ($(wildcard $(BREW_LUA54_PREFIX)/lib/liblua.dylib),)
+LUA_CFLAGS := -I$(BREW_LUA54_PREFIX)/include/lua5.4
+LUA_LIBS := -L$(BREW_LUA54_PREFIX)/lib -llua -lm
+endif
+endif
 
 ifeq ($(HAVE_PKGCONFIG),yes)
 CURSES_CFLAGS := $(shell pkg-config --cflags ncursesw 2>/dev/null)
 CURSES_LIBS := $(shell pkg-config --libs ncursesw 2>/dev/null)
+ifeq ($(strip $(LUA_LIBS)),)
 LUA_CFLAGS := $(shell for pkg in lua5.4 lua-5.4 lua54 lua; do if pkg-config --exists $$pkg 2>/dev/null; then pkg-config --cflags $$pkg; break; fi; done)
 LUA_LIBS := $(shell for pkg in lua5.4 lua-5.4 lua54 lua; do if pkg-config --exists $$pkg 2>/dev/null; then pkg-config --libs $$pkg; break; fi; done)
+endif
 
 ifeq ($(strip $(CURSES_LIBS)),)
 CURSES_CFLAGS := $(shell pkg-config --cflags ncurses 2>/dev/null)
 CURSES_LIBS := $(shell pkg-config --libs ncurses 2>/dev/null)
 endif
 endif
-
-BREW_NCURSES_PREFIX := $(shell if command -v brew >/dev/null 2>&1; then brew --prefix ncurses 2>/dev/null; fi)
 
 ifeq ($(strip $(CURSES_LIBS)),)
 ifeq ($(UNAME_S),Darwin)
@@ -104,63 +125,71 @@ input_diag: tools/input_diag.cpp
 test_editor_core: $(CORE_MODULE_OBJECT) $(CLIPBOARD_MODULE_OBJECT) $(SESSION_MODULE_OBJECT) $(COMMANDS_MODULE_OBJECT) $(SERVICES_MODULE_OBJECT) $(CONFIG_MODULE_OBJECT) $(KEYBINDINGS_MODULE_OBJECT) $(THEME_MODULE_OBJECT) $(TEST_OBJECTS)
 	$(CXX) $(LDFLAGS) -o $@ $(CORE_MODULE_OBJECT) $(CLIPBOARD_MODULE_OBJECT) $(SESSION_MODULE_OBJECT) $(COMMANDS_MODULE_OBJECT) $(SERVICES_MODULE_OBJECT) $(CONFIG_MODULE_OBJECT) $(KEYBINDINGS_MODULE_OBJECT) $(THEME_MODULE_OBJECT) $(TEST_OBJECTS) $(LDLIBS)
 
-$(CORE_MODULE_OBJECT): $(CORE_MODULE_INTERFACE)
+check-toolchain:
+	@if ! command -v "$(CXX)" >/dev/null 2>&1 && [ ! -x "$(CXX)" ]; then \
+		echo "error: CXX=$(CXX) was not found"; \
+		echo "hint: install LLVM clang 20 or newer, or run make CXX=/path/to/clang++"; \
+		exit 1; \
+	fi
+	@if printf '%s\n' "$(CXX_VERSION_LINE)" | grep -q "Apple clang"; then \
+		echo "error: $(CXX) resolves to Apple Clang, which does not build this project's C++ module targets"; \
+		echo "hint: install Homebrew llvm and run make CXX=/opt/homebrew/opt/llvm/bin/clang++"; \
+		exit 1; \
+	fi
+	@if [ -z "$(CXX_CLANG_MAJOR)" ] || [ "$(CXX_CLANG_MAJOR)" -lt 20 ]; then \
+		echo "error: $(CXX) must be Clang 20 or newer for this Makefile"; \
+		echo "detected: $(CXX_VERSION_LINE)"; \
+		exit 1; \
+	fi
+
+$(CORE_MODULE_OBJECT): $(CORE_MODULE_INTERFACE) | check-toolchain
 	@mkdir -p $(dir $@) $(MODULE_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -fmodule-output=$(CORE_MODULE_PCM) -c $< -o $@
 
-$(CLIPBOARD_MODULE_OBJECT): $(CLIPBOARD_MODULE_INTERFACE)
+$(CLIPBOARD_MODULE_OBJECT): $(CLIPBOARD_MODULE_INTERFACE) | check-toolchain
 	@mkdir -p $(dir $@) $(MODULE_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(MODULE_PREBUILT_FLAGS) -MMD -MP -fmodule-output=$(CLIPBOARD_MODULE_PCM) -c $< -o $@
 
-$(SESSION_MODULE_OBJECT): $(SESSION_MODULE_INTERFACE)
+$(SESSION_MODULE_OBJECT): $(SESSION_MODULE_INTERFACE) | check-toolchain
 	@mkdir -p $(dir $@) $(MODULE_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(MODULE_PREBUILT_FLAGS) -MMD -MP -fmodule-output=$(SESSION_MODULE_PCM) -c $< -o $@
 
-$(COMMANDS_MODULE_OBJECT): $(COMMANDS_MODULE_INTERFACE)
+$(COMMANDS_MODULE_OBJECT): $(COMMANDS_MODULE_INTERFACE) | check-toolchain
 	@mkdir -p $(dir $@) $(MODULE_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(MODULE_PREBUILT_FLAGS) -MMD -MP -fmodule-output=$(COMMANDS_MODULE_PCM) -c $< -o $@
 
-$(SERVICES_MODULE_OBJECT): $(SERVICES_MODULE_INTERFACE)
+$(SERVICES_MODULE_OBJECT): $(SERVICES_MODULE_INTERFACE) | check-toolchain
 	@mkdir -p $(dir $@) $(MODULE_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(MODULE_PREBUILT_FLAGS) -MMD -MP -fmodule-output=$(SERVICES_MODULE_PCM) -c $< -o $@
 
-$(CONFIG_MODULE_OBJECT): $(CONFIG_MODULE_INTERFACE)
+$(CONFIG_MODULE_OBJECT): $(CONFIG_MODULE_INTERFACE) | check-toolchain
 	@mkdir -p $(dir $@) $(MODULE_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(MODULE_PREBUILT_FLAGS) -MMD -MP -fmodule-output=$(CONFIG_MODULE_PCM) -c $< -o $@
 
-$(KEYBINDINGS_MODULE_OBJECT): $(KEYBINDINGS_MODULE_INTERFACE)
+$(KEYBINDINGS_MODULE_OBJECT): $(KEYBINDINGS_MODULE_INTERFACE) | check-toolchain
 	@mkdir -p $(dir $@) $(MODULE_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(MODULE_PREBUILT_FLAGS) -MMD -MP -fmodule-output=$(KEYBINDINGS_MODULE_PCM) -c $< -o $@
 
-$(THEME_MODULE_OBJECT): $(THEME_MODULE_INTERFACE)
+$(THEME_MODULE_OBJECT): $(THEME_MODULE_INTERFACE) | check-toolchain
 	@mkdir -p $(dir $@) $(MODULE_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(MODULE_PREBUILT_FLAGS) -MMD -MP -fmodule-output=$(THEME_MODULE_PCM) -c $< -o $@
 
-$(CORE_MODULE_PCM): $(CORE_MODULE_OBJECT)
-$(CLIPBOARD_MODULE_PCM): $(CLIPBOARD_MODULE_OBJECT)
-$(SESSION_MODULE_PCM): $(SESSION_MODULE_OBJECT)
-$(COMMANDS_MODULE_PCM): $(COMMANDS_MODULE_OBJECT)
-$(SERVICES_MODULE_PCM): $(SERVICES_MODULE_OBJECT)
-$(CONFIG_MODULE_PCM): $(CONFIG_MODULE_OBJECT)
-$(KEYBINDINGS_MODULE_PCM): $(KEYBINDINGS_MODULE_OBJECT)
-$(THEME_MODULE_PCM): $(THEME_MODULE_OBJECT)
-
-$(BUILD_DIR)/%.o: %.cpp
+$(BUILD_DIR)/%.o: %.cpp | check-toolchain
 	@mkdir -p $(dir $@)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(MODULE_FLAGS) -MMD -MP -c $< -o $@
 
 $(SHARED_OBJECTS): MODULE_FLAGS += $(MODULE_PREBUILT_FLAGS)
-$(SHARED_OBJECTS): $(CORE_MODULE_PCM) $(CLIPBOARD_MODULE_PCM) $(SESSION_MODULE_PCM) $(COMMANDS_MODULE_PCM) $(SERVICES_MODULE_PCM) $(CONFIG_MODULE_PCM) $(KEYBINDINGS_MODULE_PCM) $(THEME_MODULE_PCM)
+$(SHARED_OBJECTS): $(CORE_MODULE_OBJECT) $(CLIPBOARD_MODULE_OBJECT) $(SESSION_MODULE_OBJECT) $(COMMANDS_MODULE_OBJECT) $(SERVICES_MODULE_OBJECT) $(CONFIG_MODULE_OBJECT) $(KEYBINDINGS_MODULE_OBJECT) $(THEME_MODULE_OBJECT)
 
-$(CLIPBOARD_MODULE_OBJECT): $(CORE_MODULE_PCM)
-$(SESSION_MODULE_OBJECT): $(CLIPBOARD_MODULE_PCM) $(CORE_MODULE_PCM)
-$(COMMANDS_MODULE_OBJECT): $(CORE_MODULE_PCM)
-$(SERVICES_MODULE_OBJECT): $(COMMANDS_MODULE_PCM) $(CORE_MODULE_PCM)
-$(CONFIG_MODULE_OBJECT): $(CLIPBOARD_MODULE_PCM)
-$(KEYBINDINGS_MODULE_OBJECT): $(CONFIG_MODULE_PCM)
-$(THEME_MODULE_OBJECT): $(CONFIG_MODULE_PCM) $(CORE_MODULE_PCM)
+$(CLIPBOARD_MODULE_OBJECT): $(CORE_MODULE_OBJECT)
+$(SESSION_MODULE_OBJECT): $(CLIPBOARD_MODULE_OBJECT) $(CORE_MODULE_OBJECT)
+$(COMMANDS_MODULE_OBJECT): $(CORE_MODULE_OBJECT)
+$(SERVICES_MODULE_OBJECT): $(COMMANDS_MODULE_OBJECT) $(CORE_MODULE_OBJECT)
+$(CONFIG_MODULE_OBJECT): $(CLIPBOARD_MODULE_OBJECT)
+$(KEYBINDINGS_MODULE_OBJECT): $(CONFIG_MODULE_OBJECT)
+$(THEME_MODULE_OBJECT): $(CONFIG_MODULE_OBJECT) $(CORE_MODULE_OBJECT)
 
-editor_core_module: $(CORE_MODULE_PCM)
+editor_core_module: $(CORE_MODULE_OBJECT)
 
 test: test_editor_core
 	./test_editor_core
@@ -179,6 +208,6 @@ clean:
 
 CONFIG_ROOT ?= .config
 
-.PHONY: all clean test bootstrap-tree-sitter tree-sitter-clean bootstrap-tree-sitter-% editor_core_module
+.PHONY: all clean test bootstrap-tree-sitter tree-sitter-clean bootstrap-tree-sitter-% editor_core_module check-toolchain
 
 -include $(DEPFILES)

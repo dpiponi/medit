@@ -3,6 +3,8 @@
 #include "json.hpp"
 #include "string_utils.hpp"
 
+#include <optional>
+
 JsonValue success_control_result(JsonValue result) {
     return JsonValue{{"ok", true}, {"result", std::move(result)}};
 }

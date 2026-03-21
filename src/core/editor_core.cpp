@@ -12,6 +12,7 @@ module;
 #include <fstream>
 #include <filesystem>
 #include <locale>
+#include <optional>
 #include <regex>
 #include <sstream>
 #include <utility>
