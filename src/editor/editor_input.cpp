@@ -189,8 +189,10 @@ bool EditorState::close_active_window() {
     if (!windows.close_active()) {
         return false;
     }
-    if (panel_window_id && *panel_window_id == closing_window_id) {
-        panel_window_id.reset();
+    if (panel.window_id && *panel.window_id == closing_window_id) {
+        panel.window_id.reset();
+        panel.visible = false;
+        panel.follow_output = true;
     }
     window_ui_map.erase(closing_window_id);
     sync_active_window_buffer();
@@ -203,8 +205,10 @@ bool EditorState::close_other_windows() {
         return false;
     }
     std::size_t active_window_id = windows.active_window_id();
-    if (panel_window_id && *panel_window_id != active_window_id) {
-        panel_window_id.reset();
+    if (panel.window_id && *panel.window_id != active_window_id) {
+        panel.window_id.reset();
+        panel.visible = false;
+        panel.follow_output = true;
     }
     auto kept = window_ui_map.find(active_window_id);
     if (kept == window_ui_map.end()) {
@@ -228,6 +232,12 @@ bool ensure_active_buffer_editable(EditorState &state) {
     return false;
 }
 
+void disable_panel_follow_if_active(EditorState &state) {
+    if (state.active_window_is_panel()) {
+        state.set_panel_follow_output(false);
+    }
+}
+
 bool focus_window_direction(EditorState &state, WindowMoveDirection direction) {
     int screen_rows = 0;
     int screen_cols = 0;
@@ -242,21 +252,25 @@ bool focus_window_direction(EditorState &state, WindowMoveDirection direction) {
 }
 
 void page_up(EditorState &state) {
+    disable_panel_follow_if_active(state);
     state.active_core().move_by_lines(-page_step());
     state.sync_window_view_from_core(state.windows.active_window_id());
 }
 
 void page_down(EditorState &state) {
+    disable_panel_follow_if_active(state);
     state.active_core().move_by_lines(page_step());
     state.sync_window_view_from_core(state.windows.active_window_id());
 }
 
 void half_page_up(EditorState &state) {
+    disable_panel_follow_if_active(state);
     state.active_core().move_by_lines(-half_page_step());
     state.sync_window_view_from_core(state.windows.active_window_id());
 }
 
 void half_page_down(EditorState &state) {
+    disable_panel_follow_if_active(state);
     state.active_core().move_by_lines(half_page_step());
     state.sync_window_view_from_core(state.windows.active_window_id());
 }
@@ -768,16 +782,20 @@ bool handle_motion_action(EditorState &state, EditorAction action) {
             core.move_right();
             return true;
         case EditorAction::MoveUp:
+            disable_panel_follow_if_active(state);
             core.move_up();
             return true;
         case EditorAction::VisualMoveUp:
+            disable_panel_follow_if_active(state);
             prepare_visual_motion(state);
             core.move_up();
             return true;
         case EditorAction::MoveDown:
+            disable_panel_follow_if_active(state);
             core.move_down();
             return true;
         case EditorAction::VisualMoveDown:
+            disable_panel_follow_if_active(state);
             prepare_visual_motion(state);
             core.move_down();
             return true;

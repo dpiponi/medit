@@ -245,6 +245,13 @@ struct EditorState {
         Range range;
     };
 
+    struct PanelState {
+        std::optional<std::size_t> window_id;
+        std::optional<std::size_t> buffer_id;
+        bool visible = false;
+        bool follow_output = true;
+    };
+
     EditorSession session;
     EditorRuntime runtime;
     LuaRuntime lua;
@@ -272,7 +279,7 @@ struct EditorState {
     CommandRecordingState recording;
     JumpStackState jump_stack;
     std::map<std::string, std::size_t> named_special_buffers;
-    std::optional<std::size_t> panel_window_id;
+    PanelState panel;
     EditorControlServer control_server;
 
     EditorWindow &active_window();
@@ -309,6 +316,10 @@ struct EditorState {
         EditorBufferKind kind,
         bool editable = false,
         bool activate = false);
+    bool panel_has_buffer() const;
+    bool panel_is_visible() const;
+    bool active_window_is_panel() const;
+    void set_panel_follow_output(bool follow);
     void append_to_buffer(std::size_t buffer_id, const std::u32string &text, bool move_cursor_to_end = false);
     void clear_buffer_contents(std::size_t buffer_id);
     void sync_window_view_from_core(std::size_t window_id);
@@ -322,6 +333,10 @@ struct EditorState {
     void sync_active_window_buffer();
     void show_buffer_in_active_window(std::size_t buffer_id, bool reset_view = true);
     void show_buffer_in_panel(std::size_t buffer_id, bool focus_panel = false);
+    bool close_panel(bool preserve_buffer = true);
+    bool toggle_panel();
+    bool focus_panel();
+    bool clear_panel();
     void focus_window(std::size_t window_id);
     void enter_normal_mode(bool preserve_status = false);
     void enter_insert_mode();

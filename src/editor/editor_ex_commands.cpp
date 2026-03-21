@@ -726,6 +726,11 @@ enum class NamedEditorCommand {
     DeleteBuffer,
     ForceDeleteBuffer,
     ReloadConfig,
+    Panel,
+    PanelToggle,
+    PanelFocus,
+    PanelClose,
+    PanelClear,
     Diagnostics,
     LspStatus,
     TreeSitterStatus,
@@ -739,7 +744,7 @@ struct NamedEditorCommandInfo {
     NamedEditorCommand command;
 };
 
-constexpr std::array<NamedEditorCommandInfo, 17> kNamedEditorCommands{{
+constexpr std::array<NamedEditorCommandInfo, 22> kNamedEditorCommands{{
     {"w", "write current buffer", "w", NamedEditorCommand::Write},
     {"q", "quit", "q", NamedEditorCommand::Quit},
     {"q!", "force quit", "q!", NamedEditorCommand::ForceQuit},
@@ -753,6 +758,11 @@ constexpr std::array<NamedEditorCommandInfo, 17> kNamedEditorCommands{{
     {"bd", "close current buffer", "bd", NamedEditorCommand::DeleteBuffer},
     {"bd!", "force close current buffer", "bd!", NamedEditorCommand::ForceDeleteBuffer},
     {"reload-config", "reload medit configuration", "reload-config", NamedEditorCommand::ReloadConfig},
+    {"panel", "show or focus panel", "panel", NamedEditorCommand::Panel},
+    {"panel-toggle", "toggle panel visibility", "panel-toggle", NamedEditorCommand::PanelToggle},
+    {"panel-focus", "focus panel", "panel-focus", NamedEditorCommand::PanelFocus},
+    {"panel-close", "close panel", "panel-close", NamedEditorCommand::PanelClose},
+    {"panel-clear", "clear panel buffer", "panel-clear", NamedEditorCommand::PanelClear},
     {"diagnostics", "show diagnostics summary", "diagnostics", NamedEditorCommand::Diagnostics},
     {"lsp-status", "show language server status", "lsp-status", NamedEditorCommand::LspStatus},
     {"tree-sitter-status", "show tree-sitter status", "tree-sitter-status", NamedEditorCommand::TreeSitterStatus},
@@ -956,6 +966,39 @@ void execute_named_editor_command(
             }
             break;
         }
+        case NamedEditorCommand::Panel:
+        case NamedEditorCommand::PanelFocus:
+            if (state.focus_panel()) {
+                state.set_status("Panel focused");
+            } else {
+                state.set_status("No panel buffer");
+            }
+            break;
+        case NamedEditorCommand::PanelToggle:
+            if (!state.panel_has_buffer()) {
+                state.set_status("No panel buffer");
+            } else if (state.toggle_panel()) {
+                state.set_status(state.panel_is_visible() ? "Panel shown" : "Panel hidden");
+            } else {
+                state.set_status("Panel toggle failed");
+            }
+            break;
+        case NamedEditorCommand::PanelClose:
+            if (state.close_panel(true)) {
+                state.set_status("Panel closed");
+            } else if (state.panel_has_buffer()) {
+                state.set_status("Panel already closed");
+            } else {
+                state.set_status("No panel buffer");
+            }
+            break;
+        case NamedEditorCommand::PanelClear:
+            if (state.clear_panel()) {
+                state.set_status("Panel cleared");
+            } else {
+                state.set_status("No panel buffer");
+            }
+            break;
         case NamedEditorCommand::Diagnostics:
             state.show_diagnostics_summary();
             break;

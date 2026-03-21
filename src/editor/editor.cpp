@@ -308,6 +308,22 @@ EditorBuffer &EditorState::ensure_named_special_buffer(
     return buffer;
 }
 
+bool EditorState::panel_has_buffer() const {
+    return panel.buffer_id.has_value() && session.find_buffer_by_id(*panel.buffer_id) != nullptr;
+}
+
+bool EditorState::panel_is_visible() const {
+    return panel.visible && panel.window_id.has_value() && windows.find_window(*panel.window_id) != nullptr;
+}
+
+bool EditorState::active_window_is_panel() const {
+    return panel_is_visible() && panel.window_id == windows.active_window_id();
+}
+
+void EditorState::set_panel_follow_output(bool follow) {
+    panel.follow_output = follow;
+}
+
 void EditorState::append_to_buffer(std::size_t buffer_id, const std::u32string &text, bool move_cursor_to_end) {
     EditorBuffer *buffer = session.find_buffer_by_id(buffer_id);
     if (buffer == nullptr || text.empty()) {
@@ -317,8 +333,13 @@ void EditorState::append_to_buffer(std::size_t buffer_id, const std::u32string &
     EditorCore &core = buffer->core;
     const Position end{core.line_count() - 1, core.line_length(core.line_count() - 1)};
     core.insert_text(end, text);
-    if (move_cursor_to_end) {
-        core.set_cursor(EditorCommandAccess::position_after_text(core, end, text));
+    Position new_end = EditorCommandAccess::position_after_text(core, end, text);
+    bool should_follow_output = panel.buffer_id == buffer_id && panel.follow_output;
+    if (move_cursor_to_end || should_follow_output) {
+        core.set_cursor(new_end);
+    }
+    if (panel.window_id && panel.buffer_id == buffer_id && windows.find_window(*panel.window_id)) {
+        sync_window_view_from_core(*panel.window_id);
     }
 }
 
@@ -916,30 +937,85 @@ void EditorState::show_buffer_in_active_window(std::size_t buffer_id, bool reset
 }
 
 void EditorState::show_buffer_in_panel(std::size_t buffer_id, bool focus_panel) {
-    std::optional<std::size_t> existing_window_id = windows.find_window_showing_buffer(buffer_id);
     std::size_t original_window_id = windows.active_window_id();
-    if (existing_window_id) {
-        panel_window_id = *existing_window_id;
-        if (focus_panel) {
-            focus_window(*existing_window_id);
-        }
-        return;
-    }
+    panel.buffer_id = buffer_id;
+    panel.follow_output = true;
 
-    if (panel_window_id && windows.find_window(*panel_window_id)) {
-        focus_window(*panel_window_id);
+    if (panel.window_id && windows.find_window(*panel.window_id)) {
+        panel.visible = true;
+        focus_window(*panel.window_id);
         show_buffer_in_active_window(buffer_id);
     } else {
         if (!split_active_window(WindowSplitDirection::Horizontal)) {
             return;
         }
-        panel_window_id = windows.active_window_id();
+        panel.window_id = windows.active_window_id();
+        panel.visible = true;
         show_buffer_in_active_window(buffer_id);
     }
 
     if (!focus_panel) {
         focus_window(original_window_id);
     }
+}
+
+bool EditorState::close_panel(bool preserve_buffer) {
+    if (!panel_is_visible()) {
+        if (!preserve_buffer) {
+            panel.buffer_id.reset();
+        }
+        return false;
+    }
+
+    std::optional<std::size_t> panel_window_id = panel.window_id;
+    std::optional<std::size_t> previous_window_id = windows.active_window_id();
+    if (!panel_window_id) {
+        return false;
+    }
+    focus_window(*panel_window_id);
+    bool closed = close_active_window();
+    panel.visible = false;
+    panel.window_id.reset();
+    panel.follow_output = true;
+    if (!preserve_buffer) {
+        panel.buffer_id.reset();
+    }
+    if (previous_window_id && windows.find_window(*previous_window_id)) {
+        focus_window(*previous_window_id);
+    }
+    return closed;
+}
+
+bool EditorState::toggle_panel() {
+    if (panel_is_visible()) {
+        return close_panel(true);
+    }
+    if (!panel_has_buffer()) {
+        return false;
+    }
+    show_buffer_in_panel(*panel.buffer_id, false);
+    return panel_is_visible();
+}
+
+bool EditorState::focus_panel() {
+    if (panel_is_visible() && panel.window_id) {
+        focus_window(*panel.window_id);
+        return true;
+    }
+    if (!panel_has_buffer()) {
+        return false;
+    }
+    show_buffer_in_panel(*panel.buffer_id, true);
+    return panel_is_visible();
+}
+
+bool EditorState::clear_panel() {
+    if (!panel_has_buffer()) {
+        return false;
+    }
+    clear_buffer_contents(*panel.buffer_id);
+    panel.follow_output = true;
+    return true;
 }
 
 void EditorState::focus_window(std::size_t window_id) {

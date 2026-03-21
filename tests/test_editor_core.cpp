@@ -1564,17 +1564,44 @@ void test_special_buffers_and_panel_reuse() {
 
     std::size_t original_window_id = state.windows.active_window_id();
     state.show_buffer_in_panel(first_id, false);
-    expect(state.panel_window_id.has_value(), "show_buffer_in_panel should create a panel window");
-    std::size_t panel_window_id = *state.panel_window_id;
+    expect(state.panel.window_id.has_value(), "show_buffer_in_panel should create a panel window");
+    std::size_t panel_window_id = *state.panel.window_id;
     expect(panel_window_id != original_window_id, "panel should use a different window from the editing window");
     expect(state.windows.window_count() == 2, "showing first panel buffer should create a split");
+    expect(state.panel.visible, "showing panel buffer should mark the panel visible");
+    expect(state.panel.buffer_id.has_value() && *state.panel.buffer_id == first_id, "panel should track its buffer");
     expect(state.windows.active_window_id() == original_window_id, "show_buffer_in_panel without focus should restore original focus");
     expect(state.window_buffer(panel_window_id).id == first_id, "panel should show the requested buffer");
 
     state.show_buffer_in_panel(second_id, false);
-    expect(state.panel_window_id.has_value() && *state.panel_window_id == panel_window_id, "panel window should be reused");
+    expect(state.panel.window_id.has_value() && *state.panel.window_id == panel_window_id, "panel window should be reused");
     expect(state.windows.window_count() == 2, "reusing panel should not create more windows");
     expect(state.window_buffer(panel_window_id).id == second_id, "reused panel should swap to the new buffer");
+    expect(state.panel.buffer_id.has_value() && *state.panel.buffer_id == second_id, "panel should update its tracked buffer");
+
+    expect(state.focus_panel(), "panel should be focusable");
+    expect(state.windows.active_window_id() == panel_window_id, "focus_panel should move focus into the panel");
+
+    state.append_to_buffer(second_id, U"build line\n", false);
+    expect(state.window_core(panel_window_id).cursor().row == 1, "panel should follow appended output by default");
+    state.set_panel_follow_output(false);
+    state.append_to_buffer(second_id, U"second line\n", false);
+    expect(state.window_core(panel_window_id).cursor().row == 1, "panel follow should stop when disabled");
+
+    expect(state.clear_panel(), "panel should be clearable");
+    expect(buffer_text_utf8(state.window_buffer(panel_window_id)).empty(), "clearing panel should empty the panel buffer");
+    expect(state.panel.follow_output, "clearing panel should re-enable follow output");
+
+    expect(state.toggle_panel(), "toggle_panel should hide a visible panel");
+    expect(!state.panel.visible, "toggle_panel should hide the panel");
+    expect(state.windows.window_count() == 1, "hiding the panel should close its split");
+    expect(state.toggle_panel(), "toggle_panel should restore a hidden panel with a buffer");
+    expect(state.panel.visible, "toggle_panel should restore the panel");
+    expect(state.panel.window_id.has_value(), "restored panel should have a window");
+
+    expect(state.close_panel(true), "close_panel should close the panel when visible");
+    expect(!state.panel.visible, "close_panel should leave the panel hidden");
+    expect(state.panel.buffer_id.has_value() && *state.panel.buffer_id == second_id, "closing with preserve should keep the panel buffer");
 
     EditorBuffer &reused = state.ensure_named_special_buffer("build", EditorBufferKind::Output, false, false);
     expect(reused.id == first_id, "named special buffers should be reused by name");

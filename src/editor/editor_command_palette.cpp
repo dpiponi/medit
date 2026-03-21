@@ -4,7 +4,7 @@
 
 namespace {
 
-constexpr std::array<NamedEditorCommandInfo, 16> kNamedEditorCommands{{
+constexpr std::array<NamedEditorCommandInfo, 21> kNamedEditorCommands{{
     {"w", "write current buffer", "w", NamedEditorCommand::Write},
     {"q", "quit", "q", NamedEditorCommand::Quit},
     {"q!", "force quit", "q!", NamedEditorCommand::ForceQuit},
@@ -18,6 +18,11 @@ constexpr std::array<NamedEditorCommandInfo, 16> kNamedEditorCommands{{
     {"bd", "close current buffer", "bd", NamedEditorCommand::DeleteBuffer},
     {"bd!", "force close current buffer", "bd!", NamedEditorCommand::ForceDeleteBuffer},
     {"reload-config", "reload medit configuration", "reload-config", NamedEditorCommand::ReloadConfig},
+    {"panel", "show or focus panel", "panel", NamedEditorCommand::Panel},
+    {"panel-toggle", "toggle panel visibility", "panel-toggle", NamedEditorCommand::PanelToggle},
+    {"panel-focus", "focus panel", "panel-focus", NamedEditorCommand::PanelFocus},
+    {"panel-close", "close panel", "panel-close", NamedEditorCommand::PanelClose},
+    {"panel-clear", "clear panel buffer", "panel-clear", NamedEditorCommand::PanelClear},
     {"diagnostics", "show diagnostics summary", "diagnostics", NamedEditorCommand::Diagnostics},
     {"lsp-status", "show language server status", "lsp-status", NamedEditorCommand::LspStatus},
     {"tree-sitter-status", "show tree-sitter syntax status", "tree-sitter-status", NamedEditorCommand::TreeSitterStatus},
