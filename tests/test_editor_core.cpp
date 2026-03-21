@@ -73,19 +73,6 @@ const KeyHint *find_key_hint(const std::vector<KeyHint> &hints, const std::strin
     return nullptr;
 }
 
-bool line_has_span(
-    const std::vector<HighlightSpan> &spans,
-    std::size_t start,
-    std::size_t end,
-    StyleRole role) {
-    for (const HighlightSpan &span : spans) {
-        if (span.role == role && span.range.start.column == start && span.range.end.column == end) {
-            return true;
-        }
-    }
-    return false;
-}
-
 void test_insert_unicode_and_undo() {
     EditorCore core;
     core.insert_codepoint(U'a');
@@ -1560,6 +1547,89 @@ void test_lua_commands_are_top_level_ex_commands() {
     std::filesystem::remove_all(root);
 }
 
+void test_special_buffers_and_panel_reuse() {
+    EditorState state;
+    initialize_windows(state);
+
+    std::size_t first_id = state.ensure_named_special_buffer("build", EditorBufferKind::Output, false, false).id;
+    std::size_t second_id = state.ensure_named_special_buffer("grep", EditorBufferKind::List, false, false).id;
+    EditorBuffer *first = state.session.find_buffer_by_id(first_id);
+    EditorBuffer *second = state.session.find_buffer_by_id(second_id);
+    expect(first != nullptr, "first special buffer should exist");
+    expect(second != nullptr, "second special buffer should exist");
+    expect(first->kind == EditorBufferKind::Output, "first special buffer should keep requested kind");
+    expect(!first->editable, "output buffer should be non-editable");
+    expect(first->ephemeral, "output buffer should be ephemeral");
+    expect(buffer_display_name(*first) == "build", "special buffer should use title as display name");
+
+    std::size_t original_window_id = state.windows.active_window_id();
+    state.show_buffer_in_panel(first_id, false);
+    expect(state.panel_window_id.has_value(), "show_buffer_in_panel should create a panel window");
+    std::size_t panel_window_id = *state.panel_window_id;
+    expect(panel_window_id != original_window_id, "panel should use a different window from the editing window");
+    expect(state.windows.window_count() == 2, "showing first panel buffer should create a split");
+    expect(state.windows.active_window_id() == original_window_id, "show_buffer_in_panel without focus should restore original focus");
+    expect(state.window_buffer(panel_window_id).id == first_id, "panel should show the requested buffer");
+
+    state.show_buffer_in_panel(second_id, false);
+    expect(state.panel_window_id.has_value() && *state.panel_window_id == panel_window_id, "panel window should be reused");
+    expect(state.windows.window_count() == 2, "reusing panel should not create more windows");
+    expect(state.window_buffer(panel_window_id).id == second_id, "reused panel should swap to the new buffer");
+
+    EditorBuffer &reused = state.ensure_named_special_buffer("build", EditorBufferKind::Output, false, false);
+    expect(reused.id == first_id, "named special buffers should be reused by name");
+}
+
+void test_lua_async_job_streams_output_to_named_buffer() {
+    std::filesystem::path root = std::filesystem::temp_directory_path() / "medit_lua_async_job";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+
+    std::filesystem::path script_path = root / "init.lua";
+    {
+        std::ofstream script(script_path);
+        script << "medit.register_command('async-test', function()\n"
+                  "  local buffer_id = medit.create_buffer('job-output', 'output')\n"
+                  "  medit.clear_buffer(buffer_id)\n"
+                  "  medit.job_start({\n"
+                  "    command = \"printf 'hello from job\\\\n'\",\n"
+                  "    buffer_id = buffer_id,\n"
+                  "    on_exit = function(_, exit_code)\n"
+                  "      medit.set_status('job exit=' .. exit_code)\n"
+                  "    end\n"
+                  "  })\n"
+                  "end)\n";
+    }
+
+    EditorState state;
+    initialize_windows(state);
+    std::string error_message;
+    expect(state.lua.initialize(state, script_path, error_message), "lua runtime should initialize for async job test");
+    expect(error_message.empty(), "lua runtime init should not set an error for async job test");
+    expect(state.lua.execute_command(state, "async-test", "", error_message), "lua async test command should execute");
+
+    bool completed = false;
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        state.lua.poll_async(state);
+        if (state.status_message == "job exit=0") {
+            completed = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    expect(completed, "async Lua job should finish and run on_exit callback");
+
+    auto found = state.named_special_buffers.find("job-output");
+    expect(found != state.named_special_buffers.end(), "async Lua job should create a named output buffer");
+    EditorBuffer *buffer = state.session.find_buffer_by_id(found->second);
+    expect(buffer != nullptr, "async Lua output buffer should exist");
+    expect(buffer->kind == EditorBufferKind::Output, "async Lua output buffer should be an output buffer");
+    expect_text(buffer->core, "hello from job\n", "async Lua job output should be appended to the output buffer");
+
+    state.lua.shutdown();
+    std::filesystem::remove_all(root);
+}
+
 void test_command_execution_preserves_command_status() {
     EditorState state;
     initialize_windows(state);
@@ -1626,30 +1696,9 @@ void test_process_utils_detect_missing_executables() {
 }
 
 void test_cpp_syntax_highlighting() {
-    std::vector<std::u32string> lines = {
-        utf8_to_u32("int main() {"),
-        utf8_to_u32("  std::string value = \"hi\"; // note"),
-        utf8_to_u32("  /* block"),
-        utf8_to_u32("     comment */ return 0;"),
-        utf8_to_u32("#include <vector>"),
-    };
-
     EditorConfig config;
-    SyntaxSelection selection{SyntaxEngine::LegacyCpp, "cpp"};
-    auto highlights_result = highlight_document_syntax(lines, config, selection);
-    expect(highlights_result.has_value(), "legacy syntax highlighting should succeed");
-    std::vector<std::vector<HighlightSpan>> highlights = *highlights_result;
-    expect(highlights.size() == lines.size(), "syntax highlighter should return one span list per line");
-    expect(line_has_span(highlights[0], 0, 3, StyleRole::SyntaxKeyword), "cpp keyword should highlight");
-    expect(line_has_span(highlights[1], 22, 26, StyleRole::SyntaxString), "string literal should highlight");
-    expect(line_has_span(highlights[1], 28, 35, StyleRole::SyntaxComment), "line comment should highlight");
-    expect(line_has_span(highlights[2], 2, 10, StyleRole::SyntaxComment), "block comment start should highlight");
-    expect(line_has_span(highlights[3], 0, 15, StyleRole::SyntaxComment), "block comment continuation should highlight");
-    expect(line_has_span(highlights[3], 16, 22, StyleRole::SyntaxKeyword), "keyword after block comment should highlight");
-    expect(line_has_span(highlights[4], 0, 8, StyleRole::SyntaxKeyword), "preprocessor directive should highlight");
-
     SyntaxSelection detected_cpp = resolve_syntax_selection(config, std::optional<std::string>("sample.cpp"));
-    expect(detected_cpp.engine == SyntaxEngine::LegacyCpp, "cpp extension should auto-detect legacy cpp syntax");
+    expect(detected_cpp.engine == SyntaxEngine::None, "cpp extension should not auto-detect syntax without configured tree-sitter language");
 
     SyntaxSelection detected_none = resolve_syntax_selection(config, std::optional<std::string>("notes.txt"));
     expect(detected_none.engine == SyntaxEngine::None, "non-code file should not auto-detect syntax");
@@ -1660,6 +1709,9 @@ void test_cpp_syntax_highlighting() {
     SyntaxSelection configured = resolve_syntax_selection(explicit_python, std::optional<std::string>("notes.txt"));
     expect(configured.engine == SyntaxEngine::TreeSitter && configured.language_name == "python", "named tree-sitter syntax should resolve");
 
+    std::vector<std::u32string> lines = {
+        utf8_to_u32("print('hello')"),
+    };
     auto missing_language = highlight_document_syntax(lines, config, {SyntaxEngine::TreeSitter, "missing"});
     expect(!missing_language.has_value(), "missing configured syntax should fail");
     expect(
@@ -2264,6 +2316,8 @@ int main() {
         test_lua_runtime_registers_and_executes_command();
         test_lua_runtime_passes_command_argument();
         test_lua_commands_are_top_level_ex_commands();
+        test_special_buffers_and_panel_reuse();
+        test_lua_async_job_streams_output_to_named_buffer();
         test_command_execution_preserves_command_status();
         test_tree_sitter_health_summary_for_empty_config();
         test_infer_workspace_root();

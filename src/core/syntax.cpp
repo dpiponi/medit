@@ -137,18 +137,21 @@ std::optional<const SyntaxLanguageConfig *> syntax_language_for_file(
 TreeSitterApi load_tree_sitter_api() {
     TreeSitterApi api;
 #if defined(__unix__) || defined(__APPLE__)
-    const char *candidates[] = {
-        ".config/medit/libtree-sitter.so",
-        ".config/medit/libtree-sitter.dylib",
-        "libtree-sitter.so.0",
-        "libtree-sitter.so",
-        "libtree-sitter.dylib",
-        "/usr/local/lib/libtree-sitter.dylib",
-        "/opt/homebrew/lib/libtree-sitter.dylib",
-    };
-    for (const char *candidate : candidates) {
+    std::vector<std::string> candidates;
+    if (const char *home = std::getenv("HOME"); home != nullptr && *home != '\0') {
+        std::filesystem::path home_path(home);
+        candidates.push_back((home_path / ".config/medit/libtree-sitter.so").string());
+        candidates.push_back((home_path / ".config/medit/libtree-sitter.dylib").string());
+    }
+    candidates.push_back("libtree-sitter.so.0");
+    candidates.push_back("libtree-sitter.so");
+    candidates.push_back("libtree-sitter.dylib");
+    candidates.push_back("/usr/local/lib/libtree-sitter.dylib");
+    candidates.push_back("/opt/homebrew/lib/libtree-sitter.dylib");
+
+    for (const std::string &candidate : candidates) {
         log_debug(std::string("syntax runtime probe path=") + candidate);
-        api.handle = dlopen(candidate, RTLD_NOW | RTLD_GLOBAL);
+        api.handle = dlopen(candidate.c_str(), RTLD_NOW | RTLD_GLOBAL);
         if (api.handle) {
             log_debug(std::string("syntax runtime loaded path=") + candidate);
             break;
