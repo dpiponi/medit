@@ -1026,6 +1026,42 @@ bool EditorState::clear_panel() {
     return true;
 }
 
+bool EditorState::initialize_input_corpus_recording(const std::filesystem::path &directory, std::string &error_message) {
+    std::error_code create_error;
+    std::filesystem::create_directories(directory, create_error);
+    if (create_error) {
+        error_message = "could not create input corpus directory: " + create_error.message();
+        return false;
+    }
+
+    auto now = std::chrono::system_clock::now().time_since_epoch();
+    long long timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+#if defined(__unix__) || defined(__APPLE__)
+    long long pid = static_cast<long long>(::getpid());
+#else
+    long long pid = 0;
+#endif
+    std::filesystem::path file_path =
+        directory / ("session-" + std::to_string(timestamp_ms) + "-" + std::to_string(pid) + ".keys");
+    auto stream = std::make_unique<std::ofstream>(file_path, std::ios::out | std::ios::trunc);
+    if (!*stream) {
+        error_message = "could not open input corpus file";
+        return false;
+    }
+
+    input_corpus_path = file_path;
+    input_corpus_stream = std::move(stream);
+    log_debug("input corpus recording path=" + file_path.string());
+    return true;
+}
+
+void EditorState::record_input_corpus_event(wint_t key, bool is_special) {
+    if (!input_corpus_stream || !*input_corpus_stream) {
+        return;
+    }
+    *input_corpus_stream << (is_special ? 'S' : 'N') << ' ' << static_cast<long long>(key) << '\n';
+}
+
 void EditorState::focus_window(std::size_t window_id) {
 if (!windows.set_active_window(window_id)) {
         return;

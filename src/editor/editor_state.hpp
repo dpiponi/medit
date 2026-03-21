@@ -18,6 +18,7 @@ import theme;
 
 #include <chrono>
 #include <curses.h>
+#include <fstream>
 #include <limits>
 #include <map>
 #include <memory>
@@ -280,6 +281,8 @@ struct EditorState {
     JumpStackState jump_stack;
     std::map<std::string, std::size_t> named_special_buffers;
     PanelState panel;
+    std::optional<std::filesystem::path> input_corpus_path;
+    std::unique_ptr<std::ofstream> input_corpus_stream;
     EditorControlServer control_server;
 
     EditorWindow &active_window();
@@ -337,6 +340,8 @@ struct EditorState {
     bool toggle_panel();
     bool focus_panel();
     bool clear_panel();
+    bool initialize_input_corpus_recording(const std::filesystem::path &directory, std::string &error_message);
+    void record_input_corpus_event(wint_t key, bool is_special);
     void focus_window(std::size_t window_id);
     void enter_normal_mode(bool preserve_status = false);
     void enter_insert_mode();

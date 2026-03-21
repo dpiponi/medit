@@ -7,6 +7,11 @@ struct ClickedBufferPosition {
     Position position;
 };
 
+struct InjectedKeyEvent {
+    wint_t key = 0;
+    bool is_special = false;
+};
+
 EditorWindow &active_window(EditorState &state);
 const EditorWindow &active_window(const EditorState &state);
 EditorBuffer &active_buffer(EditorState &state);
@@ -111,6 +116,7 @@ bool split_active_window(EditorState &state, WindowSplitDirection direction);
 bool close_active_window(EditorState &state);
 bool close_other_windows(EditorState &state);
 void handle_input(EditorState &state);
+void handle_test_input_sequence(EditorState &state, const std::vector<InjectedKeyEvent> &events);
 void update_input_timeout(const EditorState &state);
 void handle_service_events(EditorState &state);
 std::string handle_control_request(EditorState &state, std::string_view request_text);

@@ -15,6 +15,7 @@ BASE_CPPFLAGS := -Isrc -Isrc/app -Isrc/editor -Isrc/core -Isrc/platform -Isrc/ut
 BASE_CXXFLAGS := -std=c++23 -Wall -Wextra -pedantic
 BASE_LDFLAGS :=
 BASE_LDLIBS :=
+ASAN_FLAGS := -fsanitize=address,undefined -fno-omit-frame-pointer -g
 
 ifeq ($(UNAME_S),Darwin)
 BASE_CPPFLAGS += -D_DARWIN_C_SOURCE
@@ -81,6 +82,7 @@ SRC_DIR := src
 TEST_DIR := tests
 BUILD_DIR := build
 MODULE_DIR := $(BUILD_DIR)/modules
+TEST_EDITOR_CORE_BIN ?= test_editor_core
 
 THEME_MODULE_INTERFACE := $(SRC_DIR)/core/theme.cppm
 THEME_MODULE_OBJECT := $(BUILD_DIR)/$(THEME_MODULE_INTERFACE).o
@@ -122,8 +124,12 @@ medit: $(CORE_MODULE_OBJECT) $(CLIPBOARD_MODULE_OBJECT) $(SESSION_MODULE_OBJECT)
 input_diag: tools/input_diag.cpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) -o $@ $< $(LDLIBS)
 
-test_editor_core: $(CORE_MODULE_OBJECT) $(CLIPBOARD_MODULE_OBJECT) $(SESSION_MODULE_OBJECT) $(COMMANDS_MODULE_OBJECT) $(SERVICES_MODULE_OBJECT) $(CONFIG_MODULE_OBJECT) $(KEYBINDINGS_MODULE_OBJECT) $(THEME_MODULE_OBJECT) $(TEST_OBJECTS)
+$(TEST_EDITOR_CORE_BIN): $(CORE_MODULE_OBJECT) $(CLIPBOARD_MODULE_OBJECT) $(SESSION_MODULE_OBJECT) $(COMMANDS_MODULE_OBJECT) $(SERVICES_MODULE_OBJECT) $(CONFIG_MODULE_OBJECT) $(KEYBINDINGS_MODULE_OBJECT) $(THEME_MODULE_OBJECT) $(TEST_OBJECTS)
 	$(CXX) $(LDFLAGS) -o $@ $(CORE_MODULE_OBJECT) $(CLIPBOARD_MODULE_OBJECT) $(SESSION_MODULE_OBJECT) $(COMMANDS_MODULE_OBJECT) $(SERVICES_MODULE_OBJECT) $(CONFIG_MODULE_OBJECT) $(KEYBINDINGS_MODULE_OBJECT) $(THEME_MODULE_OBJECT) $(TEST_OBJECTS) $(LDLIBS)
+
+ifneq ($(TEST_EDITOR_CORE_BIN),test_editor_core)
+test_editor_core: $(TEST_EDITOR_CORE_BIN)
+endif
 
 check-toolchain:
 	@if ! command -v "$(CXX)" >/dev/null 2>&1 && [ ! -x "$(CXX)" ]; then \
@@ -194,6 +200,17 @@ editor_core_module: $(CORE_MODULE_OBJECT)
 test: test_editor_core
 	./test_editor_core
 
+asan_test_editor_core:
+	$(MAKE) BUILD_DIR=build-asan MODULE_DIR=build-asan/modules TEST_EDITOR_CORE_BIN=test_editor_core_asan \
+		CXXFLAGS='$(BASE_CXXFLAGS) $(ASAN_FLAGS)' LDFLAGS='$(BASE_LDFLAGS) $(ASAN_FLAGS)' test_editor_core
+
+asan-test: asan_test_editor_core
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 ./test_editor_core_asan
+
+asan-test-corpus: asan_test_editor_core
+	@if [ -z "$(CORPUS_DIR)" ]; then echo "error: set CORPUS_DIR=/path/to/input-corpus"; exit 1; fi
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 MEDIT_INPUT_CORPUS_DIR="$(CORPUS_DIR)" ./test_editor_core_asan
+
 bootstrap-tree-sitter:
 	$(PYTHON) tools/bootstrap_tree_sitter.py --manifest tools/tree_sitter_languages.json --config-root $(CONFIG_ROOT)/medit --build-root $(BUILD_DIR)/tree-sitter
 
@@ -204,10 +221,10 @@ tree-sitter-clean:
 	rm -rf $(BUILD_DIR)/tree-sitter .config/medit/grammars .config/medit/queries .config/medit/libtree-sitter.so .config/medit/libtree-sitter.dylib .config/medit/syntax.json
 
 clean:
-	rm -rf $(BUILD_DIR) gcm.cache medit input_diag test_editor_core
+	rm -rf $(BUILD_DIR) build-asan gcm.cache medit input_diag test_editor_core test_editor_core_asan
 
 CONFIG_ROOT ?= .config
 
-.PHONY: all clean test bootstrap-tree-sitter tree-sitter-clean bootstrap-tree-sitter-% editor_core_module check-toolchain
+.PHONY: all clean test asan-test asan-test-corpus asan_test_editor_core bootstrap-tree-sitter tree-sitter-clean bootstrap-tree-sitter-% editor_core_module check-toolchain
 
 -include $(DEPFILES)

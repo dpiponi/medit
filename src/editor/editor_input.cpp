@@ -1640,6 +1640,7 @@ void EditorState::handle_input() {
     if (result == ERR) {
         return;
     }
+    record_input_corpus_event(key, is_special);
 
     if (!is_special && key == 27) {
         wint_t next_key = 0;
@@ -1713,6 +1714,80 @@ void EditorState::handle_input() {
     }
 
     handle_keymap_input(*this, key, is_special);
+}
+
+void handle_test_input_sequence(EditorState &state, const std::vector<InjectedKeyEvent> &events) {
+    std::size_t index = 0;
+    while (index < events.size()) {
+        wint_t key = events[index].key;
+        bool is_special = events[index].is_special;
+        ++index;
+
+        if (!is_special && key == 27 && index < events.size()) {
+            const InjectedKeyEvent &next = events[index];
+            std::optional<std::string> alt_token;
+            if (next.is_special && next.key == KEY_UP) {
+                alt_token = "alt-up";
+            } else if (next.is_special && next.key == KEY_DOWN) {
+                alt_token = "alt-down";
+            }
+            if (alt_token) {
+                process_input_token(state, *alt_token, next.key, false);
+                ++index;
+                continue;
+            }
+
+            std::vector<wint_t> escape_keys;
+            std::size_t lookahead = index;
+            escape_keys.push_back(events[lookahead].key);
+            if (!events[lookahead].is_special) {
+                ++lookahead;
+                while (escape_keys.size() < 5 && lookahead < events.size()) {
+                    escape_keys.push_back(events[lookahead].key);
+                    if (events[lookahead].is_special) {
+                        break;
+                    }
+                    ++lookahead;
+                }
+                if (std::optional<std::string> shift_token = shift_arrow_token_from_escape(escape_keys)) {
+                    process_input_token(state, *shift_token, 0, false);
+                    index += escape_keys.size();
+                    continue;
+                }
+                if (std::optional<std::string> shift_token = shift_home_end_token_from_escape(escape_keys)) {
+                    process_input_token(state, *shift_token, 0, false);
+                    index += escape_keys.size();
+                    continue;
+                }
+            }
+        }
+
+        if (is_special && key == KEY_MOUSE) {
+            handle_mouse_input(state);
+            continue;
+        }
+
+        if (motion_is_character_based(state.pending.motion)) {
+            if (!is_special && key == 27) {
+                state.pending.motion = PendingMotion::None;
+                state.pending.motion_repeat_count = 1;
+                state.pending.repeat_digits.clear();
+                state.set_status(mode_name(state.mode));
+                continue;
+            }
+            if (!is_special) {
+                std::optional<std::string> token = key_token(key, false);
+                if (token) {
+                    state.recording.record_group_input(*token, key, true);
+                }
+                execute_pending_motion(state, static_cast<char32_t>(key));
+                state.sync_window_view_from_core(state.windows.active_window_id());
+            }
+            continue;
+        }
+
+        handle_keymap_input(state, key, is_special);
+    }
 }
 
 void update_input_timeout(const EditorState &state) {

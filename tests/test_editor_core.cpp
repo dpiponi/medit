@@ -20,6 +20,7 @@
 #include <iostream>
 #include <curses.h>
 #include <fcntl.h>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -72,6 +73,43 @@ const KeyHint *find_key_hint(const std::vector<KeyHint> &hints, const std::strin
     }
     return nullptr;
 }
+
+struct ScopedTestScreen {
+    FILE *input = nullptr;
+    FILE *output = nullptr;
+    SCREEN *screen = nullptr;
+
+    ScopedTestScreen() {
+        setenv("TERM", "xterm-256color", 1);
+        input = fopen("/dev/null", "r");
+        output = fopen("/dev/null", "w");
+        if (input == nullptr || output == nullptr) {
+            throw std::runtime_error("could not open /dev/null for curses test screen");
+        }
+        screen = newterm("xterm-256color", output, input);
+        if (screen == nullptr) {
+            throw std::runtime_error("could not initialize curses test screen");
+        }
+        set_term(screen);
+        raw();
+        noecho();
+        keypad(stdscr, TRUE);
+        timeout(-1);
+    }
+
+    ~ScopedTestScreen() {
+        if (screen != nullptr) {
+            endwin();
+            delscreen(screen);
+        }
+        if (input != nullptr) {
+            fclose(input);
+        }
+        if (output != nullptr) {
+            fclose(output);
+        }
+    }
+};
 
 void test_insert_unicode_and_undo() {
     EditorCore core;
@@ -830,13 +868,13 @@ void test_keybinding_dispatch() {
 
     KeyDispatch shift_up = dispatch_key_sequence(keybindings, "normal", pending, "shift-up", false);
     expect(
-        shift_up.action.has_value() && *shift_up.action == EditorAction::VisualMoveUp,
-        "shift-up should map to visual up");
+        shift_up.action.has_value() && *shift_up.action == EditorAction::VisualMoveScreenUp,
+        "shift-up should map to visual screen up");
 
     KeyDispatch shift_down = dispatch_key_sequence(keybindings, "normal", pending, "shift-down", false);
     expect(
-        shift_down.action.has_value() && *shift_down.action == EditorAction::VisualMoveDown,
-        "shift-down should map to visual down");
+        shift_down.action.has_value() && *shift_down.action == EditorAction::VisualMoveScreenDown,
+        "shift-down should map to visual screen down");
 
     KeyDispatch home = dispatch_key_sequence(keybindings, "normal", pending, "home", false);
     expect(home.action.has_value() && *home.action == EditorAction::MoveLineStart, "home should map to line start");
@@ -1771,6 +1809,150 @@ void test_popup_selection_accept_tokens() {
     expect(!popup_selection_accept_token("down"), "arrow navigation should not accept popup selections");
 }
 
+void expect_editor_state_sane(const EditorState &state, const std::string &context) {
+    expect(state.windows.window_count() >= 1, context + ": editor should always keep at least one window");
+    expect(
+        state.session.find_buffer_by_id(state.windows.active_window()->buffer_id) != nullptr,
+        context + ": active window should reference a live buffer");
+    if (state.mode == Mode::Command) {
+        expect(state.prompt_cursor <= state.command_buffer.size(), context + ": command prompt cursor should stay in range");
+    }
+    if (state.mode == Mode::Search) {
+        expect(state.prompt_cursor <= state.search_buffer.size(), context + ": search prompt cursor should stay in range");
+    }
+    if (state.panel.window_id.has_value()) {
+        expect(state.windows.find_window(*state.panel.window_id) != nullptr, context + ": panel window id should stay valid");
+    }
+    if (state.panel.buffer_id.has_value()) {
+        expect(state.session.find_buffer_by_id(*state.panel.buffer_id) != nullptr, context + ": panel buffer id should stay valid");
+    }
+}
+
+void test_malformed_key_sequence_fuzz() {
+    ScopedTestScreen screen;
+    std::mt19937 rng(0x5eed1234u);
+    const std::array<InjectedKeyEvent, 10> special_pool{{
+        {KEY_UP, true},
+        {KEY_DOWN, true},
+        {KEY_LEFT, true},
+        {KEY_RIGHT, true},
+        {KEY_HOME, true},
+        {KEY_END, true},
+        {KEY_PPAGE, true},
+        {KEY_NPAGE, true},
+        {KEY_BTAB, true},
+        {KEY_DC, true},
+    }};
+    const std::string printable_pool = "[;12345~OABCDrxyz:/?%()";
+    const std::array<std::vector<InjectedKeyEvent>, 8> corpus{{
+        {{27, false}, {'[', false}},
+        {{27, false}, {'[', false}, {'1', false}, {';', false}},
+        {{27, false}, {'[', false}, {'1', false}, {';', false}, {'2', false}, {'D', false}},
+        {{27, false}, {'[', false}, {'9', false}, {'9', false}, {'~', false}},
+        {{27, false}, {'O', false}, {'H', false}},
+        {{27, false}, {'[', false}, {KEY_LEFT, true}},
+        {{27, false}, {KEY_UP, true}},
+        {{27, false}, {KEY_DOWN, true}},
+    }};
+
+    for (const auto &events : corpus) {
+        EditorState state;
+        initialize_windows(state);
+        expect(state.active_core().insert_text({0, 0}, utf8_to_u32("alpha\nbeta\ngamma")), "seed fuzz buffer");
+        handle_test_input_sequence(state, events);
+        expect_editor_state_sane(state, "malformed key corpus");
+    }
+
+    for (int iteration = 0; iteration < 5000; ++iteration) {
+        EditorState state;
+        initialize_windows(state);
+        expect(state.active_core().insert_text({0, 0}, utf8_to_u32("alpha\nbeta\ngamma")), "seed fuzz buffer");
+
+        int mode_case = static_cast<int>(rng() % 4);
+        if (mode_case == 1) {
+            state.enter_insert_mode();
+        } else if (mode_case == 2) {
+            state.enter_command_mode();
+        } else if (mode_case == 3) {
+            state.enter_search_mode();
+        }
+        if (rng() % 7 == 0) {
+            state.pending.motion = PendingMotion::FindForward;
+            state.pending.motion_repeat_count = 1;
+        }
+
+        std::size_t event_count = 1 + (rng() % 8);
+        std::vector<InjectedKeyEvent> events;
+        events.reserve(event_count);
+        for (std::size_t i = 0; i < event_count; ++i) {
+            if (rng() % 5 == 0) {
+                events.push_back(special_pool[rng() % special_pool.size()]);
+                continue;
+            }
+            if (rng() % 4 == 0) {
+                events.push_back({27, false});
+                continue;
+            }
+            if (rng() % 6 == 0) {
+                events.push_back({static_cast<wint_t>(1 + (rng() % 26)), false});
+                continue;
+            }
+            events.push_back({static_cast<wint_t>(printable_pool[rng() % printable_pool.size()]), false});
+        }
+
+        handle_test_input_sequence(state, events);
+        expect_editor_state_sane(state, "malformed key fuzz iteration " + std::to_string(iteration));
+    }
+}
+
+void test_recorded_input_corpus_if_configured() {
+    const char *corpus_dir_value = std::getenv("MEDIT_INPUT_CORPUS_DIR");
+    if (corpus_dir_value == nullptr || *corpus_dir_value == '\0') {
+        return;
+    }
+
+    std::filesystem::path corpus_dir = corpus_dir_value;
+    if (!std::filesystem::exists(corpus_dir)) {
+        return;
+    }
+
+    ScopedTestScreen screen;
+    std::vector<std::filesystem::path> corpus_files;
+    for (const auto &entry : std::filesystem::directory_iterator(corpus_dir)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".keys") {
+            corpus_files.push_back(entry.path());
+        }
+    }
+    std::sort(corpus_files.begin(), corpus_files.end());
+
+    for (const std::filesystem::path &path : corpus_files) {
+        std::ifstream input(path);
+        expect(static_cast<bool>(input), "could not open corpus file: " + path.string());
+
+        std::vector<InjectedKeyEvent> events;
+        std::string line;
+        while (std::getline(input, line)) {
+            if (line.empty()) {
+                continue;
+            }
+            std::istringstream parser(line);
+            char kind = '\0';
+            long long raw_key = 0;
+            parser >> kind >> raw_key;
+            expect(
+                parser && (kind == 'N' || kind == 'S') && raw_key >= 0,
+                "invalid corpus line in " + path.string() + ": " + line);
+            events.push_back({static_cast<wint_t>(raw_key), kind == 'S'});
+        }
+
+        EditorState state;
+        initialize_windows(state);
+        expect(state.active_core().insert_text({0, 0}, utf8_to_u32("alpha\nbeta\ngamma")), "seed corpus replay buffer");
+        handle_test_input_sequence(state, events);
+        expect_editor_state_sane(state, "recorded corpus replay " + path.string());
+    }
+}
+
 void test_edit_command_file_completion() {
     std::filesystem::path root = std::filesystem::temp_directory_path() / "medit_edit_completion";
     std::filesystem::remove_all(root);
@@ -2353,6 +2535,8 @@ int main() {
         test_file_uri_normalization();
         test_string_utilities();
         test_popup_selection_accept_tokens();
+        test_malformed_key_sequence_fuzz();
+        test_recorded_input_corpus_if_configured();
         test_edit_command_file_completion();
         test_lsp_message_framing();
         test_lsp_launch_pipe_cleanup();

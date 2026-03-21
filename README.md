@@ -53,6 +53,29 @@ make bootstrap-tree-sitter-swift
 make test
 ```
 
+For malformed-input coverage under AddressSanitizer and UBSan:
+
+```sh
+make asan-test
+```
+
+To record real usage as replayable input corpus, set a local directory before launching `medit`:
+
+```sh
+export MEDIT_INPUT_CORPUS_DIR=$HOME/.config/medit/input-corpus
+medit
+```
+
+That writes one `*.keys` file per editor run, recording raw key events as either normal (`N`) or special (`S`) curses keys.
+
+To replay that recorded corpus through the sanitized test binary:
+
+```sh
+make asan-test-corpus CORPUS_DIR=$HOME/.config/medit/input-corpus
+```
+
+`medit --health` also reports whether input corpus recording is enabled and which directory it is using.
+
 ## Run
 
 ```sh
