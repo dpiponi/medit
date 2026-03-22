@@ -130,6 +130,14 @@ std::string ai_helper_status(const std::optional<std::string> &command) {
     return "ok";
 }
 
+std::optional<std::filesystem::path> input_corpus_directory_from_environment() {
+    const char *value = std::getenv("MEDIT_INPUT_CORPUS_DIR");
+    if (value == nullptr || *value == '\0') {
+        return std::nullopt;
+    }
+    return std::filesystem::path(value);
+}
+
 int run_health_check() {
     initialize_locale();
 
@@ -189,6 +197,9 @@ int run_health_check() {
     append_health_line(output, "lua", path_or_none(config.lua_path));
     append_health_line(output, "log", path_or_none(config.log_path));
     append_health_line(output, "control socket", path_or_none(config.control_socket_path));
+    append_health_line(output, "input corpus", input_corpus_directory_from_environment()
+        ? input_corpus_directory_from_environment()->string()
+        : "(disabled)");
     if (config_error) {
         append_health_line(output, "config error", *config_error);
     }
@@ -277,6 +288,12 @@ int main(int argc, char **argv) {
         std::string lua_error;
         if (!state.lua.initialize(state, state.config.lua_path, lua_error)) {
             state.set_status("Lua init failed: " + lua_error);
+        }
+    }
+    if (std::optional<std::filesystem::path> input_corpus_dir = input_corpus_directory_from_environment()) {
+        std::string input_corpus_error;
+        if (!state.initialize_input_corpus_recording(*input_corpus_dir, input_corpus_error)) {
+            state.set_status("Input corpus init failed: " + input_corpus_error);
         }
     }
     if (argc > 1) {

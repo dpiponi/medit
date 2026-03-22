@@ -20,6 +20,7 @@
 #include <iostream>
 #include <curses.h>
 #include <fcntl.h>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -60,6 +61,8 @@ void expect_cursor(const EditorCore &core, Position expected, const std::string 
             ") got (" + std::to_string(actual.row) + "," + std::to_string(actual.column) + ")");
 }
 
+void expect_editor_state_sane(const EditorState &state, const std::string &context);
+
 void expect_event_type(const EditorEvent &event, EditorEventType expected, const std::string &message) {
     expect(event.type == expected, message);
 }
@@ -72,6 +75,43 @@ const KeyHint *find_key_hint(const std::vector<KeyHint> &hints, const std::strin
     }
     return nullptr;
 }
+
+struct ScopedTestScreen {
+    FILE *input = nullptr;
+    FILE *output = nullptr;
+    SCREEN *screen = nullptr;
+
+    ScopedTestScreen() {
+        setenv("TERM", "xterm-256color", 1);
+        input = fopen("/dev/null", "r");
+        output = fopen("/dev/null", "w");
+        if (input == nullptr || output == nullptr) {
+            throw std::runtime_error("could not open /dev/null for curses test screen");
+        }
+        screen = newterm("xterm-256color", output, input);
+        if (screen == nullptr) {
+            throw std::runtime_error("could not initialize curses test screen");
+        }
+        set_term(screen);
+        raw();
+        noecho();
+        keypad(stdscr, TRUE);
+        timeout(-1);
+    }
+
+    ~ScopedTestScreen() {
+        if (screen != nullptr) {
+            endwin();
+            delscreen(screen);
+        }
+        if (input != nullptr) {
+            fclose(input);
+        }
+        if (output != nullptr) {
+            fclose(output);
+        }
+    }
+};
 
 void test_insert_unicode_and_undo() {
     EditorCore core;
@@ -666,7 +706,13 @@ void test_diagnostics_storage_and_events() {
 
 void test_annotations_storage_and_events() {
     EditorCore core;
-    InlineAnnotation note{{{0, 0}, {0, 1}}, AnnotationSeverity::Info, AnnotationKind::Note, "note", utf8_to_u32("hello\nworld")};
+    InlineAnnotation note{
+        {{0, 0}, {0, 1}},
+        AnnotationSeverity::Info,
+        AnnotationKind::Note,
+        "note",
+        utf8_to_u32("hello\nworld"),
+        std::nullopt};
     core.set_annotations({note});
     expect(core.annotations().size() == 1, "set_annotations should store current document annotations");
     expect(core.projected_annotations().size() == 1, "projected annotations should include explicit annotations");
@@ -680,6 +726,40 @@ void test_annotations_storage_and_events() {
     events = core.take_events();
     expect(events.size() == 1, "clearing annotations should emit one event");
     expect_event_type(events[0], EditorEventType::AnnotationsChanged, "clearing annotations emits annotations changed");
+}
+
+void test_lua_annotations_storage_and_events() {
+    EditorCore core;
+    InlineAnnotation note{
+        {{0, 0}, {0, 1}},
+        AnnotationSeverity::Info,
+        AnnotationKind::Note,
+        "note",
+        utf8_to_u32("editor"),
+        std::nullopt};
+    InlineAnnotation lua_note{
+        {{0, 0}, {0, 1}},
+        AnnotationSeverity::Warning,
+        AnnotationKind::Note,
+        "lua",
+        utf8_to_u32("lua"),
+        TextStyle{COLOR_BLUE, -1, true, false, false}};
+    core.set_annotations({note});
+    core.take_events();
+
+    core.set_lua_annotations({lua_note});
+    expect(core.annotations().size() == 1, "editor annotations should be preserved");
+    expect(core.lua_annotations().size() == 1, "lua annotations should be stored separately");
+    expect(core.projected_annotations().size() == 2, "projected annotations should include editor and lua annotations");
+    expect(core.projected_annotations()[1].style_override.has_value(), "lua annotations should preserve style override");
+
+    std::vector<EditorEvent> events = core.take_events();
+    expect(events.size() == 1, "setting lua annotations should emit one event");
+    expect_event_type(events[0], EditorEventType::AnnotationsChanged, "setting lua annotations emits annotations changed");
+
+    core.clear_lua_annotations();
+    expect(core.annotations().size() == 1, "clearing lua annotations should not clear editor annotations");
+    expect(core.lua_annotations().empty(), "clearing lua annotations should remove lua annotations");
 }
 
 void test_diagnostics_follow_document_switches() {
@@ -749,7 +829,7 @@ void test_editor_command_entry_points() {
     EditorCommand set_annotations;
     set_annotations.type = EditorCommandType::SetAnnotations;
     set_annotations.annotations = {
-        {{{0, 0}, {0, 1}}, AnnotationSeverity::Info, AnnotationKind::Note, "cmd", utf8_to_u32("note")}
+        {{{0, 0}, {0, 1}}, AnnotationSeverity::Info, AnnotationKind::Note, "cmd", utf8_to_u32("note"), std::nullopt}
     };
     result = apply_editor_command(core, set_annotations);
     expect(result.applied, "set annotations command should apply");
@@ -830,13 +910,13 @@ void test_keybinding_dispatch() {
 
     KeyDispatch shift_up = dispatch_key_sequence(keybindings, "normal", pending, "shift-up", false);
     expect(
-        shift_up.action.has_value() && *shift_up.action == EditorAction::VisualMoveUp,
-        "shift-up should map to visual up");
+        shift_up.action.has_value() && *shift_up.action == EditorAction::VisualMoveScreenUp,
+        "shift-up should map to visual screen up");
 
     KeyDispatch shift_down = dispatch_key_sequence(keybindings, "normal", pending, "shift-down", false);
     expect(
-        shift_down.action.has_value() && *shift_down.action == EditorAction::VisualMoveDown,
-        "shift-down should map to visual down");
+        shift_down.action.has_value() && *shift_down.action == EditorAction::VisualMoveScreenDown,
+        "shift-down should map to visual screen down");
 
     KeyDispatch home = dispatch_key_sequence(keybindings, "normal", pending, "home", false);
     expect(home.action.has_value() && *home.action == EditorAction::MoveLineStart, "home should map to line start");
@@ -1547,6 +1627,88 @@ void test_lua_commands_are_top_level_ex_commands() {
     std::filesystem::remove_all(root);
 }
 
+void test_lua_runtime_sets_line_annotations() {
+    std::filesystem::path root = std::filesystem::temp_directory_path() / "medit_lua_line_annotations";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+
+    std::filesystem::path script_path = root / "init.lua";
+    {
+        std::ofstream script(script_path);
+        script << "medit.register_command('annotate', function()\n"
+                  "  medit.set_line_annotations({\n"
+                  "    {\n"
+                  "      line = 0,\n"
+                  "      text = 'preview',\n"
+                  "      source = 'theme-preview',\n"
+                  "      style = { foreground = 'color117', bold = true }\n"
+                  "    }\n"
+                  "  })\n"
+                  "end)\n";
+    }
+
+    EditorState state;
+    initialize_windows(state);
+    expect(state.active_core().insert_text({0, 0}, utf8_to_u32("alpha\nbeta")), "seed lua annotation buffer");
+    std::string error_message;
+    expect(state.lua.initialize(state, script_path, error_message), "lua runtime should initialize for line annotation test");
+    expect(state.lua.execute_command(state, "annotate", "", error_message), "lua should set line annotations");
+    expect(state.active_core().lua_annotations().size() == 1, "lua command should create one line annotation");
+    expect(state.active_core().lua_annotations()[0].style_override.has_value(), "lua annotation should carry style override");
+
+    state.lua.shutdown();
+    std::filesystem::remove_all(root);
+}
+
+void test_lua_runtime_rejects_invalid_line_annotations() {
+    std::filesystem::path root = std::filesystem::temp_directory_path() / "medit_lua_line_annotations_invalid";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+
+    std::filesystem::path script_path = root / "init.lua";
+    {
+        std::ofstream script(script_path);
+        script << "medit.register_command('bad-annotate', function()\n"
+                  "  medit.set_line_annotations({{ line = 99, text = 'oops' }})\n"
+                  "end)\n";
+    }
+
+    EditorState state;
+    initialize_windows(state);
+    expect(state.active_core().insert_text({0, 0}, utf8_to_u32("alpha")), "seed invalid lua annotation buffer");
+    std::string error_message;
+    expect(state.lua.initialize(state, script_path, error_message), "lua runtime should initialize for invalid annotation test");
+    expect(!state.lua.execute_command(state, "bad-annotate", "", error_message), "invalid lua annotation should fail");
+    expect(error_message.find("line out of range") != std::string::npos, "invalid annotation error should mention line range");
+
+    state.lua.shutdown();
+    std::filesystem::remove_all(root);
+}
+
+void test_lua_runtime_rejects_invalid_async_job_buffer() {
+    std::filesystem::path root = std::filesystem::temp_directory_path() / "medit_lua_async_invalid_buffer";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+
+    std::filesystem::path script_path = root / "init.lua";
+    {
+        std::ofstream script(script_path);
+        script << "medit.register_command('bad-job', function()\n"
+                  "  medit.job_start({ command = \"printf hi\", buffer_id = 999999 })\n"
+                  "end)\n";
+    }
+
+    EditorState state;
+    initialize_windows(state);
+    std::string error_message;
+    expect(state.lua.initialize(state, script_path, error_message), "lua runtime should initialize for invalid async buffer test");
+    expect(!state.lua.execute_command(state, "bad-job", "", error_message), "invalid async job buffer should fail");
+    expect(error_message.find("buffer_id not found") != std::string::npos, "invalid async job buffer should mention missing buffer");
+
+    state.lua.shutdown();
+    std::filesystem::remove_all(root);
+}
+
 void test_special_buffers_and_panel_reuse() {
     EditorState state;
     initialize_windows(state);
@@ -1655,6 +1817,133 @@ void test_lua_async_job_streams_output_to_named_buffer() {
 
     state.lua.shutdown();
     std::filesystem::remove_all(root);
+}
+
+void test_closing_buffer_clears_hidden_panel_buffer_reference() {
+    EditorState state;
+    initialize_windows(state);
+
+    std::size_t panel_buffer_id = state.ensure_named_special_buffer("build", EditorBufferKind::Output, false, false).id;
+    state.show_buffer_in_panel(panel_buffer_id, false);
+    expect(state.close_panel(true), "closing panel should preserve its buffer before the deletion test");
+    expect(state.panel.buffer_id.has_value() && *state.panel.buffer_id == panel_buffer_id, "hidden panel should remember its buffer");
+
+    state.show_buffer_in_active_window(panel_buffer_id);
+    state.handle_buffer_delete_command(true);
+
+    expect(!state.panel.buffer_id.has_value(), "closing a hidden panel buffer should clear the preserved panel reference");
+    expect(
+        state.named_special_buffers.find("build") == state.named_special_buffers.end(),
+        "closing a named special buffer should clear the named buffer lookup");
+    expect_editor_state_sane(state, "closing hidden panel buffer");
+}
+
+void test_closing_buffer_detaches_async_job_buffer_reference() {
+    std::filesystem::path root = std::filesystem::temp_directory_path() / "medit_lua_async_detach";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+
+    std::filesystem::path script_path = root / "init.lua";
+    {
+        std::ofstream script(script_path);
+        script << "medit.register_command('async-detach-test', function()\n"
+                  "  local buffer_id = medit.create_buffer('job-output', 'output')\n"
+                  "  medit.clear_buffer(buffer_id)\n"
+                  "  medit.job_start({\n"
+                  "    command = \"sleep 0.05; printf 'late output\\\\n'\",\n"
+                  "    buffer_id = buffer_id,\n"
+                  "    on_exit = function(job_id, _)\n"
+                  "      local job = medit.job_status(job_id)\n"
+                  "      if job ~= nil and job.buffer_id == nil then\n"
+                  "        medit.set_status('buffer detached')\n"
+                  "      else\n"
+                  "        medit.set_status('buffer still attached')\n"
+                  "      end\n"
+                  "    end\n"
+                  "  })\n"
+                  "end)\n";
+    }
+
+    EditorState state;
+    initialize_windows(state);
+    std::string error_message;
+    expect(state.lua.initialize(state, script_path, error_message), "lua runtime should initialize for async detach test");
+    expect(error_message.empty(), "lua runtime init should not set an error for async detach test");
+    expect(state.lua.execute_command(state, "async-detach-test", "", error_message), "lua async detach test command should execute");
+
+    auto found = state.named_special_buffers.find("job-output");
+    expect(found != state.named_special_buffers.end(), "async detach test should create an output buffer");
+    state.show_buffer_in_active_window(found->second);
+    state.handle_buffer_delete_command(true);
+
+    bool detached = false;
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        state.lua.poll_async(state);
+        if (state.status_message == "buffer detached") {
+            detached = true;
+            break;
+        }
+        if (state.status_message == "buffer still attached") {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    expect(detached, "closing a buffer should detach async jobs from the dead buffer id");
+    expect(
+        state.named_special_buffers.find("job-output") == state.named_special_buffers.end(),
+        "closing the async output buffer should clear the named buffer lookup");
+    expect_text(state.active_buffer().core, "", "async output from a closed buffer should not leak into the replacement buffer");
+
+    state.lua.shutdown();
+    std::filesystem::remove_all(root);
+}
+
+void test_invalid_buffer_ids_do_not_corrupt_windows_or_panel() {
+    EditorState state;
+    initialize_windows(state);
+
+    const std::size_t original_buffer_id = state.active_buffer().id;
+    const std::size_t original_window_id = state.windows.active_window_id();
+
+    state.show_buffer_in_active_window(999999, true);
+    expect(state.active_window().buffer_id == original_buffer_id, "invalid active-window buffer id should be ignored");
+    expect_editor_state_sane(state, "invalid active-window buffer id");
+
+    state.show_buffer_in_panel(999999, false);
+    expect(!state.panel.window_id.has_value(), "invalid panel buffer id should not create a panel window");
+    expect(!state.panel.buffer_id.has_value(), "invalid panel buffer id should not be preserved");
+    expect(state.windows.active_window_id() == original_window_id, "invalid panel buffer id should not change focus");
+    expect_editor_state_sane(state, "invalid panel buffer id");
+}
+
+void test_popup_dismisses_when_buffer_context_changes() {
+    EditorState state;
+    initialize_windows(state);
+    expect(state.active_core().insert_text({0, 0}, utf8_to_u32("alpha")), "seed popup context test");
+
+    show_menu_popup(state, "Completion", {PopupMenuItem{"beta", {}, "beta", std::nullopt}});
+    expect(state.popup.visible, "completion popup should start visible");
+
+    std::size_t second_id = state.session.new_buffer(true).id;
+    state.show_buffer_in_active_window(second_id);
+
+    expect(!state.popup.visible, "buffer-bound popup should dismiss when switching to another buffer");
+    expect_editor_state_sane(state, "popup dismissed on buffer switch");
+}
+
+void test_popup_dismisses_when_buffer_is_closed() {
+    EditorState state;
+    initialize_windows(state);
+    expect(state.active_core().insert_text({0, 0}, utf8_to_u32("alpha")), "seed popup close test");
+
+    show_menu_popup(state, "Completion", {PopupMenuItem{"beta", {}, "beta", std::nullopt}});
+    expect(state.popup.visible, "completion popup should start visible before close");
+
+    state.handle_buffer_delete_command(true);
+
+    expect(!state.popup.visible, "closing the owning buffer should dismiss its popup");
+    expect_editor_state_sane(state, "popup dismissed on buffer close");
 }
 
 void test_command_execution_preserves_command_status() {
@@ -1771,6 +2060,150 @@ void test_popup_selection_accept_tokens() {
     expect(!popup_selection_accept_token("down"), "arrow navigation should not accept popup selections");
 }
 
+void expect_editor_state_sane(const EditorState &state, const std::string &context) {
+    expect(state.windows.window_count() >= 1, context + ": editor should always keep at least one window");
+    expect(
+        state.session.find_buffer_by_id(state.windows.active_window()->buffer_id) != nullptr,
+        context + ": active window should reference a live buffer");
+    if (state.mode == Mode::Command) {
+        expect(state.prompt_cursor <= state.command_buffer.size(), context + ": command prompt cursor should stay in range");
+    }
+    if (state.mode == Mode::Search) {
+        expect(state.prompt_cursor <= state.search_buffer.size(), context + ": search prompt cursor should stay in range");
+    }
+    if (state.panel.window_id.has_value()) {
+        expect(state.windows.find_window(*state.panel.window_id) != nullptr, context + ": panel window id should stay valid");
+    }
+    if (state.panel.buffer_id.has_value()) {
+        expect(state.session.find_buffer_by_id(*state.panel.buffer_id) != nullptr, context + ": panel buffer id should stay valid");
+    }
+}
+
+void test_malformed_key_sequence_fuzz() {
+    ScopedTestScreen screen;
+    std::mt19937 rng(0x5eed1234u);
+    const std::array<InjectedKeyEvent, 10> special_pool{{
+        {KEY_UP, true},
+        {KEY_DOWN, true},
+        {KEY_LEFT, true},
+        {KEY_RIGHT, true},
+        {KEY_HOME, true},
+        {KEY_END, true},
+        {KEY_PPAGE, true},
+        {KEY_NPAGE, true},
+        {KEY_BTAB, true},
+        {KEY_DC, true},
+    }};
+    const std::string printable_pool = "[;12345~OABCDrxyz:/?%()";
+    const std::array<std::vector<InjectedKeyEvent>, 8> corpus{{
+        {{27, false}, {'[', false}},
+        {{27, false}, {'[', false}, {'1', false}, {';', false}},
+        {{27, false}, {'[', false}, {'1', false}, {';', false}, {'2', false}, {'D', false}},
+        {{27, false}, {'[', false}, {'9', false}, {'9', false}, {'~', false}},
+        {{27, false}, {'O', false}, {'H', false}},
+        {{27, false}, {'[', false}, {KEY_LEFT, true}},
+        {{27, false}, {KEY_UP, true}},
+        {{27, false}, {KEY_DOWN, true}},
+    }};
+
+    for (const auto &events : corpus) {
+        EditorState state;
+        initialize_windows(state);
+        expect(state.active_core().insert_text({0, 0}, utf8_to_u32("alpha\nbeta\ngamma")), "seed fuzz buffer");
+        handle_test_input_sequence(state, events);
+        expect_editor_state_sane(state, "malformed key corpus");
+    }
+
+    for (int iteration = 0; iteration < 5000; ++iteration) {
+        EditorState state;
+        initialize_windows(state);
+        expect(state.active_core().insert_text({0, 0}, utf8_to_u32("alpha\nbeta\ngamma")), "seed fuzz buffer");
+
+        int mode_case = static_cast<int>(rng() % 4);
+        if (mode_case == 1) {
+            state.enter_insert_mode();
+        } else if (mode_case == 2) {
+            state.enter_command_mode();
+        } else if (mode_case == 3) {
+            state.enter_search_mode();
+        }
+        if (rng() % 7 == 0) {
+            state.pending.motion = PendingMotion::FindForward;
+            state.pending.motion_repeat_count = 1;
+        }
+
+        std::size_t event_count = 1 + (rng() % 8);
+        std::vector<InjectedKeyEvent> events;
+        events.reserve(event_count);
+        for (std::size_t i = 0; i < event_count; ++i) {
+            if (rng() % 5 == 0) {
+                events.push_back(special_pool[rng() % special_pool.size()]);
+                continue;
+            }
+            if (rng() % 4 == 0) {
+                events.push_back({27, false});
+                continue;
+            }
+            if (rng() % 6 == 0) {
+                events.push_back({static_cast<wint_t>(1 + (rng() % 26)), false});
+                continue;
+            }
+            events.push_back({static_cast<wint_t>(printable_pool[rng() % printable_pool.size()]), false});
+        }
+
+        handle_test_input_sequence(state, events);
+        expect_editor_state_sane(state, "malformed key fuzz iteration " + std::to_string(iteration));
+    }
+}
+
+void test_recorded_input_corpus_if_configured() {
+    const char *corpus_dir_value = std::getenv("MEDIT_INPUT_CORPUS_DIR");
+    if (corpus_dir_value == nullptr || *corpus_dir_value == '\0') {
+        return;
+    }
+
+    std::filesystem::path corpus_dir = corpus_dir_value;
+    if (!std::filesystem::exists(corpus_dir)) {
+        return;
+    }
+
+    ScopedTestScreen screen;
+    std::vector<std::filesystem::path> corpus_files;
+    for (const auto &entry : std::filesystem::directory_iterator(corpus_dir)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".keys") {
+            corpus_files.push_back(entry.path());
+        }
+    }
+    std::sort(corpus_files.begin(), corpus_files.end());
+
+    for (const std::filesystem::path &path : corpus_files) {
+        std::ifstream input(path);
+        expect(static_cast<bool>(input), "could not open corpus file: " + path.string());
+
+        std::vector<InjectedKeyEvent> events;
+        std::string line;
+        while (std::getline(input, line)) {
+            if (line.empty()) {
+                continue;
+            }
+            std::istringstream parser(line);
+            char kind = '\0';
+            long long raw_key = 0;
+            parser >> kind >> raw_key;
+            expect(
+                parser && (kind == 'N' || kind == 'S') && raw_key >= 0,
+                "invalid corpus line in " + path.string() + ": " + line);
+            events.push_back({static_cast<wint_t>(raw_key), kind == 'S'});
+        }
+
+        EditorState state;
+        initialize_windows(state);
+        expect(state.active_core().insert_text({0, 0}, utf8_to_u32("alpha\nbeta\ngamma")), "seed corpus replay buffer");
+        handle_test_input_sequence(state, events);
+        expect_editor_state_sane(state, "recorded corpus replay " + path.string());
+    }
+}
+
 void test_edit_command_file_completion() {
     std::filesystem::path root = std::filesystem::temp_directory_path() / "medit_edit_completion";
     std::filesystem::remove_all(root);
@@ -1882,6 +2315,7 @@ void test_lsp_service_roundtrip() {
     drive_runtime(30);
     expect(core.diagnostics().size() == 1, "lsp roundtrip should apply open diagnostics");
     expect(u32_to_utf8(core.diagnostics()[0].message) == "open diagnostic", "lsp open diagnostic message");
+    expect(core.diagnostics()[0].range.start.row == 0 && core.diagnostics()[0].range.start.column == 0, "open diagnostic start should map to live document");
 
     core.move_line_end();
     core.insert_codepoint(U'x');
@@ -1892,6 +2326,7 @@ void test_lsp_service_roundtrip() {
     expect(
         u32_to_utf8(core.diagnostics()[0].message) == "full:abcxyz",
         "lsp changed diagnostic message should reflect coalesced document text");
+    expect(core.diagnostics()[0].range.end.row == 0 && core.diagnostics()[0].range.end.column == 1, "changed diagnostic range should still map on live text");
 
     ServiceRequest request;
     request.type = ServiceRequestType::GoToDefinition;
@@ -2054,6 +2489,25 @@ class RecordingService : public EditorService {
     std::optional<int> interval_ms_;
 };
 
+class QueuedService : public EditorService {
+  public:
+    std::string name() const override {
+        return "queued";
+    }
+
+    void start() override {}
+    void stop() override {}
+    void handle_editor_event(const EditorEvent &) override {}
+
+    std::vector<ServiceEvent> poll() override {
+        std::vector<ServiceEvent> events = std::move(queued_events);
+        queued_events.clear();
+        return events;
+    }
+
+    std::vector<ServiceEvent> queued_events;
+};
+
 void test_editor_runtime_service_boundary() {
     EditorRuntime runtime;
     auto service = std::make_unique<RecordingService>();
@@ -2094,6 +2548,109 @@ void test_editor_runtime_service_boundary() {
     std::vector<ServiceEvent> stopped_events = runtime.take_service_events();
     expect(stopped_events.size() == 1, "stopping runtime should emit one lifecycle event");
     expect(stopped_events[0].type == ServiceEventType::ServiceStopped, "runtime should emit service stopped");
+}
+
+void test_stale_service_hover_popup_is_dropped() {
+    EditorState state;
+    initialize_windows(state);
+    expect(state.active_core().insert_text({0, 0}, utf8_to_u32("alpha")), "seed hover stale-response test");
+
+    auto service = std::make_unique<QueuedService>();
+    QueuedService *service_ptr = service.get();
+    state.runtime.add_service(std::move(service));
+    state.runtime.start_services();
+    state.runtime.take_service_events();
+
+    EditorCommand command;
+    command.type = EditorCommandType::ShowPopup;
+    command.title = "Hover";
+    command.message = "stale hover";
+    command.document_uri = state.active_core().document_uri();
+    service_ptr->queued_events.push_back(
+        {ServiceEventType::Notification,
+         service_ptr->name(),
+         "hover",
+         command,
+         state.active_core().document_uri(),
+         state.active_core().document_version() + 1,
+         std::nullopt,
+         U""});
+
+    state.runtime.poll_services();
+    state.handle_service_events();
+
+    expect(!state.popup.visible, "stale hover popup should be dropped on version mismatch");
+    expect(state.status_message != "stale hover", "stale hover popup should not overwrite editor status");
+    state.runtime.stop_services();
+}
+
+void test_stale_service_selection_range_is_dropped() {
+    EditorState state;
+    initialize_windows(state);
+    expect(state.active_core().insert_text({0, 0}, utf8_to_u32("alpha beta")), "seed selection stale-response test");
+
+    auto service = std::make_unique<QueuedService>();
+    QueuedService *service_ptr = service.get();
+    state.runtime.add_service(std::move(service));
+    state.runtime.start_services();
+    state.runtime.take_service_events();
+
+    EditorCommand command;
+    command.type = EditorCommandType::SetSelectionRange;
+    command.document_uri = state.active_core().document_uri();
+    command.selection_range = Range{{0, 0}, {0, 5}};
+    command.selection_ranges = {*command.selection_range};
+    command.position = Position{0, 0};
+    service_ptr->queued_events.push_back(
+        {ServiceEventType::Notification,
+         service_ptr->name(),
+         "selection_range",
+         command,
+         state.active_core().document_uri(),
+         state.active_core().document_version() + 1,
+         std::nullopt,
+         U""});
+
+    state.runtime.poll_services();
+    state.handle_service_events();
+
+    expect(state.mode == Mode::Normal, "stale selection-range response should not switch the editor into visual mode");
+    expect(
+        !state.displayed_selection_range(state.windows.active_window_id()).has_value(),
+        "stale selection-range response should not install a selection");
+    state.runtime.stop_services();
+}
+
+void test_stale_service_diagnostics_are_dropped() {
+    EditorState state;
+    initialize_windows(state);
+    expect(state.active_core().insert_text({0, 0}, utf8_to_u32("alpha")), "seed diagnostics stale-response test");
+
+    auto service = std::make_unique<QueuedService>();
+    QueuedService *service_ptr = service.get();
+    state.runtime.add_service(std::move(service));
+    state.runtime.start_services();
+    state.runtime.take_service_events();
+
+    EditorCommand command;
+    command.type = EditorCommandType::SetDiagnostics;
+    command.document_uri = state.active_core().document_uri();
+    command.diagnostics = {Diagnostic{{{0, 0}, {0, 1}}, DiagnosticSeverity::Error, "queued", utf8_to_u32("stale diagnostic")}};
+    service_ptr->queued_events.push_back(
+        {ServiceEventType::Notification,
+         service_ptr->name(),
+         "publishDiagnostics",
+         command,
+         state.active_core().document_uri(),
+         state.active_core().document_version() + 1,
+         std::nullopt,
+         U""});
+
+    state.runtime.poll_services();
+    state.handle_service_events();
+
+    expect(state.active_core().diagnostics().empty(), "stale diagnostics should be dropped on version mismatch");
+    state.runtime.stop_services();
 }
 
 void test_editor_runtime_idle_timeout() {
@@ -2332,6 +2889,7 @@ int main() {
         test_unicode_position_conversions();
         test_diagnostics_storage_and_events();
         test_annotations_storage_and_events();
+        test_lua_annotations_storage_and_events();
         test_diagnostics_follow_document_switches();
         test_editor_command_entry_points();
         test_compound_edit_undo();
@@ -2343,8 +2901,16 @@ int main() {
         test_lua_runtime_registers_and_executes_command();
         test_lua_runtime_passes_command_argument();
         test_lua_commands_are_top_level_ex_commands();
+        test_lua_runtime_sets_line_annotations();
+        test_lua_runtime_rejects_invalid_line_annotations();
+        test_lua_runtime_rejects_invalid_async_job_buffer();
         test_special_buffers_and_panel_reuse();
         test_lua_async_job_streams_output_to_named_buffer();
+        test_closing_buffer_clears_hidden_panel_buffer_reference();
+        test_closing_buffer_detaches_async_job_buffer_reference();
+        test_invalid_buffer_ids_do_not_corrupt_windows_or_panel();
+        test_popup_dismisses_when_buffer_context_changes();
+        test_popup_dismisses_when_buffer_is_closed();
         test_command_execution_preserves_command_status();
         test_tree_sitter_health_summary_for_empty_config();
         test_infer_workspace_root();
@@ -2353,12 +2919,17 @@ int main() {
         test_file_uri_normalization();
         test_string_utilities();
         test_popup_selection_accept_tokens();
+        test_malformed_key_sequence_fuzz();
+        test_recorded_input_corpus_if_configured();
         test_edit_command_file_completion();
         test_lsp_message_framing();
         test_lsp_launch_pipe_cleanup();
         test_lsp_service_roundtrip();
         test_lsp_service_reports_startup_failures();
         test_editor_runtime_service_boundary();
+        test_stale_service_hover_popup_is_dropped();
+        test_stale_service_selection_range_is_dropped();
+        test_stale_service_diagnostics_are_dropped();
         test_editor_runtime_idle_timeout();
         test_editor_session_buffers_and_clipboard();
         test_editor_session_shared_file_clipboard();

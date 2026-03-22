@@ -14,6 +14,7 @@
 #include <cerrno>
 #include <cstring>
 #include <filesystem>
+#include <optional>
 #include <ranges>
 #include <sstream>
 #include <utility>
@@ -265,6 +266,39 @@ std::optional<std::string> hover_text_from_contents(const JsonValue &contents) {
         return combined.empty() ? std::nullopt : std::optional<std::string>(combined);
     }
     return std::nullopt;
+}
+
+EditorCore core_from_document_text(const std::u32string &text) {
+    EditorCore core;
+    if (!text.empty()) {
+        core.insert_text({0, 0}, text);
+    }
+    return core;
+}
+
+std::u32string document_text_for_uri(
+    const std::map<std::string, std::u32string> &pending_document_texts,
+    const std::map<std::string, std::u32string> &document_texts,
+    const std::string &document_uri) {
+    if (auto pending = pending_document_texts.find(document_uri); pending != pending_document_texts.end()) {
+        return pending->second;
+    }
+    if (auto current = document_texts.find(document_uri); current != document_texts.end()) {
+        return current->second;
+    }
+    return {};
+}
+
+void erase_pending_requests_for_document(
+    std::map<int, ServiceRequest> &pending_requests,
+    const std::string &document_uri) {
+    for (auto it = pending_requests.begin(); it != pending_requests.end();) {
+        if (it->second.document_uri == document_uri) {
+            it = pending_requests.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 PopupMenuItems completion_items_from_result(
@@ -547,6 +581,9 @@ void LspService::handle_editor_event(const EditorEvent &event) {
                 return;
             }
             flush_pending_document_changes(true, event.document_uri);
+            if (event.type == EditorEventType::DocumentClosed) {
+                erase_pending_requests_for_document(pending_requests_, event.document_uri);
+            }
             send_editor_event(event);
             return;
         default:
@@ -1222,7 +1259,15 @@ void LspService::handle_message(const std::string &payload) {
                 command.title = "Hover";
                 command.message = *hover_text;
                 command.document_uri = request.document_uri;
-                queue_event({ServiceEventType::Notification, name(), "hover", command, request.document_uri, 0, std::nullopt, U""});
+                queue_event(
+                    {ServiceEventType::Notification,
+                     name(),
+                     "hover",
+                     command,
+                     request.document_uri,
+                     request.document_version,
+                     std::nullopt,
+                     U""});
             } else if (request.type == ServiceRequestType::Completion) {
                 if (result == root.end() || result->is_null()) {
                     queue_status("No completions");
@@ -1257,11 +1302,17 @@ void LspService::handle_message(const std::string &payload) {
                     queue_status("No enclosing AST range");
                     return;
                 }
-                EditorCore conversion_core;
-                std::string file_path = file_path_from_uri(request.document_uri);
-                if (!file_path.empty()) {
-                    conversion_core.load_file(file_path);
+                std::u32string document_text;
+                auto pending_text = pending_document_texts_.find(request.document_uri);
+                if (pending_text != pending_document_texts_.end()) {
+                    document_text = pending_text->second;
+                } else {
+                    auto found = document_texts_.find(request.document_uri);
+                    if (found != document_texts_.end()) {
+                        document_text = found->second;
+                    }
                 }
+                EditorCore conversion_core = core_from_document_text(document_text);
                 std::vector<Range> ranges = selection_ranges_from_result(*result, conversion_core);
                 if (ranges.empty()) {
                     queue_status("No enclosing AST range");
@@ -1314,12 +1365,17 @@ void LspService::handle_message(const std::string &payload) {
     }
 
     std::string normalized_uri = normalize_document_uri(uri->get<std::string>());
-    Diagnostics parsed_diagnostics;
-    EditorCore conversion_core;
-    std::string file_path = file_path_from_uri(normalized_uri);
-    if (!file_path.empty()) {
-        conversion_core.load_file(file_path);
+    auto version = params->find("version");
+    std::size_t document_version = 0;
+    if (version != params->end() && version->is_number()) {
+        document_version = static_cast<std::size_t>(version->get<double>());
     }
+    if (open_documents_.find(normalized_uri) == open_documents_.end()) {
+        return;
+    }
+    Diagnostics parsed_diagnostics;
+    EditorCore conversion_core = core_from_document_text(
+        document_text_for_uri(pending_document_texts_, document_texts_, normalized_uri));
     for (const JsonValue &diagnostic_value : *diagnostics) {
         if (!diagnostic_value.is_object()) {
             continue;
@@ -1352,5 +1408,13 @@ void LspService::handle_message(const std::string &payload) {
     command.type = EditorCommandType::SetDiagnostics;
     command.document_uri = normalized_uri;
     command.diagnostics = std::move(parsed_diagnostics);
-    queue_event({ServiceEventType::Notification, name(), "publishDiagnostics", command, normalized_uri, 0, std::nullopt, U""});
+    queue_event(
+        {ServiceEventType::Notification,
+         name(),
+         "publishDiagnostics",
+         command,
+         normalized_uri,
+         document_version,
+         std::nullopt,
+         U""});
 }

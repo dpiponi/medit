@@ -31,6 +31,7 @@ class LuaRuntime {
         const std::string &name,
         const std::string &argument,
         std::string &error_message);
+    void detach_async_buffer(std::size_t buffer_id);
     void poll_async(EditorState &state);
     std::optional<int> idle_wait_timeout_ms() const;
     void dispatch_editor_event(EditorState &state, const EditorEvent &event);

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <optional>
 #include <system_error>
 #include <vector>
 

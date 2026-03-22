@@ -720,6 +720,10 @@ bool action_accepts_repeat(EditorAction action) {
         case EditorAction::VisualMoveUp:
         case EditorAction::MoveDown:
         case EditorAction::VisualMoveDown:
+        case EditorAction::MoveScreenUp:
+        case EditorAction::VisualMoveScreenUp:
+        case EditorAction::MoveScreenDown:
+        case EditorAction::VisualMoveScreenDown:
         case EditorAction::MoveLineStart:
         case EditorAction::VisualMoveLineStart:
         case EditorAction::MoveLineEnd:
@@ -798,6 +802,24 @@ bool handle_motion_action(EditorState &state, EditorAction action) {
             disable_panel_follow_if_active(state);
             prepare_visual_motion(state);
             core.move_down();
+            return true;
+        case EditorAction::MoveScreenUp:
+            disable_panel_follow_if_active(state);
+            move_cursor_by_visual_rows(state, state.windows.active_window_id(), -1);
+            return true;
+        case EditorAction::VisualMoveScreenUp:
+            disable_panel_follow_if_active(state);
+            prepare_visual_motion(state);
+            move_cursor_by_visual_rows(state, state.windows.active_window_id(), -1);
+            return true;
+        case EditorAction::MoveScreenDown:
+            disable_panel_follow_if_active(state);
+            move_cursor_by_visual_rows(state, state.windows.active_window_id(), 1);
+            return true;
+        case EditorAction::VisualMoveScreenDown:
+            disable_panel_follow_if_active(state);
+            prepare_visual_motion(state);
+            move_cursor_by_visual_rows(state, state.windows.active_window_id(), 1);
             return true;
         case EditorAction::MoveLineStart:
             core.move_line_start();
@@ -1618,6 +1640,7 @@ void EditorState::handle_input() {
     if (result == ERR) {
         return;
     }
+    record_input_corpus_event(key, is_special);
 
     if (!is_special && key == 27) {
         wint_t next_key = 0;
@@ -1693,6 +1716,80 @@ void EditorState::handle_input() {
     handle_keymap_input(*this, key, is_special);
 }
 
+void handle_test_input_sequence(EditorState &state, const std::vector<InjectedKeyEvent> &events) {
+    std::size_t index = 0;
+    while (index < events.size()) {
+        wint_t key = events[index].key;
+        bool is_special = events[index].is_special;
+        ++index;
+
+        if (!is_special && key == 27 && index < events.size()) {
+            const InjectedKeyEvent &next = events[index];
+            std::optional<std::string> alt_token;
+            if (next.is_special && next.key == KEY_UP) {
+                alt_token = "alt-up";
+            } else if (next.is_special && next.key == KEY_DOWN) {
+                alt_token = "alt-down";
+            }
+            if (alt_token) {
+                process_input_token(state, *alt_token, next.key, false);
+                ++index;
+                continue;
+            }
+
+            std::vector<wint_t> escape_keys;
+            std::size_t lookahead = index;
+            escape_keys.push_back(events[lookahead].key);
+            if (!events[lookahead].is_special) {
+                ++lookahead;
+                while (escape_keys.size() < 5 && lookahead < events.size()) {
+                    escape_keys.push_back(events[lookahead].key);
+                    if (events[lookahead].is_special) {
+                        break;
+                    }
+                    ++lookahead;
+                }
+                if (std::optional<std::string> shift_token = shift_arrow_token_from_escape(escape_keys)) {
+                    process_input_token(state, *shift_token, 0, false);
+                    index += escape_keys.size();
+                    continue;
+                }
+                if (std::optional<std::string> shift_token = shift_home_end_token_from_escape(escape_keys)) {
+                    process_input_token(state, *shift_token, 0, false);
+                    index += escape_keys.size();
+                    continue;
+                }
+            }
+        }
+
+        if (is_special && key == KEY_MOUSE) {
+            handle_mouse_input(state);
+            continue;
+        }
+
+        if (motion_is_character_based(state.pending.motion)) {
+            if (!is_special && key == 27) {
+                state.pending.motion = PendingMotion::None;
+                state.pending.motion_repeat_count = 1;
+                state.pending.repeat_digits.clear();
+                state.set_status(mode_name(state.mode));
+                continue;
+            }
+            if (!is_special) {
+                std::optional<std::string> token = key_token(key, false);
+                if (token) {
+                    state.recording.record_group_input(*token, key, true);
+                }
+                execute_pending_motion(state, static_cast<char32_t>(key));
+                state.sync_window_view_from_core(state.windows.active_window_id());
+            }
+            continue;
+        }
+
+        handle_keymap_input(state, key, is_special);
+    }
+}
+
 void update_input_timeout(const EditorState &state) {
     std::optional<int> timeout_ms = state.runtime.idle_wait_timeout_ms();
     if (std::optional<int> lua_timeout = state.lua.idle_wait_timeout_ms()) {
@@ -1704,6 +1801,41 @@ void update_input_timeout(const EditorState &state) {
 }
 
 void EditorState::handle_service_events() {
+    auto event_matches_current_document = [&](const ServiceEvent &event, const EditorCommand &command) {
+        if (!command.document_uri) {
+            return true;
+        }
+        EditorBuffer *buffer = session.find_buffer_by_uri(*command.document_uri);
+        if (!buffer) {
+            return false;
+        }
+        if (event.document_version != 0 && event.document_version != buffer->core.document_version()) {
+            log_debug(
+                "service event dropped: version mismatch topic=" + event.topic +
+                " event=" + std::to_string(event.document_version) +
+                " current=" + std::to_string(buffer->core.document_version()));
+            return false;
+        }
+        return true;
+    };
+    auto command_requires_current_document = [](EditorCommandType type) {
+        switch (type) {
+            case EditorCommandType::SetDiagnostics:
+            case EditorCommandType::ClearDiagnostics:
+            case EditorCommandType::SetAnnotations:
+            case EditorCommandType::ClearAnnotations:
+            case EditorCommandType::MoveCursor:
+            case EditorCommandType::SetSelectionRange:
+            case EditorCommandType::ShowPopup:
+                return true;
+            case EditorCommandType::OpenLocation:
+            case EditorCommandType::ClearPopup:
+            case EditorCommandType::SetStatusMessage:
+                return false;
+        }
+        return false;
+    };
+
     for (const ServiceEvent &event : runtime.take_service_events()) {
         if (!event.command) {
             continue;
@@ -1757,15 +1889,12 @@ void EditorState::handle_service_events() {
             continue;
         }
         if (command.type == EditorCommandType::ShowPopup) {
+            if (!event_matches_current_document(event, command)) {
+                continue;
+            }
             if (command.popup_kind == PopupKind::Menu) {
                 if (!command.document_uri || *command.document_uri != active_core().document_uri()) {
                     log_debug("completion popup dropped: uri mismatch");
-                    continue;
-                }
-                if (event.document_version != 0 && event.document_version != active_core().document_version()) {
-                    log_debug(
-                        "completion popup dropped: version mismatch event=" + std::to_string(event.document_version) +
-                        " current=" + std::to_string(active_core().document_version()));
                     continue;
                 }
                 log_debug("completion popup shown count=" + std::to_string(command.popup_items.size()));
@@ -1781,6 +1910,9 @@ void EditorState::handle_service_events() {
         }
         if (command.type == EditorCommandType::SetSelectionRange) {
             if (!command.document_uri || !command.selection_range) {
+                continue;
+            }
+            if (!event_matches_current_document(event, command)) {
                 continue;
             }
             EditorBuffer *buffer = session.find_buffer_by_uri(*command.document_uri);
@@ -1799,6 +1931,9 @@ void EditorState::handle_service_events() {
         if (command.document_uri) {
             EditorBuffer *buffer = session.find_buffer_by_uri(*command.document_uri);
             if (!buffer) {
+                continue;
+            }
+            if (command_requires_current_document(command.type) && !event_matches_current_document(event, command)) {
                 continue;
             }
             if (command.type == EditorCommandType::MoveCursor || command.type == EditorCommandType::SetSelectionRange) {

@@ -102,6 +102,16 @@ std::filesystem::path resolve_config_reference(
     return meditrc_path.parent_path() / "medit" / path;
 }
 
+void apply_default_lua_path(EditorConfig &config, const std::filesystem::path &meditrc_path) {
+    if (config.lua_path) {
+        return;
+    }
+    std::filesystem::path default_lua_path = resolve_config_reference(meditrc_path, "init.lua");
+    if (std::filesystem::exists(default_lua_path)) {
+        config.lua_path = std::move(default_lua_path);
+    }
+}
+
 const JsonValue &required_object_member(const JsonValue &object, const char *key) {
     auto found = object.find(key);
     if (found == object.end()) {
@@ -370,6 +380,7 @@ EditorConfig load_editor_config() {
     config.colors_path = first_existing_default_config_path("colors.json");
     config.lsp_path = first_existing_default_config_path("lsp.json");
     config.syntax_config_path = first_existing_default_config_path("syntax.json");
+    config.lua_path = first_existing_default_config_path("init.lua");
     if (config.lsp_path && std::filesystem::exists(*config.lsp_path)) {
         config.lsp_servers = load_lsp_servers_from_path(*config.lsp_path);
     }
@@ -478,6 +489,7 @@ EditorConfig load_editor_config_from_path(const std::filesystem::path &path) {
             config.syntax_config_path = default_syntax_path;
         }
     }
+    apply_default_lua_path(config, path);
     if (config.lsp_path && std::filesystem::exists(*config.lsp_path)) {
         config.lsp_servers = load_lsp_servers_from_path(*config.lsp_path);
     } else if (config.lsp_command && config.lsp_language_id) {

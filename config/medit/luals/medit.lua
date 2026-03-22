@@ -33,6 +33,20 @@
 ---@field command string
 ---@field buffer_id integer|nil
 
+---@class MeditAnnotationStyle
+---@field foreground string|nil
+---@field background string|nil
+---@field bold boolean|nil
+---@field underline boolean|nil
+---@field reverse boolean|nil
+
+---@class MeditLineAnnotation
+---@field line integer
+---@field text string
+---@field severity "info"|"warning"|"error"|nil
+---@field source string|nil
+---@field style MeditAnnotationStyle|nil
+
 ---@class medit
 local M = {}
 
@@ -54,6 +68,13 @@ function M.get_buffer_text() end
 ---@param row integer
 ---@return string
 function M.get_line_text(row) end
+
+---@param items MeditLineAnnotation[]
+---@param buffer_id integer|nil
+function M.set_line_annotations(items, buffer_id) end
+
+---@param buffer_id integer|nil
+function M.clear_line_annotations(buffer_id) end
 
 ---@param range MeditEventRange
 ---@return string
@@ -133,6 +154,10 @@ function M.executable_exists(name) end
 ---@param path string
 ---@return boolean
 function M.file_exists(path) end
+
+---@param value string
+---@return boolean
+function M.theme_color_supported(value) end
 
 ---@param text string
 ---@return string

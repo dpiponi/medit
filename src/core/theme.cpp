@@ -6,6 +6,7 @@ module;
 #include <charconv>
 #include <array>
 #include <map>
+#include <optional>
 #ifdef _WIN32
 // Enable ncurses-compatible mode in PDCurses
 #ifndef NCURSES_MOUSE_VERSION
@@ -88,7 +89,7 @@ std::map<std::string, StyleRole> role_names() {
     };
 }
 
-short parse_color_name(const std::string &name) {
+std::optional<short> try_parse_theme_color_impl(std::string_view name) {
     static const std::map<std::string, short> colors = {
         {"default", -1},
         {"black", COLOR_BLACK},
@@ -108,7 +109,7 @@ short parse_color_name(const std::string &name) {
         {"bright_cyan", 14},
         {"bright_white", 15},
     };
-    auto found = colors.find(name);
+    auto found = colors.find(std::string(name));
     if (found != colors.end()) {
         return found->second;
     }
@@ -123,12 +124,19 @@ short parse_color_name(const std::string &name) {
     };
 
     if (std::optional<short> numeric = parse_numeric(name)) {
-        return *numeric;
+        return numeric;
     }
     if (name.starts_with("color")) {
         if (std::optional<short> numeric = parse_numeric(std::string_view(name).substr(5))) {
-            return *numeric;
+            return numeric;
         }
+    }
+    return std::nullopt;
+}
+
+short parse_color_name(const std::string &name) {
+    if (std::optional<short> parsed = try_parse_theme_color_impl(name)) {
+        return *parsed;
     }
     throw std::runtime_error("unknown color: " + name);
 }
@@ -198,6 +206,10 @@ Theme parse_theme_source_with_defaults(const std::string &source, const std::str
 }
 
 }  // namespace
+
+std::optional<short> try_parse_theme_color(std::string_view name) {
+    return try_parse_theme_color_impl(name);
+}
 
 Theme load_theme() {
     return load_theme(load_editor_config());

@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <fstream>
 #include <filesystem>
+#include <optional>
 #include <sstream>
 #include <string>
 
@@ -276,6 +277,13 @@ bool EditorState::replace_selection_for_commands(const std::u32string &text) {
         return false;
     }
     bool changed = buffer->core.replace_range(snapshot->range, text);
+    if (changed) {
+        for (const EditorWindow &window : windows.windows()) {
+            if (window.buffer_id == buffer->id) {
+                sync_window_view_from_core(window.id);
+            }
+        }
+    }
     if (mode == Mode::Command && command_prompt_kind == CommandPromptKind::EditorCommand) {
         command_selection_snapshot.reset();
     }
@@ -653,8 +661,22 @@ void handle_service_events(EditorState &state);
 void begin_insert_session(EditorState &state);
 void rebuild_popup_filter(EditorState &state);
 
+bool popup_matches_buffer_context(const EditorState &state, std::size_t buffer_id) {
+    if (!state.popup.visible || !state.popup.buffer_id) {
+        return true;
+    }
+    if (*state.popup.buffer_id != buffer_id) {
+        return false;
+    }
+    const EditorBuffer *buffer = state.session.find_buffer_by_id(buffer_id);
+    if (buffer == nullptr) {
+        return false;
+    }
+    return state.popup.document_version == 0 || state.popup.document_version == buffer->core.document_version();
+}
+
 void EditorState::show_popup(std::string title, std::u32string text) {
-popup.visible = true;
+    popup.visible = true;
     popup.kind = PopupKind::Text;
     popup.title = std::move(title);
     popup.text = std::move(text);
@@ -664,6 +686,11 @@ popup.visible = true;
     popup.selected_index = 0;
     popup.scroll_offset = 0;
     popup.originating_mode = mode;
+    popup.apply_target = PopupApplyTarget::BufferText;
+    popup.filter_mode = PopupFilterMode::ContainsLabelOrDetail;
+    popup.sticky = false;
+    popup.buffer_id = active_buffer().id;
+    popup.document_version = active_core().document_version();
 }
 
 void EditorState::request_config_reload() {
@@ -703,6 +730,13 @@ void show_menu_popup(
     state.popup.apply_target = apply_target;
     state.popup.filter_mode = filter_mode;
     state.popup.sticky = false;
+    if (apply_target == EditorState::PopupApplyTarget::BufferText) {
+        state.popup.buffer_id = state.active_buffer().id;
+        state.popup.document_version = state.active_core().document_version();
+    } else {
+        state.popup.buffer_id.reset();
+        state.popup.document_version = 0;
+    }
     rebuild_popup_filter(state);
 }
 
@@ -728,10 +762,12 @@ void show_key_hints_popup(
     state.popup.apply_target = EditorState::PopupApplyTarget::BufferText;
     state.popup.filter_mode = EditorState::PopupFilterMode::ContainsLabelOrDetail;
     state.popup.sticky = sticky;
+    state.popup.buffer_id.reset();
+    state.popup.document_version = 0;
 }
 
 void EditorState::dismiss_popup() {
-popup.visible = false;
+    popup.visible = false;
     popup.kind = PopupKind::Text;
     popup.title.clear();
     popup.text.clear();
@@ -743,6 +779,8 @@ popup.visible = false;
     popup.apply_target = EditorState::PopupApplyTarget::BufferText;
     popup.filter_mode = EditorState::PopupFilterMode::ContainsLabelOrDetail;
     popup.sticky = false;
+    popup.buffer_id.reset();
+    popup.document_version = 0;
 }
 
 bool EditorState::popup_accepts_input() const {
@@ -826,6 +864,8 @@ void apply_popup_selection(EditorState &state) {
     PopupMenuItem item = state.popup.items[state.popup.filtered_indices[state.popup.selected_index]];
     Mode originating_mode = state.popup.originating_mode;
     EditorState::PopupApplyTarget apply_target = state.popup.apply_target;
+    std::optional<std::size_t> popup_buffer_id = state.popup.buffer_id;
+    std::size_t popup_document_version = state.popup.document_version;
     state.dismiss_popup();
     if (apply_target == EditorState::PopupApplyTarget::CommandBuffer) {
         state.command_buffer = utf8_to_u32(item.insert_text);
@@ -835,6 +875,13 @@ void apply_popup_selection(EditorState &state) {
     }
 
     EditorCore &core = state.active_core();
+    if (popup_buffer_id) {
+        if (*popup_buffer_id != state.active_buffer().id ||
+            (popup_document_version != 0 && popup_document_version != core.document_version())) {
+            state.set_status("Completion dismissed");
+            return;
+        }
+    }
     std::u32string text = utf8_to_u32(item.insert_text);
     Position start = item.replace_range ? item.replace_range->start : core.cursor();
     bool applied = false;
@@ -913,7 +960,7 @@ bool EditorState::handle_popup_input(const std::string &token) {
 }
 
 void EditorState::sync_active_window_buffer() {
-if (const EditorWindow *window = windows.active_window()) {
+    if (const EditorWindow *window = windows.active_window()) {
         session.switch_to_id(window->buffer_id);
     }
 }
@@ -926,6 +973,12 @@ void initialize_windows(EditorState &state) {
 }
 
 void EditorState::show_buffer_in_active_window(std::size_t buffer_id, bool reset_view) {
+    if (session.find_buffer_by_id(buffer_id) == nullptr) {
+        return;
+    }
+    if (!popup_matches_buffer_context(*this, buffer_id)) {
+        dismiss_popup();
+    }
     windows.set_active_buffer_id(buffer_id);
     sync_active_window_buffer();
     if (reset_view) {
@@ -937,6 +990,9 @@ void EditorState::show_buffer_in_active_window(std::size_t buffer_id, bool reset
 }
 
 void EditorState::show_buffer_in_panel(std::size_t buffer_id, bool focus_panel) {
+    if (session.find_buffer_by_id(buffer_id) == nullptr) {
+        return;
+    }
     std::size_t original_window_id = windows.active_window_id();
     panel.buffer_id = buffer_id;
     panel.follow_output = true;
@@ -1018,8 +1074,91 @@ bool EditorState::clear_panel() {
     return true;
 }
 
+void EditorState::reconcile_closed_buffer(std::size_t closed_buffer_id, std::size_t replacement_buffer_id) {
+    buffer_ui_map.erase(closed_buffer_id);
+    syntax_ui_map.erase(closed_buffer_id);
+
+    if (command_selection_snapshot && command_selection_snapshot->buffer_id == closed_buffer_id) {
+        command_selection_snapshot.reset();
+    }
+
+    for (auto it = named_special_buffers.begin(); it != named_special_buffers.end();) {
+        if (it->second == closed_buffer_id) {
+            it = named_special_buffers.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    if (panel.buffer_id == closed_buffer_id) {
+        if (panel_is_visible() && panel.window_id && windows.find_window(*panel.window_id)) {
+            panel.buffer_id = replacement_buffer_id;
+        } else {
+            panel.buffer_id.reset();
+        }
+    }
+
+    if (popup.buffer_id == closed_buffer_id) {
+        dismiss_popup();
+    }
+
+    lua.detach_async_buffer(closed_buffer_id);
+
+    windows.replace_buffer_id(closed_buffer_id, replacement_buffer_id);
+    for (const EditorWindow &window : windows.windows()) {
+        if (window.buffer_id == replacement_buffer_id) {
+            window_ui(window.id) = EditorState::WindowUiState{};
+        }
+    }
+    sync_active_window_buffer();
+    active_buffer_ui();
+}
+
+bool EditorState::initialize_input_corpus_recording(const std::filesystem::path &directory, std::string &error_message) {
+    std::error_code create_error;
+    std::filesystem::create_directories(directory, create_error);
+    if (create_error) {
+        error_message = "could not create input corpus directory: " + create_error.message();
+        return false;
+    }
+
+    auto now = std::chrono::system_clock::now().time_since_epoch();
+    long long timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+#if defined(__unix__) || defined(__APPLE__)
+    long long pid = static_cast<long long>(::getpid());
+#else
+    long long pid = 0;
+#endif
+    std::filesystem::path file_path =
+        directory / ("session-" + std::to_string(timestamp_ms) + "-" + std::to_string(pid) + ".keys");
+    auto stream = std::make_unique<std::ofstream>(file_path, std::ios::out | std::ios::trunc);
+    if (!*stream) {
+        error_message = "could not open input corpus file";
+        return false;
+    }
+
+    input_corpus_path = file_path;
+    input_corpus_stream = std::move(stream);
+    log_debug("input corpus recording path=" + file_path.string());
+    return true;
+}
+
+void EditorState::record_input_corpus_event(wint_t key, bool is_special) {
+    if (!input_corpus_stream || !*input_corpus_stream) {
+        return;
+    }
+    *input_corpus_stream << (is_special ? 'S' : 'N') << ' ' << static_cast<long long>(key) << '\n';
+}
+
 void EditorState::focus_window(std::size_t window_id) {
-if (!windows.set_active_window(window_id)) {
+    const EditorWindow *window = windows.find_window(window_id);
+    if (window == nullptr) {
+        return;
+    }
+    if (!popup_matches_buffer_context(*this, window->buffer_id)) {
+        dismiss_popup();
+    }
+    if (!windows.set_active_window(window_id)) {
         return;
     }
     sync_active_window_buffer();
@@ -1351,14 +1490,9 @@ const std::vector<AnnotationEntryView> &sorted_annotations(const EditorState &st
     }
 
     std::vector<AnnotationEntryView> annotations;
-    InlineAnnotations projected = core.projected_annotations();
-    annotations.reserve(projected.size());
 
     const std::vector<DiagnosticEntryView> &diagnostics = sorted_diagnostics(state, window_id);
-    for (const InlineAnnotation &annotation : projected) {
-        if (annotation.kind == AnnotationKind::Diagnostic && !show_diagnostics) {
-            continue;
-        }
+    auto append_annotation = [&](const InlineAnnotation &annotation, bool is_lua) {
         std::optional<std::size_t> diagnostic_index;
         if (annotation.kind == AnnotationKind::Diagnostic) {
             for (const DiagnosticEntryView &diagnostic : diagnostics) {
@@ -1371,7 +1505,24 @@ const std::vector<AnnotationEntryView> &sorted_annotations(const EditorState &st
                 }
             }
         }
-        annotations.push_back({diagnostic_index, annotation});
+        annotations.push_back({diagnostic_index, is_lua, annotation});
+    };
+
+    annotations.reserve(core.annotations().size() + core.lua_annotations().size() + diagnostics.size());
+    for (const InlineAnnotation &annotation : core.annotations()) {
+        append_annotation(annotation, false);
+    }
+    for (const InlineAnnotation &annotation : core.lua_annotations()) {
+        append_annotation(annotation, true);
+    }
+    if (show_diagnostics) {
+        for (const Diagnostic &diagnostic : core.diagnostics()) {
+            AnnotationSeverity severity =
+                diagnostic.severity == DiagnosticSeverity::Error ? AnnotationSeverity::Error : AnnotationSeverity::Warning;
+            append_annotation(
+                {diagnostic.range, severity, AnnotationKind::Diagnostic, diagnostic.source, diagnostic.message, std::nullopt},
+                false);
+        }
     }
 
     std::sort(annotations.begin(), annotations.end(), [](const AnnotationEntryView &left, const AnnotationEntryView &right) {
@@ -1383,6 +1534,12 @@ const std::vector<AnnotationEntryView> &sorted_annotations(const EditorState &st
             return left_anchor < right_anchor;
         }
         if ((left_range.start == right_range.start)) {
+            if (left.annotation.kind != right.annotation.kind) {
+                return left.annotation.kind != AnnotationKind::Diagnostic;
+            }
+            if (left.is_lua != right.is_lua) {
+                return !left.is_lua;
+            }
             return (left_range.end < right_range.end);
         }
         return (left_range.start < right_range.start);
@@ -1421,13 +1578,72 @@ Lines wrap_annotation_text(const std::u32string &text, int max_cols) {
     return wrapped;
 }
 
+namespace {
+
+int wrapped_line_content_cols(int buffer_cols, bool continuation) {
+    (void)continuation;
+    return buffer_cols;
+}
+
+std::size_t source_line_display_width_until(const std::u32string &line, std::size_t limit, std::size_t tabstop) {
+    std::size_t width = 0;
+    std::size_t capped = limit > line.size() ? line.size() : limit;
+    for (std::size_t index = 0; index < capped; ++index) {
+        width += codepoint_display_width(line[index], width, tabstop);
+    }
+    return width;
+}
+
+}  // namespace
+
+std::vector<std::size_t> source_line_wrap_starts(const std::u32string &line, int buffer_cols, std::size_t tabstop) {
+    std::vector<std::size_t> starts;
+    starts.push_back(0);
+    if (buffer_cols <= 1 || line.empty()) {
+        return starts;
+    }
+
+    std::size_t absolute_width = 0;
+    std::size_t segment_start_width = 0;
+    int segment_cols = wrapped_line_content_cols(buffer_cols, false);
+    for (char32_t codepoint : line) {
+        std::size_t codepoint_width_value = codepoint_display_width(codepoint, absolute_width, tabstop);
+        if (absolute_width > segment_start_width &&
+            absolute_width + codepoint_width_value - segment_start_width > static_cast<std::size_t>(segment_cols)) {
+            starts.push_back(absolute_width);
+            segment_start_width = absolute_width;
+            segment_cols = wrapped_line_content_cols(buffer_cols, true);
+        }
+        absolute_width += codepoint_width_value;
+    }
+    return starts;
+}
+
+std::size_t source_line_wrap_index_for_column(
+    const std::u32string &line,
+    std::size_t column,
+    int buffer_cols,
+    std::size_t tabstop) {
+    std::vector<std::size_t> starts = source_line_wrap_starts(line, buffer_cols, tabstop);
+    std::size_t target_width = source_line_display_width_until(line, column, tabstop);
+    auto found = std::upper_bound(starts.begin(), starts.end(), target_width);
+    if (found == starts.begin()) {
+        return 0;
+    }
+    return static_cast<std::size_t>(found - starts.begin() - 1);
+}
+
 VisualRows build_visual_rows(const EditorState &state, std::size_t window_id, int buffer_cols) {
     VisualRows rows;
     std::vector<AnnotationEntryView> annotations = sorted_annotations(state, window_id);
     std::size_t annotation_index = 0;
+    std::size_t tabstop = effective_tabstop(state.config, state.window_core(window_id).file_path());
 
     for (std::size_t row = 0; row < state.window_core(window_id).line_count(); ++row) {
-        rows.push_back({VisualRowKind::SourceLine, row, 0, std::nullopt});
+        std::vector<std::size_t> starts = source_line_wrap_starts(state.window_core(window_id).lines()[row], buffer_cols, tabstop);
+        for (std::size_t wrap_index = 0; wrap_index < starts.size(); ++wrap_index) {
+            rows.push_back({VisualRowKind::SourceLine, row, wrap_index, std::nullopt});
+        }
         while (annotation_index < annotations.size()) {
             Range range = normalized_range(annotations[annotation_index].annotation.range);
             if (range.end.row != row) {
@@ -1467,7 +1683,7 @@ const VisualRows &visual_rows_for_window(const EditorState &state, std::size_t w
 
 std::size_t visual_row_for_buffer_row(const VisualRows &rows, std::size_t buffer_row) {
     for (std::size_t index = 0; index < rows.size(); ++index) {
-        if (rows[index].kind == VisualRowKind::SourceLine && rows[index].buffer_row == buffer_row) {
+        if (rows[index].kind == VisualRowKind::SourceLine && rows[index].buffer_row == buffer_row && rows[index].wrap_offset == 0) {
             return index;
         }
     }

@@ -2,6 +2,7 @@ module;
 
 #include <filesystem>
 #include <iterator>
+#include <optional>
 #include <utility>
 
 module editor_session;

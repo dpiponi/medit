@@ -3,9 +3,15 @@
 import argparse
 import json
 import os
+import ssl
 import sys
 import urllib.error
 import urllib.request
+
+try:
+    import certifi
+except ImportError:
+    certifi = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -18,6 +24,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def post_json(url: str, api_key: str, payload: dict) -> dict:
+    ssl_context = ssl.create_default_context(cafile=certifi.where()) if certifi is not None else None
     request = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
@@ -29,7 +36,7 @@ def post_json(url: str, api_key: str, payload: dict) -> dict:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request) as response:
+        with urllib.request.urlopen(request, context=ssl_context) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace").strip()

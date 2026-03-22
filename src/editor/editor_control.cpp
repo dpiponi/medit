@@ -3,6 +3,8 @@
 #include "json.hpp"
 #include "string_utils.hpp"
 
+#include <optional>
+
 JsonValue success_control_result(JsonValue result) {
     return JsonValue{{"ok", true}, {"result", std::move(result)}};
 }
@@ -399,20 +401,11 @@ std::string handle_control_request(EditorState &state, std::string_view request_
             if (!state.session.close_active_buffer(force, &closed_events)) {
                 return error_control_result("unsaved changes; pass force=true to close").dump();
             }
+            const std::size_t replacement_buffer_id = state.session.active_buffer_id();
+            state.reconcile_closed_buffer(target_buffer_id, replacement_buffer_id);
             for (const EditorEvent &event : closed_events) {
                 state.dispatch_editor_event(event);
             }
-            state.buffer_ui_map.erase(target_buffer_id);
-            state.syntax_ui_map.erase(target_buffer_id);
-            const std::size_t replacement_buffer_id = state.session.active_buffer_id();
-            state.windows.replace_buffer_id(target_buffer_id, replacement_buffer_id);
-            for (const EditorWindow &window : state.windows.windows()) {
-                if (window.buffer_id == replacement_buffer_id) {
-                    state.window_ui(window.id) = EditorState::WindowUiState{};
-                }
-            }
-            state.sync_active_window_buffer();
-            state.active_buffer_ui();
             state.set_status(prefixed_message("Closed ", closed_name));
             return success_control_result(JsonValue{
                 {"closed_buffer_id", target_buffer_id},

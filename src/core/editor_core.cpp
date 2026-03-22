@@ -12,6 +12,7 @@ module;
 #include <fstream>
 #include <filesystem>
 #include <locale>
+#include <optional>
 #include <regex>
 #include <sstream>
 #include <utility>
@@ -439,12 +440,28 @@ const InlineAnnotations &EditorCore::document_annotations(const std::string &doc
     return found->second;
 }
 
+const InlineAnnotations &EditorCore::lua_annotations() const {
+    return document_lua_annotations(document_uri_);
+}
+
+const InlineAnnotations &EditorCore::document_lua_annotations(const std::string &document_uri) const {
+    static const InlineAnnotations kEmptyAnnotations;
+    auto found = lua_annotations_by_uri_.find(document_uri);
+    if (found == lua_annotations_by_uri_.end()) {
+        return kEmptyAnnotations;
+    }
+    return found->second;
+}
+
 InlineAnnotations EditorCore::projected_annotations() const {
     InlineAnnotations projected = annotations();
+    const InlineAnnotations &lua = lua_annotations();
+    projected.insert(projected.end(), lua.begin(), lua.end());
     for (const Diagnostic &diagnostic : diagnostics()) {
         AnnotationSeverity severity =
             diagnostic.severity == DiagnosticSeverity::Error ? AnnotationSeverity::Error : AnnotationSeverity::Warning;
-        projected.push_back({diagnostic.range, severity, AnnotationKind::Diagnostic, diagnostic.source, diagnostic.message});
+        projected.push_back(
+            {diagnostic.range, severity, AnnotationKind::Diagnostic, diagnostic.source, diagnostic.message, std::nullopt});
     }
     return projected;
 }
@@ -936,6 +953,30 @@ void EditorCore::set_document_annotations(const std::string &document_uri, Inlin
 
 void EditorCore::clear_document_annotations(const std::string &document_uri) {
     annotations_by_uri_.erase(document_uri);
+    ++annotations_revision_;
+    if (document_uri == document_uri_) {
+        emit_annotations_changed(document_uri);
+    }
+}
+
+void EditorCore::set_lua_annotations(InlineAnnotations annotations) {
+    set_document_lua_annotations(document_uri_, std::move(annotations));
+}
+
+void EditorCore::clear_lua_annotations() {
+    clear_document_lua_annotations(document_uri_);
+}
+
+void EditorCore::set_document_lua_annotations(const std::string &document_uri, InlineAnnotations annotations) {
+    lua_annotations_by_uri_[document_uri] = std::move(annotations);
+    ++annotations_revision_;
+    if (document_uri == document_uri_) {
+        emit_annotations_changed(document_uri);
+    }
+}
+
+void EditorCore::clear_document_lua_annotations(const std::string &document_uri) {
+    lua_annotations_by_uri_.erase(document_uri);
     ++annotations_revision_;
     if (document_uri == document_uri_) {
         emit_annotations_changed(document_uri);

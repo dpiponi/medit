@@ -18,6 +18,7 @@ import theme;
 
 #include <chrono>
 #include <curses.h>
+#include <fstream>
 #include <limits>
 #include <map>
 #include <memory>
@@ -59,6 +60,7 @@ struct DiagnosticEntryView {
 
 struct AnnotationEntryView {
     std::optional<std::size_t> diagnostic_index;
+    bool is_lua = false;
     InlineAnnotation annotation;
 };
 
@@ -172,6 +174,8 @@ struct EditorState {
         PopupApplyTarget apply_target = PopupApplyTarget::BufferText;
         PopupFilterMode filter_mode = PopupFilterMode::ContainsLabelOrDetail;
         bool sticky = false;
+        std::optional<std::size_t> buffer_id;
+        std::size_t document_version = 0;
     };
 
     struct PendingInputState {
@@ -280,6 +284,8 @@ struct EditorState {
     JumpStackState jump_stack;
     std::map<std::string, std::size_t> named_special_buffers;
     PanelState panel;
+    std::optional<std::filesystem::path> input_corpus_path;
+    std::unique_ptr<std::ofstream> input_corpus_stream;
     EditorControlServer control_server;
 
     EditorWindow &active_window();
@@ -330,6 +336,7 @@ struct EditorState {
     void dismiss_popup();
     void begin_insert_session();
     void end_insert_session();
+    void reconcile_closed_buffer(std::size_t closed_buffer_id, std::size_t replacement_buffer_id);
     void sync_active_window_buffer();
     void show_buffer_in_active_window(std::size_t buffer_id, bool reset_view = true);
     void show_buffer_in_panel(std::size_t buffer_id, bool focus_panel = false);
@@ -337,6 +344,8 @@ struct EditorState {
     bool toggle_panel();
     bool focus_panel();
     bool clear_panel();
+    bool initialize_input_corpus_recording(const std::filesystem::path &directory, std::string &error_message);
+    void record_input_corpus_event(wint_t key, bool is_special);
     void focus_window(std::size_t window_id);
     void enter_normal_mode(bool preserve_status = false);
     void enter_insert_mode();

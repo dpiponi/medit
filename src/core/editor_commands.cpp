@@ -1,5 +1,6 @@
 module;
 
+#include <new>
 #include <string_view>
 
 module editor_commands;
