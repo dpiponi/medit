@@ -1801,6 +1801,41 @@ void update_input_timeout(const EditorState &state) {
 }
 
 void EditorState::handle_service_events() {
+    auto event_matches_current_document = [&](const ServiceEvent &event, const EditorCommand &command) {
+        if (!command.document_uri) {
+            return true;
+        }
+        EditorBuffer *buffer = session.find_buffer_by_uri(*command.document_uri);
+        if (!buffer) {
+            return false;
+        }
+        if (event.document_version != 0 && event.document_version != buffer->core.document_version()) {
+            log_debug(
+                "service event dropped: version mismatch topic=" + event.topic +
+                " event=" + std::to_string(event.document_version) +
+                " current=" + std::to_string(buffer->core.document_version()));
+            return false;
+        }
+        return true;
+    };
+    auto command_requires_current_document = [](EditorCommandType type) {
+        switch (type) {
+            case EditorCommandType::SetDiagnostics:
+            case EditorCommandType::ClearDiagnostics:
+            case EditorCommandType::SetAnnotations:
+            case EditorCommandType::ClearAnnotations:
+            case EditorCommandType::MoveCursor:
+            case EditorCommandType::SetSelectionRange:
+            case EditorCommandType::ShowPopup:
+                return true;
+            case EditorCommandType::OpenLocation:
+            case EditorCommandType::ClearPopup:
+            case EditorCommandType::SetStatusMessage:
+                return false;
+        }
+        return false;
+    };
+
     for (const ServiceEvent &event : runtime.take_service_events()) {
         if (!event.command) {
             continue;
@@ -1854,15 +1889,12 @@ void EditorState::handle_service_events() {
             continue;
         }
         if (command.type == EditorCommandType::ShowPopup) {
+            if (!event_matches_current_document(event, command)) {
+                continue;
+            }
             if (command.popup_kind == PopupKind::Menu) {
                 if (!command.document_uri || *command.document_uri != active_core().document_uri()) {
                     log_debug("completion popup dropped: uri mismatch");
-                    continue;
-                }
-                if (event.document_version != 0 && event.document_version != active_core().document_version()) {
-                    log_debug(
-                        "completion popup dropped: version mismatch event=" + std::to_string(event.document_version) +
-                        " current=" + std::to_string(active_core().document_version()));
                     continue;
                 }
                 log_debug("completion popup shown count=" + std::to_string(command.popup_items.size()));
@@ -1878,6 +1910,9 @@ void EditorState::handle_service_events() {
         }
         if (command.type == EditorCommandType::SetSelectionRange) {
             if (!command.document_uri || !command.selection_range) {
+                continue;
+            }
+            if (!event_matches_current_document(event, command)) {
                 continue;
             }
             EditorBuffer *buffer = session.find_buffer_by_uri(*command.document_uri);
@@ -1896,6 +1931,9 @@ void EditorState::handle_service_events() {
         if (command.document_uri) {
             EditorBuffer *buffer = session.find_buffer_by_uri(*command.document_uri);
             if (!buffer) {
+                continue;
+            }
+            if (command_requires_current_document(command.type) && !event_matches_current_document(event, command)) {
                 continue;
             }
             if (command.type == EditorCommandType::MoveCursor || command.type == EditorCommandType::SetSelectionRange) {

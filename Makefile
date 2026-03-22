@@ -5,6 +5,7 @@ ifeq ($(origin CXX),undefined)
 CXX := $(or $(shell command -v clang++-20 2>/dev/null),$(shell if command -v brew >/dev/null 2>&1; then prefix=$$(brew --prefix llvm 2>/dev/null); if [ -x "$$prefix/bin/clang++" ]; then printf '%s' "$$prefix/bin/clang++"; fi; fi),clang++)
 endif
 PYTHON ?= python3
+BUILD ?= debug
 UNAME_S := $(shell uname -s)
 HAVE_PKGCONFIG := $(shell command -v pkg-config >/dev/null 2>&1 && echo yes)
 CXX_VERSION_LINE := $(shell $(CXX) --version 2>/dev/null | sed -n '1p')
@@ -16,6 +17,14 @@ BASE_CXXFLAGS := -std=c++23 -Wall -Wextra -pedantic
 BASE_LDFLAGS :=
 BASE_LDLIBS :=
 ASAN_FLAGS := -fsanitize=address,undefined -fno-omit-frame-pointer -g
+
+ifeq ($(BUILD),debug)
+BUILD_CXXFLAGS := -O0 -g
+else ifeq ($(BUILD),release)
+BUILD_CXXFLAGS := -O3 -DNDEBUG
+else
+$(error unsupported BUILD=$(BUILD); use debug or release)
+endif
 
 ifeq ($(UNAME_S),Darwin)
 BASE_CPPFLAGS += -D_DARWIN_C_SOURCE
@@ -75,7 +84,7 @@ BASE_CPPFLAGS += -DMEDIT_HAS_LUA=1
 endif
 
 CPPFLAGS := $(BASE_CPPFLAGS) $(CURSES_CFLAGS) $(LUA_CFLAGS)
-CXXFLAGS := $(BASE_CXXFLAGS)
+CXXFLAGS := $(BASE_CXXFLAGS) $(BUILD_CXXFLAGS)
 LDFLAGS := $(BASE_LDFLAGS)
 LDLIBS := $(BASE_LDLIBS) $(CURSES_LIBS) $(LUA_LIBS)
 SRC_DIR := src
@@ -117,6 +126,9 @@ DEPFILES := $(APP_OBJECTS:.o=.d) $(TEST_OBJECTS:.o=.d) $(THEME_MODULE_OBJECT:.o=
 MODULE_PREBUILT_FLAGS := -fprebuilt-module-path=$(MODULE_DIR)
 
 all: medit
+
+release:
+	$(MAKE) BUILD=release medit
 
 medit: $(CORE_MODULE_OBJECT) $(CLIPBOARD_MODULE_OBJECT) $(SESSION_MODULE_OBJECT) $(COMMANDS_MODULE_OBJECT) $(SERVICES_MODULE_OBJECT) $(CONFIG_MODULE_OBJECT) $(KEYBINDINGS_MODULE_OBJECT) $(THEME_MODULE_OBJECT) $(APP_OBJECTS)
 	$(CXX) $(LDFLAGS) -o $@ $(CORE_MODULE_OBJECT) $(CLIPBOARD_MODULE_OBJECT) $(SESSION_MODULE_OBJECT) $(COMMANDS_MODULE_OBJECT) $(SERVICES_MODULE_OBJECT) $(CONFIG_MODULE_OBJECT) $(KEYBINDINGS_MODULE_OBJECT) $(THEME_MODULE_OBJECT) $(APP_OBJECTS) $(LDLIBS)
@@ -225,6 +237,6 @@ clean:
 
 CONFIG_ROOT ?= .config
 
-.PHONY: all clean test asan-test asan-test-corpus asan_test_editor_core bootstrap-tree-sitter tree-sitter-clean bootstrap-tree-sitter-% editor_core_module check-toolchain
+.PHONY: all clean test release asan-test asan-test-corpus asan_test_editor_core bootstrap-tree-sitter tree-sitter-clean bootstrap-tree-sitter-% editor_core_module check-toolchain
 
 -include $(DEPFILES)

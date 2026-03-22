@@ -30,6 +30,9 @@ def send_message(message):
     sys.stdout.buffer.flush()
 
 
+versions = {}
+
+
 def publish(uri, message):
     send_message(
         {
@@ -37,6 +40,7 @@ def publish(uri, message):
             "method": "textDocument/publishDiagnostics",
             "params": {
                 "uri": uri,
+                "version": versions.get(uri, 0),
                 "diagnostics": [
                     {
                         "range": {
@@ -62,17 +66,21 @@ while True:
     if method == "initialize":
         send_message({"jsonrpc": "2.0", "id": message["id"], "result": {"capabilities": {}}})
     elif method == "textDocument/didOpen":
-        publish(message["params"]["textDocument"]["uri"], "open diagnostic")
+        uri = message["params"]["textDocument"]["uri"]
+        versions[uri] = message["params"]["textDocument"].get("version", 0)
+        publish(uri, "open diagnostic")
     elif method == "textDocument/didChange":
+        uri = message["params"]["textDocument"]["uri"]
+        versions[uri] = message["params"]["textDocument"].get("version", versions.get(uri, 0))
         change = message["params"]["contentChanges"][0]
         if "range" in change:
             start = change["range"]["start"]
             publish(
-                message["params"]["textDocument"]["uri"],
+                uri,
                 f"incremental:{start['line']}:{start['character']}:{change['text']}",
             )
         else:
-            publish(message["params"]["textDocument"]["uri"], f"full:{change['text']}")
+            publish(uri, f"full:{change['text']}")
     elif method == "textDocument/definition":
         send_message(
             {
@@ -127,3 +135,5 @@ while True:
         send_message({"jsonrpc": "2.0", "id": message["id"], "result": None})
     elif method == "exit":
         break
+    elif method == "textDocument/didClose":
+        versions.pop(message["params"]["textDocument"]["uri"], None)

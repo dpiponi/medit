@@ -19,6 +19,8 @@
 #include <utility>
 #include <vector>
 
+import theme;
+
 #if defined(MEDIT_HAS_LUA) && MEDIT_HAS_LUA
 extern "C" {
 #include <lauxlib.h>
@@ -93,6 +95,138 @@ void push_range(lua_State *lua, const Range &range) {
     lua_setfield(lua, -2, "start");
     push_position(lua, range.end);
     lua_setfield(lua, -2, "end");
+}
+
+EditorBuffer *lua_target_buffer(EditorState &state, lua_State *lua, int index) {
+    if (lua_gettop(lua) < index || lua_isnil(lua, index)) {
+        return &state.active_buffer();
+    }
+    lua_Integer raw_buffer_id = luaL_checkinteger(lua, index);
+    if (raw_buffer_id <= 0) {
+        luaL_error(lua, "buffer id must be positive");
+    }
+    EditorBuffer *buffer = state.session.find_buffer_by_id(static_cast<std::size_t>(raw_buffer_id));
+    if (buffer == nullptr) {
+        luaL_error(lua, "buffer not found");
+    }
+    return buffer;
+}
+
+AnnotationSeverity lua_check_annotation_severity(lua_State *lua, int index) {
+    if (lua_isnil(lua, index)) {
+        return AnnotationSeverity::Info;
+    }
+    std::string severity = luaL_checkstring(lua, index);
+    if (severity == "info") {
+        return AnnotationSeverity::Info;
+    }
+    if (severity == "warning") {
+        return AnnotationSeverity::Warning;
+    }
+    if (severity == "error") {
+        return AnnotationSeverity::Error;
+    }
+    luaL_error(lua, "severity must be info, warning, or error");
+    return AnnotationSeverity::Info;
+}
+
+TextStyle lua_check_text_style(lua_State *lua, int index) {
+    luaL_checktype(lua, index, LUA_TTABLE);
+    TextStyle style;
+
+    lua_getfield(lua, index, "foreground");
+    if (!lua_isnil(lua, -1)) {
+        std::optional<short> color = try_parse_theme_color(luaL_checkstring(lua, -1));
+        if (!color) {
+            lua_pop(lua, 1);
+            luaL_error(lua, "invalid foreground color");
+        }
+        style.foreground = *color;
+    }
+    lua_pop(lua, 1);
+
+    lua_getfield(lua, index, "background");
+    if (!lua_isnil(lua, -1)) {
+        std::optional<short> color = try_parse_theme_color(luaL_checkstring(lua, -1));
+        if (!color) {
+            lua_pop(lua, 1);
+            luaL_error(lua, "invalid background color");
+        }
+        style.background = *color;
+    }
+    lua_pop(lua, 1);
+
+    lua_getfield(lua, index, "bold");
+    if (!lua_isnil(lua, -1)) {
+        luaL_checktype(lua, -1, LUA_TBOOLEAN);
+        style.bold = lua_toboolean(lua, -1);
+    }
+    lua_pop(lua, 1);
+
+    lua_getfield(lua, index, "underline");
+    if (!lua_isnil(lua, -1)) {
+        luaL_checktype(lua, -1, LUA_TBOOLEAN);
+        style.underline = lua_toboolean(lua, -1);
+    }
+    lua_pop(lua, 1);
+
+    lua_getfield(lua, index, "reverse");
+    if (!lua_isnil(lua, -1)) {
+        luaL_checktype(lua, -1, LUA_TBOOLEAN);
+        style.reverse = lua_toboolean(lua, -1);
+    }
+    lua_pop(lua, 1);
+    return style;
+}
+
+InlineAnnotations lua_check_line_annotations(lua_State *lua, EditorBuffer &buffer, int index) {
+    luaL_checktype(lua, index, LUA_TTABLE);
+    InlineAnnotations annotations;
+    const EditorCore &core = buffer.core;
+    lua_pushnil(lua);
+    while (lua_next(lua, index) != 0) {
+        luaL_checktype(lua, -1, LUA_TTABLE);
+        InlineAnnotation annotation;
+
+        lua_getfield(lua, -1, "line");
+        lua_Integer raw_line = luaL_checkinteger(lua, -1);
+        lua_pop(lua, 1);
+        if (raw_line < 0) {
+            luaL_error(lua, "line must be non-negative");
+        }
+        std::size_t line = static_cast<std::size_t>(raw_line);
+        if (line >= core.line_count()) {
+            luaL_error(lua, "line out of range");
+        }
+        annotation.range = core.line_range(line);
+
+        lua_getfield(lua, -1, "text");
+        std::string text = luaL_checkstring(lua, -1);
+        lua_pop(lua, 1);
+        annotation.text = utf8_to_u32(text);
+
+        lua_getfield(lua, -1, "severity");
+        annotation.severity = lua_check_annotation_severity(lua, -1);
+        lua_pop(lua, 1);
+
+        lua_getfield(lua, -1, "source");
+        if (!lua_isnil(lua, -1)) {
+            annotation.source = luaL_checkstring(lua, -1);
+        } else {
+            annotation.source = "lua";
+        }
+        lua_pop(lua, 1);
+
+        lua_getfield(lua, -1, "style");
+        if (!lua_isnil(lua, -1)) {
+            annotation.style_override = lua_check_text_style(lua, -1);
+        }
+        lua_pop(lua, 1);
+
+        annotations.push_back(std::move(annotation));
+        lua_pop(lua, 1);
+    }
+    return annotations;
 }
 
 void push_editor_event(lua_State *lua, const EditorEvent &event) {
@@ -591,6 +725,29 @@ struct LuaRuntime::Impl {
         return 1;
     }
 
+    static int lua_set_line_annotations(lua_State *lua_state) {
+        LuaRuntime::Impl *impl = from_upvalue(lua_state);
+        if (!impl->with_current_state(lua_state)) {
+            return lua_error(lua_state);
+        }
+
+        EditorBuffer *buffer = lua_target_buffer(*impl->current_state, lua_state, 2);
+        InlineAnnotations annotations = lua_check_line_annotations(lua_state, *buffer, 1);
+        buffer->core.set_lua_annotations(std::move(annotations));
+        return 0;
+    }
+
+    static int lua_clear_line_annotations(lua_State *lua_state) {
+        LuaRuntime::Impl *impl = from_upvalue(lua_state);
+        if (!impl->with_current_state(lua_state)) {
+            return lua_error(lua_state);
+        }
+
+        EditorBuffer *buffer = lua_target_buffer(*impl->current_state, lua_state, 1);
+        buffer->core.clear_lua_annotations();
+        return 0;
+    }
+
     static int lua_get_text(lua_State *lua_state) {
         LuaRuntime::Impl *impl = from_upvalue(lua_state);
         if (!impl->with_current_state(lua_state)) {
@@ -876,6 +1033,12 @@ struct LuaRuntime::Impl {
         return 1;
     }
 
+    static int lua_theme_color_supported(lua_State *lua_state) {
+        std::string value = luaL_checkstring(lua_state, 1);
+        lua_pushboolean(lua_state, try_parse_theme_color(value).has_value() ? 1 : 0);
+        return 1;
+    }
+
     static int lua_run_picker(lua_State *lua_state) {
         LuaRuntime::Impl *impl = from_upvalue(lua_state);
         if (!impl->with_current_state(lua_state)) {
@@ -1009,6 +1172,10 @@ struct LuaRuntime::Impl {
                 return luaL_error(lua_state, "buffer_id must be positive");
             }
             buffer_id = static_cast<std::size_t>(raw_buffer_id);
+            if (impl->current_state->session.find_buffer_by_id(*buffer_id) == nullptr) {
+                lua_pop(lua_state, 1);
+                return luaL_error(lua_state, "buffer_id not found");
+            }
         }
         lua_pop(lua_state, 1);
 
@@ -1161,6 +1328,14 @@ struct LuaRuntime::Impl {
         lua_setfield(lua, -2, "get_line_text");
 
         lua_pushlightuserdata(lua, this);
+        lua_pushcclosure(lua, &LuaRuntime::Impl::lua_set_line_annotations, 1);
+        lua_setfield(lua, -2, "set_line_annotations");
+
+        lua_pushlightuserdata(lua, this);
+        lua_pushcclosure(lua, &LuaRuntime::Impl::lua_clear_line_annotations, 1);
+        lua_setfield(lua, -2, "clear_line_annotations");
+
+        lua_pushlightuserdata(lua, this);
         lua_pushcclosure(lua, &LuaRuntime::Impl::lua_get_text, 1);
         lua_setfield(lua, -2, "get_text");
 
@@ -1226,6 +1401,9 @@ struct LuaRuntime::Impl {
 
         lua_pushcfunction(lua, &LuaRuntime::Impl::lua_file_exists);
         lua_setfield(lua, -2, "file_exists");
+
+        lua_pushcfunction(lua, &LuaRuntime::Impl::lua_theme_color_supported);
+        lua_setfield(lua, -2, "theme_color_supported");
 
         lua_pushlightuserdata(lua, this);
         lua_pushcclosure(lua, &LuaRuntime::Impl::lua_run_picker, 1);
@@ -1389,6 +1567,18 @@ bool LuaRuntime::execute_command(
     (void)argument;
     error_message = "Lua support not built in";
     return false;
+#endif
+}
+
+void LuaRuntime::detach_async_buffer(std::size_t buffer_id) {
+#if defined(MEDIT_HAS_LUA) && MEDIT_HAS_LUA
+    for (auto &[_, job] : impl_->async_jobs) {
+        if (job.buffer_id == buffer_id) {
+            job.buffer_id.reset();
+        }
+    }
+#else
+    (void)buffer_id;
 #endif
 }
 

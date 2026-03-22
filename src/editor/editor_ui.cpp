@@ -14,6 +14,7 @@
 #include <exception>
 #include <cstdio>
 #include <limits>
+#include <map>
 #include <sstream>
 
 import theme;
@@ -131,6 +132,8 @@ short nearest_supported_color(short color, int terminal_colors) {
 }
 
 bool g_terminal_active = false;
+short g_next_annotation_pair = static_cast<short>(ThemeSlot::DiagnosticSelected) + 1;
+std::map<std::pair<short, short>, short> g_annotation_pair_cache;
 #if defined(__unix__) || defined(__APPLE__)
 bool g_shell_termios_valid = false;
 termios g_shell_termios{};
@@ -282,6 +285,35 @@ ThemeSlot theme_slot(StyleRole role) {
 
 int curses_attributes(TextStyle style, StyleRole role) {
     int attrs = COLOR_PAIR(static_cast<short>(theme_slot(role)));
+    if (style.bold) {
+        attrs |= A_BOLD;
+    }
+    if (style.underline) {
+        attrs |= A_UNDERLINE;
+    }
+    if (style.reverse) {
+        attrs |= A_REVERSE;
+    }
+    return attrs;
+}
+
+int annotation_attributes(TextStyle style) {
+    int attrs = 0;
+    if (has_colors()) {
+        short fg = nearest_supported_color(style.foreground, COLORS);
+        short bg = nearest_supported_color(style.background, COLORS);
+        auto key = std::make_pair(fg, bg);
+        short pair_id = 0;
+        auto found = g_annotation_pair_cache.find(key);
+        if (found != g_annotation_pair_cache.end()) {
+            pair_id = found->second;
+        } else if (g_next_annotation_pair < COLOR_PAIRS) {
+            pair_id = g_next_annotation_pair++;
+            init_pair(pair_id, fg, bg);
+            g_annotation_pair_cache.emplace(key, pair_id);
+        }
+        attrs |= COLOR_PAIR(pair_id);
+    }
     if (style.bold) {
         attrs |= A_BOLD;
     }
@@ -602,6 +634,9 @@ StyleRole annotation_role(const InlineAnnotation &annotation) {
 }
 
 std::u32string annotation_prefix(const InlineAnnotation &annotation) {
+    if (annotation.source == "theme-preview") {
+        return U"";
+    }
     std::ostringstream prefix;
     prefix << (annotation.severity == AnnotationSeverity::Error ? "E" :
                annotation.severity == AnnotationSeverity::Warning ? "W" : "I");
@@ -735,6 +770,8 @@ bool move_cursor_by_visual_rows(EditorState &state, std::size_t window_id, int d
 void apply_theme_to_terminal(const Theme &theme) {
     start_color();
     use_default_colors();
+    g_next_annotation_pair = static_cast<short>(ThemeSlot::DiagnosticSelected) + 1;
+    g_annotation_pair_cache.clear();
     int terminal_colors = has_colors() ? COLORS : 0;
     for (int role_index = 0; role_index <= static_cast<int>(StyleRole::DiagnosticSelected); ++role_index) {
         StyleRole role = static_cast<StyleRole>(role_index);
@@ -908,10 +945,11 @@ void draw_buffer_rows(const EditorState &state, std::size_t window_id, const Win
             int rendered_width = static_cast<int>(display_width(text, tabstop));
             annotation_col += std::max(0, buffer_cols - rendered_width);
         }
-        TextStyle style = theme_style(state.theme, role);
-        attron(curses_attributes(style, role));
+        TextStyle style = annotation.annotation.style_override.value_or(theme_style(state.theme, role));
+        int attrs = annotation.annotation.style_override ? annotation_attributes(style) : curses_attributes(style, role);
+        attron(attrs);
         mvaddnwstr(screen_row, annotation_col, u32_to_wstring(text).c_str(), buffer_cols);
-        attroff(curses_attributes(style, role));
+        attroff(attrs);
     }
 }
 

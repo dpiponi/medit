@@ -661,8 +661,22 @@ void handle_service_events(EditorState &state);
 void begin_insert_session(EditorState &state);
 void rebuild_popup_filter(EditorState &state);
 
+bool popup_matches_buffer_context(const EditorState &state, std::size_t buffer_id) {
+    if (!state.popup.visible || !state.popup.buffer_id) {
+        return true;
+    }
+    if (*state.popup.buffer_id != buffer_id) {
+        return false;
+    }
+    const EditorBuffer *buffer = state.session.find_buffer_by_id(buffer_id);
+    if (buffer == nullptr) {
+        return false;
+    }
+    return state.popup.document_version == 0 || state.popup.document_version == buffer->core.document_version();
+}
+
 void EditorState::show_popup(std::string title, std::u32string text) {
-popup.visible = true;
+    popup.visible = true;
     popup.kind = PopupKind::Text;
     popup.title = std::move(title);
     popup.text = std::move(text);
@@ -672,6 +686,11 @@ popup.visible = true;
     popup.selected_index = 0;
     popup.scroll_offset = 0;
     popup.originating_mode = mode;
+    popup.apply_target = PopupApplyTarget::BufferText;
+    popup.filter_mode = PopupFilterMode::ContainsLabelOrDetail;
+    popup.sticky = false;
+    popup.buffer_id = active_buffer().id;
+    popup.document_version = active_core().document_version();
 }
 
 void EditorState::request_config_reload() {
@@ -711,6 +730,13 @@ void show_menu_popup(
     state.popup.apply_target = apply_target;
     state.popup.filter_mode = filter_mode;
     state.popup.sticky = false;
+    if (apply_target == EditorState::PopupApplyTarget::BufferText) {
+        state.popup.buffer_id = state.active_buffer().id;
+        state.popup.document_version = state.active_core().document_version();
+    } else {
+        state.popup.buffer_id.reset();
+        state.popup.document_version = 0;
+    }
     rebuild_popup_filter(state);
 }
 
@@ -736,10 +762,12 @@ void show_key_hints_popup(
     state.popup.apply_target = EditorState::PopupApplyTarget::BufferText;
     state.popup.filter_mode = EditorState::PopupFilterMode::ContainsLabelOrDetail;
     state.popup.sticky = sticky;
+    state.popup.buffer_id.reset();
+    state.popup.document_version = 0;
 }
 
 void EditorState::dismiss_popup() {
-popup.visible = false;
+    popup.visible = false;
     popup.kind = PopupKind::Text;
     popup.title.clear();
     popup.text.clear();
@@ -751,6 +779,8 @@ popup.visible = false;
     popup.apply_target = EditorState::PopupApplyTarget::BufferText;
     popup.filter_mode = EditorState::PopupFilterMode::ContainsLabelOrDetail;
     popup.sticky = false;
+    popup.buffer_id.reset();
+    popup.document_version = 0;
 }
 
 bool EditorState::popup_accepts_input() const {
@@ -834,6 +864,8 @@ void apply_popup_selection(EditorState &state) {
     PopupMenuItem item = state.popup.items[state.popup.filtered_indices[state.popup.selected_index]];
     Mode originating_mode = state.popup.originating_mode;
     EditorState::PopupApplyTarget apply_target = state.popup.apply_target;
+    std::optional<std::size_t> popup_buffer_id = state.popup.buffer_id;
+    std::size_t popup_document_version = state.popup.document_version;
     state.dismiss_popup();
     if (apply_target == EditorState::PopupApplyTarget::CommandBuffer) {
         state.command_buffer = utf8_to_u32(item.insert_text);
@@ -843,6 +875,13 @@ void apply_popup_selection(EditorState &state) {
     }
 
     EditorCore &core = state.active_core();
+    if (popup_buffer_id) {
+        if (*popup_buffer_id != state.active_buffer().id ||
+            (popup_document_version != 0 && popup_document_version != core.document_version())) {
+            state.set_status("Completion dismissed");
+            return;
+        }
+    }
     std::u32string text = utf8_to_u32(item.insert_text);
     Position start = item.replace_range ? item.replace_range->start : core.cursor();
     bool applied = false;
@@ -921,7 +960,7 @@ bool EditorState::handle_popup_input(const std::string &token) {
 }
 
 void EditorState::sync_active_window_buffer() {
-if (const EditorWindow *window = windows.active_window()) {
+    if (const EditorWindow *window = windows.active_window()) {
         session.switch_to_id(window->buffer_id);
     }
 }
@@ -934,6 +973,12 @@ void initialize_windows(EditorState &state) {
 }
 
 void EditorState::show_buffer_in_active_window(std::size_t buffer_id, bool reset_view) {
+    if (session.find_buffer_by_id(buffer_id) == nullptr) {
+        return;
+    }
+    if (!popup_matches_buffer_context(*this, buffer_id)) {
+        dismiss_popup();
+    }
     windows.set_active_buffer_id(buffer_id);
     sync_active_window_buffer();
     if (reset_view) {
@@ -945,6 +990,9 @@ void EditorState::show_buffer_in_active_window(std::size_t buffer_id, bool reset
 }
 
 void EditorState::show_buffer_in_panel(std::size_t buffer_id, bool focus_panel) {
+    if (session.find_buffer_by_id(buffer_id) == nullptr) {
+        return;
+    }
     std::size_t original_window_id = windows.active_window_id();
     panel.buffer_id = buffer_id;
     panel.follow_output = true;
@@ -1026,6 +1074,46 @@ bool EditorState::clear_panel() {
     return true;
 }
 
+void EditorState::reconcile_closed_buffer(std::size_t closed_buffer_id, std::size_t replacement_buffer_id) {
+    buffer_ui_map.erase(closed_buffer_id);
+    syntax_ui_map.erase(closed_buffer_id);
+
+    if (command_selection_snapshot && command_selection_snapshot->buffer_id == closed_buffer_id) {
+        command_selection_snapshot.reset();
+    }
+
+    for (auto it = named_special_buffers.begin(); it != named_special_buffers.end();) {
+        if (it->second == closed_buffer_id) {
+            it = named_special_buffers.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    if (panel.buffer_id == closed_buffer_id) {
+        if (panel_is_visible() && panel.window_id && windows.find_window(*panel.window_id)) {
+            panel.buffer_id = replacement_buffer_id;
+        } else {
+            panel.buffer_id.reset();
+        }
+    }
+
+    if (popup.buffer_id == closed_buffer_id) {
+        dismiss_popup();
+    }
+
+    lua.detach_async_buffer(closed_buffer_id);
+
+    windows.replace_buffer_id(closed_buffer_id, replacement_buffer_id);
+    for (const EditorWindow &window : windows.windows()) {
+        if (window.buffer_id == replacement_buffer_id) {
+            window_ui(window.id) = EditorState::WindowUiState{};
+        }
+    }
+    sync_active_window_buffer();
+    active_buffer_ui();
+}
+
 bool EditorState::initialize_input_corpus_recording(const std::filesystem::path &directory, std::string &error_message) {
     std::error_code create_error;
     std::filesystem::create_directories(directory, create_error);
@@ -1063,7 +1151,14 @@ void EditorState::record_input_corpus_event(wint_t key, bool is_special) {
 }
 
 void EditorState::focus_window(std::size_t window_id) {
-if (!windows.set_active_window(window_id)) {
+    const EditorWindow *window = windows.find_window(window_id);
+    if (window == nullptr) {
+        return;
+    }
+    if (!popup_matches_buffer_context(*this, window->buffer_id)) {
+        dismiss_popup();
+    }
+    if (!windows.set_active_window(window_id)) {
         return;
     }
     sync_active_window_buffer();
@@ -1395,14 +1490,9 @@ const std::vector<AnnotationEntryView> &sorted_annotations(const EditorState &st
     }
 
     std::vector<AnnotationEntryView> annotations;
-    InlineAnnotations projected = core.projected_annotations();
-    annotations.reserve(projected.size());
 
     const std::vector<DiagnosticEntryView> &diagnostics = sorted_diagnostics(state, window_id);
-    for (const InlineAnnotation &annotation : projected) {
-        if (annotation.kind == AnnotationKind::Diagnostic && !show_diagnostics) {
-            continue;
-        }
+    auto append_annotation = [&](const InlineAnnotation &annotation, bool is_lua) {
         std::optional<std::size_t> diagnostic_index;
         if (annotation.kind == AnnotationKind::Diagnostic) {
             for (const DiagnosticEntryView &diagnostic : diagnostics) {
@@ -1415,7 +1505,24 @@ const std::vector<AnnotationEntryView> &sorted_annotations(const EditorState &st
                 }
             }
         }
-        annotations.push_back({diagnostic_index, annotation});
+        annotations.push_back({diagnostic_index, is_lua, annotation});
+    };
+
+    annotations.reserve(core.annotations().size() + core.lua_annotations().size() + diagnostics.size());
+    for (const InlineAnnotation &annotation : core.annotations()) {
+        append_annotation(annotation, false);
+    }
+    for (const InlineAnnotation &annotation : core.lua_annotations()) {
+        append_annotation(annotation, true);
+    }
+    if (show_diagnostics) {
+        for (const Diagnostic &diagnostic : core.diagnostics()) {
+            AnnotationSeverity severity =
+                diagnostic.severity == DiagnosticSeverity::Error ? AnnotationSeverity::Error : AnnotationSeverity::Warning;
+            append_annotation(
+                {diagnostic.range, severity, AnnotationKind::Diagnostic, diagnostic.source, diagnostic.message, std::nullopt},
+                false);
+        }
     }
 
     std::sort(annotations.begin(), annotations.end(), [](const AnnotationEntryView &left, const AnnotationEntryView &right) {
@@ -1427,6 +1534,12 @@ const std::vector<AnnotationEntryView> &sorted_annotations(const EditorState &st
             return left_anchor < right_anchor;
         }
         if ((left_range.start == right_range.start)) {
+            if (left.annotation.kind != right.annotation.kind) {
+                return left.annotation.kind != AnnotationKind::Diagnostic;
+            }
+            if (left.is_lua != right.is_lua) {
+                return !left.is_lua;
+            }
             return (left_range.end < right_range.end);
         }
         return (left_range.start < right_range.start);

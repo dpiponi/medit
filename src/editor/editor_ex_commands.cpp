@@ -137,20 +137,11 @@ void EditorState::handle_buffer_delete_command(bool force) {
         set_status("Unsaved changes; use :bd! to close");
         return;
     }
+    std::size_t replacement_buffer_id = session.active_buffer_id();
+    reconcile_closed_buffer(closing_id, replacement_buffer_id);
     for (const EditorEvent &event : closed_events) {
         dispatch_editor_event(event);
     }
-    buffer_ui_map.erase(closing_id);
-    syntax_ui_map.erase(closing_id);
-    std::size_t replacement_buffer_id = session.active_buffer_id();
-    windows.replace_buffer_id(closing_id, replacement_buffer_id);
-    for (const EditorWindow &window : windows.windows()) {
-        if (window.buffer_id == replacement_buffer_id) {
-            window_ui(window.id) = EditorState::WindowUiState{};
-        }
-    }
-    sync_active_window_buffer();
-    active_buffer_ui();
     set_status(prefixed_message("Closed ", closing_name));
 }
 

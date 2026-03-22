@@ -87,10 +87,90 @@ end
 
 local function split_lines(text)
   local lines = {}
-  for line in string.gmatch(text, "([^\n]+)") do
+  text = text or ""
+  if text == "" then
+    return lines
+  end
+  if string.sub(text, -1) ~= "\n" then
+    text = text .. "\n"
+  end
+  for line in string.gmatch(text, "(.-)\n") do
     table.insert(lines, line)
   end
   return lines
+end
+
+local function is_theme_json_path(path)
+  if not path or path == "" then
+    return false
+  end
+  local normalized = string.gsub(path, "\\", "/")
+  return string.match(normalized, "/themes/") ~= nil and string.match(normalized, "%.json$") ~= nil
+end
+
+local function theme_annotation_for_line(row, line)
+  local key, value = string.match(line, '"(foreground)"%s*:%s*"([^"]+)"')
+  if not key then
+    key, value = string.match(line, '"(background)"%s*:%s*"([^"]+)"')
+  end
+  if not key or not value then
+    return nil
+  end
+
+  local annotation = {
+    line = row,
+    text = string.format(" %s %s ", key == "foreground" and "fg" or "bg", value),
+    severity = "info",
+    source = "theme-preview"
+  }
+  if not medit.theme_color_supported(value) then
+    annotation.severity = "warning"
+    annotation.text = string.format(" %s invalid %s ", key, value)
+    return annotation
+  end
+  if key == "foreground" then
+    annotation.style = {
+      foreground = value,
+      bold = true
+    }
+  else
+    annotation.style = {
+      foreground = "black",
+      background = value,
+      bold = true
+    }
+  end
+  return annotation
+end
+
+local function refresh_theme_preview()
+  local path = medit.current_file_path()
+  if not is_theme_json_path(path) then
+    medit.clear_line_annotations()
+    return
+  end
+
+  local annotations = {}
+  local lines = split_lines(medit.get_buffer_text())
+  for row, line in ipairs(lines) do
+    local ok, annotation = pcall(theme_annotation_for_line, row - 1, line)
+    if ok and annotation then
+      table.insert(annotations, annotation)
+    elseif not ok then
+      table.insert(annotations, {
+        line = row - 1,
+        text = " theme preview parse failed ",
+        severity = "warning",
+        source = "theme-preview"
+      })
+    end
+  end
+
+  local ok, err = pcall(medit.set_line_annotations, annotations)
+  if not ok then
+    medit.clear_line_annotations()
+    medit.set_status(err)
+  end
 end
 
 local function dirname(path)
@@ -498,8 +578,18 @@ medit.register_command("ai-popup", ai_popup)
 medit.register_command("increment-number", increment_number)
 medit.register_command("decrement-number", decrement_number)
 medit.register_command("make", make_command)
+medit.register_command("theme-preview-refresh", refresh_theme_preview)
 medit.register_health_check("find-file", find_file_health)
 medit.register_health_check("grep", grep_health)
 medit.register_health_check("pick-theme", pick_theme_health)
 medit.register_health_check("ai", ai_health)
 medit.register_health_check("make", make_health)
+medit.on("document_opened", function()
+  refresh_theme_preview()
+end)
+medit.on("document_changed", function()
+  refresh_theme_preview()
+end)
+medit.on("document_saved", function()
+  refresh_theme_preview()
+end)

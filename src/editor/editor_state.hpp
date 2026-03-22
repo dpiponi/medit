@@ -60,6 +60,7 @@ struct DiagnosticEntryView {
 
 struct AnnotationEntryView {
     std::optional<std::size_t> diagnostic_index;
+    bool is_lua = false;
     InlineAnnotation annotation;
 };
 
@@ -173,6 +174,8 @@ struct EditorState {
         PopupApplyTarget apply_target = PopupApplyTarget::BufferText;
         PopupFilterMode filter_mode = PopupFilterMode::ContainsLabelOrDetail;
         bool sticky = false;
+        std::optional<std::size_t> buffer_id;
+        std::size_t document_version = 0;
     };
 
     struct PendingInputState {
@@ -333,6 +336,7 @@ struct EditorState {
     void dismiss_popup();
     void begin_insert_session();
     void end_insert_session();
+    void reconcile_closed_buffer(std::size_t closed_buffer_id, std::size_t replacement_buffer_id);
     void sync_active_window_buffer();
     void show_buffer_in_active_window(std::size_t buffer_id, bool reset_view = true);
     void show_buffer_in_panel(std::size_t buffer_id, bool focus_panel = false);

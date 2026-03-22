@@ -123,6 +123,7 @@ export struct InlineAnnotation {
     AnnotationKind kind = AnnotationKind::Note;
     std::string source;
     std::u32string text;
+    std::optional<TextStyle> style_override;
 };
 
 export using InlineAnnotations = std::vector<InlineAnnotation>;
@@ -208,6 +209,8 @@ export class EditorCore {
     const Diagnostics &document_diagnostics(const std::string &document_uri) const;
     const std::vector<InlineAnnotation> &annotations() const;
     const std::vector<InlineAnnotation> &document_annotations(const std::string &document_uri) const;
+    const std::vector<InlineAnnotation> &lua_annotations() const;
+    const std::vector<InlineAnnotation> &document_lua_annotations(const std::string &document_uri) const;
     std::vector<InlineAnnotation> projected_annotations() const;
     const EditorEvents &pending_events() const;
     EditorEvents take_events();
@@ -290,6 +293,10 @@ export class EditorCore {
     void clear_annotations();
     void set_document_annotations(const std::string &document_uri, std::vector<InlineAnnotation> annotations);
     void clear_document_annotations(const std::string &document_uri);
+    void set_lua_annotations(std::vector<InlineAnnotation> annotations);
+    void clear_lua_annotations();
+    void set_document_lua_annotations(const std::string &document_uri, std::vector<InlineAnnotation> annotations);
+    void clear_document_lua_annotations(const std::string &document_uri);
 
   private:
     friend struct EditorCommandAccess;
@@ -318,6 +325,7 @@ export class EditorCore {
     std::uint64_t untitled_id_ = 0;
     std::map<std::string, Diagnostics> diagnostics_by_uri_;
     std::map<std::string, std::vector<InlineAnnotation>> annotations_by_uri_;
+    std::map<std::string, std::vector<InlineAnnotation>> lua_annotations_by_uri_;
     EditorEvents pending_events_;
     bool suppress_cursor_events_ = false;
 
