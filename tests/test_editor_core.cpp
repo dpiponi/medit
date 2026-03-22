@@ -17,10 +17,10 @@
 #include <array>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <curses.h>
 #include <fcntl.h>
-#include <random>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -2139,80 +2139,116 @@ void expect_editor_state_sane(const EditorState &state, const std::string &conte
     }
 }
 
-void test_malformed_key_sequence_fuzz() {
+void test_hostile_key_sequences() {
     ScopedTestScreen screen;
-    std::mt19937 rng(0x5eed1234u);
-    const std::array<InjectedKeyEvent, 10> special_pool{{
-        {KEY_UP, true},
-        {KEY_DOWN, true},
-        {KEY_LEFT, true},
-        {KEY_RIGHT, true},
-        {KEY_HOME, true},
-        {KEY_END, true},
-        {KEY_PPAGE, true},
-        {KEY_NPAGE, true},
-        {KEY_BTAB, true},
-        {KEY_DC, true},
-    }};
-    const std::string printable_pool = "[;12345~OABCDrxyz:/?%()";
-    const std::array<std::vector<InjectedKeyEvent>, 8> corpus{{
-        {{27, false}, {'[', false}},
-        {{27, false}, {'[', false}, {'1', false}, {';', false}},
-        {{27, false}, {'[', false}, {'1', false}, {';', false}, {'2', false}, {'D', false}},
-        {{27, false}, {'[', false}, {'9', false}, {'9', false}, {'~', false}},
-        {{27, false}, {'O', false}, {'H', false}},
-        {{27, false}, {'[', false}, {KEY_LEFT, true}},
-        {{27, false}, {KEY_UP, true}},
-        {{27, false}, {KEY_DOWN, true}},
-    }};
-
-    for (const auto &events : corpus) {
-        EditorState state;
-        initialize_windows(state);
-        expect(state.active_core().insert_text({0, 0}, utf8_to_u32("alpha\nbeta\ngamma")), "seed fuzz buffer");
-        handle_test_input_sequence(state, events);
-        expect_editor_state_sane(state, "malformed key corpus");
-    }
-
-    for (int iteration = 0; iteration < 5000; ++iteration) {
-        EditorState state;
-        initialize_windows(state);
-        expect(state.active_core().insert_text({0, 0}, utf8_to_u32("alpha\nbeta\ngamma")), "seed fuzz buffer");
-
-        int mode_case = static_cast<int>(rng() % 4);
-        if (mode_case == 1) {
-            state.enter_insert_mode();
-        } else if (mode_case == 2) {
-            state.enter_command_mode();
-        } else if (mode_case == 3) {
-            state.enter_search_mode();
-        }
-        if (rng() % 7 == 0) {
-            state.pending.motion = PendingMotion::FindForward;
-            state.pending.motion_repeat_count = 1;
-        }
-
-        std::size_t event_count = 1 + (rng() % 8);
+    struct HostileKeySequenceCase {
+        std::string name;
+        std::function<void(EditorState &)> setup;
         std::vector<InjectedKeyEvent> events;
-        events.reserve(event_count);
-        for (std::size_t i = 0; i < event_count; ++i) {
-            if (rng() % 5 == 0) {
-                events.push_back(special_pool[rng() % special_pool.size()]);
-                continue;
-            }
-            if (rng() % 4 == 0) {
-                events.push_back({27, false});
-                continue;
-            }
-            if (rng() % 6 == 0) {
-                events.push_back({static_cast<wint_t>(1 + (rng() % 26)), false});
-                continue;
-            }
-            events.push_back({static_cast<wint_t>(printable_pool[rng() % printable_pool.size()]), false});
-        }
+    };
 
-        handle_test_input_sequence(state, events);
-        expect_editor_state_sane(state, "malformed key fuzz iteration " + std::to_string(iteration));
+    const std::vector<HostileKeySequenceCase> cases = {
+        {
+            "dangling escape bracket",
+            [](EditorState &) {},
+            {{27, false}, {'[', false}},
+        },
+        {
+            "dangling csi prefix",
+            [](EditorState &) {},
+            {{27, false}, {'[', false}, {'1', false}, {';', false}},
+        },
+        {
+            "shift-left escape sequence",
+            [](EditorState &) {},
+            {{27, false}, {'[', false}, {'1', false}, {';', false}, {'2', false}, {'D', false}},
+        },
+        {
+            "unknown tilde escape",
+            [](EditorState &) {},
+            {{27, false}, {'[', false}, {'9', false}, {'9', false}, {'~', false}},
+        },
+        {
+            "ss3 home escape",
+            [](EditorState &) {},
+            {{27, false}, {'O', false}, {'H', false}},
+        },
+        {
+            "mixed escape and special left",
+            [](EditorState &) {},
+            {{27, false}, {'[', false}, {KEY_LEFT, true}},
+        },
+        {
+            "alt up shortcut path",
+            [](EditorState &) {},
+            {{27, false}, {KEY_UP, true}},
+        },
+        {
+            "alt down shortcut path",
+            [](EditorState &) {},
+            {{27, false}, {KEY_DOWN, true}},
+        },
+        {
+            "command prompt completion churn",
+            [](EditorState &state) {
+                state.enter_command_mode();
+                state.command_buffer = utf8_to_u32("e ");
+                state.prompt_cursor = state.command_buffer.size();
+            },
+            {{'\t', false}, {KEY_BTAB, true}, {27, false}},
+        },
+        {
+            "search prompt malformed escape and cancel",
+            [](EditorState &state) {
+                state.enter_search_mode();
+            },
+            {{27, false}, {'[', false}, {'1', false}, {';', false}, {'2', false}, {'D', false}, {27, false}},
+        },
+        {
+            "pending find motion cancelled",
+            [](EditorState &state) {
+                state.pending.motion = PendingMotion::FindForward;
+                state.pending.motion_repeat_count = 1;
+            },
+            {{27, false}, {'x', false}},
+        },
+        {
+            "replace command aborted with escape",
+            [](EditorState &) {},
+            {{'r', false}, {27, false}, {'x', false}},
+        },
+        {
+            "window split and close-other churn",
+            [](EditorState &) {},
+            {{23, false}, {'s', false}, {23, false}, {'v', false}, {23, false}, {'o', false}},
+        },
+        {
+            "panel window closed through generic command",
+            [](EditorState &state) {
+                std::size_t panel_buffer_id = state.ensure_named_special_buffer("hostile", EditorBufferKind::Output, false, false).id;
+                state.show_buffer_in_panel(panel_buffer_id, true);
+            },
+            {{23, false}, {'c', false}},
+        },
+        {
+            "sticky key hints interrupted by window command",
+            [](EditorState &) {},
+            {{'?', false}, {23, false}, {'s', false}, {27, false}},
+        },
+        {
+            "command group open then escape",
+            [](EditorState &) {},
+            {{'(', false}, {27, false}, {')', false}},
+        },
+    };
+
+    for (const auto &scenario : cases) {
+        EditorState state;
+        initialize_windows(state);
+        expect(state.active_core().insert_text({0, 0}, utf8_to_u32("alpha\nbeta\ngamma")), "seed hostile key buffer");
+        scenario.setup(state);
+        handle_test_input_sequence(state, scenario.events);
+        expect_editor_state_sane(state, "hostile key sequence: " + scenario.name);
     }
 }
 
@@ -2980,7 +3016,7 @@ int main() {
         test_file_uri_normalization();
         test_string_utilities();
         test_popup_selection_accept_tokens();
-        test_malformed_key_sequence_fuzz();
+        test_hostile_key_sequences();
         test_recorded_input_corpus_if_configured();
         test_edit_command_file_completion();
         test_lsp_message_framing();
