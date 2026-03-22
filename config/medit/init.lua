@@ -100,6 +100,69 @@ local function split_lines(text)
   return lines
 end
 
+local annotation_sources = {}
+
+local function current_buffer_id()
+  return medit.status().active_buffer_id
+end
+
+local function merged_annotations_for_buffer(buffer_id)
+  local sources = annotation_sources[buffer_id]
+  if not sources then
+    return {}
+  end
+
+  local merged = {}
+  local source_names = {}
+  for source_name, _ in pairs(sources) do
+    table.insert(source_names, source_name)
+  end
+  table.sort(source_names)
+
+  for _, source_name in ipairs(source_names) do
+    for _, annotation in ipairs(sources[source_name]) do
+      table.insert(merged, annotation)
+    end
+  end
+
+  table.sort(merged, function(left, right)
+    if left.line ~= right.line then
+      return left.line < right.line
+    end
+    return (left.source or "") < (right.source or "")
+  end)
+  return merged
+end
+
+local function apply_annotation_sources(buffer_id)
+  local merged = merged_annotations_for_buffer(buffer_id)
+  if #merged == 0 then
+    medit.clear_line_annotations(buffer_id)
+    return
+  end
+  medit.set_line_annotations(merged, buffer_id)
+end
+
+local function set_annotation_source(buffer_id, source_name, annotations)
+  if not annotation_sources[buffer_id] then
+    annotation_sources[buffer_id] = {}
+  end
+  if annotations and #annotations > 0 then
+    annotation_sources[buffer_id][source_name] = annotations
+  else
+    annotation_sources[buffer_id][source_name] = nil
+  end
+  if next(annotation_sources[buffer_id]) == nil then
+    annotation_sources[buffer_id] = nil
+  end
+
+  local ok, err = pcall(apply_annotation_sources, buffer_id)
+  if not ok then
+    medit.clear_line_annotations(buffer_id)
+    medit.set_status(err)
+  end
+end
+
 local function is_theme_json_path(path)
   if not path or path == "" then
     return false
@@ -144,9 +207,10 @@ local function theme_annotation_for_line(row, line)
 end
 
 local function refresh_theme_preview()
+  local buffer_id = current_buffer_id()
   local path = medit.current_file_path()
   if not is_theme_json_path(path) then
-    medit.clear_line_annotations()
+    set_annotation_source(buffer_id, "theme-preview", nil)
     return
   end
 
@@ -166,11 +230,195 @@ local function refresh_theme_preview()
     end
   end
 
-  local ok, err = pcall(medit.set_line_annotations, annotations)
-  if not ok then
-    medit.clear_line_annotations()
-    medit.set_status(err)
+  set_annotation_source(buffer_id, "theme-preview", annotations)
+end
+
+local calc_modes = {}
+
+local function calc_state_for_buffer(buffer_id)
+  local state = calc_modes[buffer_id]
+  if not state then
+    state = {
+      line_cache = {}
+    }
+    calc_modes[buffer_id] = state
   end
+  return state
+end
+
+local function trim(text)
+  return string.match(text or "", "^%s*(.-)%s*$")
+end
+
+local function first_line(text)
+  if not text or text == "" then
+    return ""
+  end
+  local line = string.match(text, "([^\r\n]+)")
+  return line or ""
+end
+
+local function calc_expression_for_line(line)
+  local expr = string.match(line, "^%s*calc:%s*(.-)%s*$")
+  if expr and expr ~= "" then
+    return expr
+  end
+  return nil
+end
+
+local function calc_annotation_for_line(row, line)
+  local expr = calc_expression_for_line(line)
+  if not expr or expr == "" then
+    return false
+  end
+  if string.sub(expr, -1) == "\\" then
+    return false
+  end
+
+  local output, err = medit.run_filter("bc -l", expr .. "\n")
+  if not output then
+    return {
+      line = row,
+      text = " calc error ",
+      severity = "warning",
+      source = "calc"
+    }
+  end
+
+  local result = trim(first_line(output))
+  if result == "" then
+    local summary = trim(first_line(err))
+    if summary == "" then
+      summary = "no result"
+    end
+    return {
+      line = row,
+      text = " calc " .. summary .. " ",
+      severity = "warning",
+      source = "calc"
+    }
+  end
+
+  return {
+    line = row,
+    text = " = " .. result .. " ",
+    severity = "info",
+    source = "calc"
+  }
+end
+
+local function calc_annotations_from_cache(line_cache)
+  local annotations = {}
+  local rows = {}
+  for row, _ in pairs(line_cache) do
+    table.insert(rows, row)
+  end
+  table.sort(rows)
+
+  for _, row in ipairs(rows) do
+    local entry = line_cache[row]
+    if entry and entry.annotation then
+      table.insert(annotations, entry.annotation)
+    end
+  end
+  return annotations
+end
+
+local function refresh_calc_line(buffer_id, row)
+  local state = calc_modes[buffer_id]
+  if not state or not state.enabled then
+    return
+  end
+
+  local ok, line = pcall(medit.get_line_text, row)
+  if not ok then
+    state.line_cache[row] = nil
+  else
+    local annotation = calc_annotation_for_line(row, line)
+    state.line_cache[row] = {
+      line = line,
+      annotation = annotation
+    }
+  end
+
+  set_annotation_source(buffer_id, "calc", calc_annotations_from_cache(state.line_cache))
+end
+
+local function refresh_calc_buffer(buffer_id)
+  local state = calc_modes[buffer_id]
+  if not state or not state.enabled then
+    set_annotation_source(buffer_id, "calc", nil)
+    return
+  end
+
+  local lines = split_lines(medit.get_buffer_text())
+  local line_cache = {}
+  for row, line in ipairs(lines) do
+    line_cache[row - 1] = {
+      line = line,
+      annotation = calc_annotation_for_line(row - 1, line)
+    }
+  end
+  state.line_cache = line_cache
+  set_annotation_source(buffer_id, "calc", calc_annotations_from_cache(line_cache))
+end
+
+local function calc_mode_enabled(buffer_id)
+  local state = calc_modes[buffer_id]
+  return state ~= nil and state.enabled == true
+end
+
+local function enable_calc_mode()
+  if not medit.executable_exists("bc") then
+    medit.set_status("Missing executable: bc")
+    return
+  end
+
+  local buffer_id = current_buffer_id()
+  local state = calc_state_for_buffer(buffer_id)
+  state.enabled = true
+  refresh_calc_buffer(buffer_id)
+  medit.set_status("Calc mode on")
+end
+
+local function disable_calc_mode()
+  local buffer_id = current_buffer_id()
+  calc_modes[buffer_id] = nil
+  set_annotation_source(buffer_id, "calc", nil)
+  medit.set_status("Calc mode off")
+end
+
+local function toggle_calc_mode()
+  local buffer_id = current_buffer_id()
+  if calc_mode_enabled(buffer_id) then
+    disable_calc_mode()
+  else
+    enable_calc_mode()
+  end
+end
+
+local function refresh_calc_mode(event)
+  local buffer_id = current_buffer_id()
+  if not calc_mode_enabled(buffer_id) then
+    return
+  end
+
+  if event and event.range and event.range.start and event["text"] ~= nil then
+    local start_row = event.range.start.row
+    local end_row = event.range["end"] and event.range["end"].row or start_row
+    local text = event.text or ""
+    if start_row == end_row and not string.find(text, "\n", 1, true) then
+      refresh_calc_line(buffer_id, start_row)
+      return
+    end
+  end
+
+  refresh_calc_buffer(buffer_id)
+end
+
+local function calc_mode_health()
+  local bc = medit.executable_exists("bc") and "yes" or "no"
+  return string.format("bc=%s", bc)
 end
 
 local function dirname(path)
@@ -567,6 +815,11 @@ local function make_command(argument)
   medit.set_status(string.format("Started make job %d", job_id))
 end
 
+local function calc_refresh()
+  refresh_calc_mode()
+  medit.set_status("Calc refreshed")
+end
+
 medit.register_command("lua-status", show_status_summary)
 medit.register_command("edit-lua-init", edit_lua_init)
 medit.register_command("find-file", find_file)
@@ -579,17 +832,25 @@ medit.register_command("increment-number", increment_number)
 medit.register_command("decrement-number", decrement_number)
 medit.register_command("make", make_command)
 medit.register_command("theme-preview-refresh", refresh_theme_preview)
+medit.register_command("calc-mode-on", enable_calc_mode)
+medit.register_command("calc-mode-off", disable_calc_mode)
+medit.register_command("calc-mode-toggle", toggle_calc_mode)
+medit.register_command("calc-refresh", calc_refresh)
 medit.register_health_check("find-file", find_file_health)
 medit.register_health_check("grep", grep_health)
 medit.register_health_check("pick-theme", pick_theme_health)
 medit.register_health_check("ai", ai_health)
 medit.register_health_check("make", make_health)
-medit.on("document_opened", function()
+medit.register_health_check("calc-mode", calc_mode_health)
+medit.on("document_opened", function(event)
   refresh_theme_preview()
+  refresh_calc_mode(event)
 end)
-medit.on("document_changed", function()
+medit.on("document_changed", function(event)
   refresh_theme_preview()
+  refresh_calc_mode(event)
 end)
-medit.on("document_saved", function()
+medit.on("document_saved", function(event)
   refresh_theme_preview()
+  refresh_calc_mode(event)
 end)

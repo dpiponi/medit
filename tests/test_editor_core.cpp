@@ -1709,6 +1709,66 @@ void test_lua_runtime_rejects_invalid_async_job_buffer() {
     std::filesystem::remove_all(root);
 }
 
+void test_lua_calc_mode_annotations() {
+    if (!executable_exists("bc")) {
+        return;
+    }
+
+    std::filesystem::path root = std::filesystem::temp_directory_path() / "medit_lua_calc_mode";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+
+    std::filesystem::path file_path = root / "calc.txt";
+    {
+        std::ofstream file(file_path);
+        file << "calc: 2+3\nplain text\n";
+    }
+
+    EditorState state;
+    initialize_windows(state);
+    std::string error_message;
+    expect(
+        state.lua.initialize(state, std::filesystem::current_path() / "config/medit/init.lua", error_message),
+        "lua runtime should initialize for calc mode test");
+    expect(error_message.empty(), "lua runtime init should not set an error for calc mode test");
+
+    EditorBuffer *buffer = state.session.open_file(file_path.string(), true);
+    expect(buffer != nullptr, "calc mode test should open its file");
+    state.show_buffer_in_active_window(buffer->id);
+    state.dispatch_editor_events(buffer->core);
+
+    expect(state.lua.execute_command(state, "calc-mode-on", "", error_message), "calc mode should enable");
+    expect(state.active_core().lua_annotations().size() == 1, "calc mode should annotate one calc line");
+    expect(
+        u32_to_utf8(state.active_core().lua_annotations()[0].text).find("5") != std::string::npos,
+        "calc mode should evaluate the initial expression");
+
+    expect(
+        state.active_core().replace_range({{0, 0}, {0, 9}}, utf8_to_u32("calc: 2+4")),
+        "calc mode test should edit the calc line");
+    state.dispatch_editor_events(state.active_core());
+    expect(state.active_core().lua_annotations().size() == 1, "single-line calc edit should preserve one annotation");
+    expect(
+        u32_to_utf8(state.active_core().lua_annotations()[0].text).find("6") != std::string::npos,
+        "calc mode should incrementally refresh the edited line");
+
+    expect(
+        state.active_core().replace_range(
+            {{0, 0},
+             {state.active_core().line_count() - 1,
+              state.active_core().line_length(state.active_core().line_count() - 1)}},
+            utf8_to_u32("calc: 2 + \\\n3\n")),
+        "calc mode test should replace the buffer with a multiline expression");
+    state.dispatch_editor_events(state.active_core());
+    expect(state.active_core().lua_annotations().empty(), "multiline calc expressions should be ignored");
+
+    expect(state.lua.execute_command(state, "calc-mode-off", "", error_message), "calc mode should disable");
+    expect(state.active_core().lua_annotations().empty(), "disabling calc mode should clear calc annotations");
+
+    state.lua.shutdown();
+    std::filesystem::remove_all(root);
+}
+
 void test_special_buffers_and_panel_reuse() {
     EditorState state;
     initialize_windows(state);
@@ -2904,6 +2964,7 @@ int main() {
         test_lua_runtime_sets_line_annotations();
         test_lua_runtime_rejects_invalid_line_annotations();
         test_lua_runtime_rejects_invalid_async_job_buffer();
+        test_lua_calc_mode_annotations();
         test_special_buffers_and_panel_reuse();
         test_lua_async_job_streams_output_to_named_buffer();
         test_closing_buffer_clears_hidden_panel_buffer_reference();
