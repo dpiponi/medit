@@ -24,6 +24,20 @@ std::string path_or_none(const std::optional<std::filesystem::path> &path) {
     return path ? path->string() : "(none)";
 }
 
+std::string path_chain_or_none(const std::vector<std::filesystem::path> &chain) {
+    if (chain.empty()) {
+        return "(none)";
+    }
+    std::ostringstream output;
+    for (std::size_t index = 0; index < chain.size(); ++index) {
+        if (index > 0) {
+            output << " -> ";
+        }
+        output << chain[index].string();
+    }
+    return output.str();
+}
+
 void append_health_line(std::ostringstream &output, const std::string &label, const std::string &value) {
     output << label << ": " << value << "\n";
 }
@@ -190,10 +204,13 @@ int run_health_check() {
 
     output << "Config files\n";
     append_health_line(output, "meditrc", config.source_path.empty() ? "(default/none)" : config.source_path);
+    append_health_line(output, "meditrc chain", path_chain_or_none(config.meditrc_chain));
     append_health_line(output, "keybindings", path_or_none(config.keybindings_path));
     append_health_line(output, "colors", path_or_none(config.colors_path));
     append_health_line(output, "lsp", path_or_none(config.lsp_path));
+    append_health_line(output, "lsp chain", path_chain_or_none(config.lsp_chain));
     append_health_line(output, "syntax", path_or_none(config.syntax_config_path));
+    append_health_line(output, "syntax chain", path_chain_or_none(config.syntax_chain));
     append_health_line(output, "lua", path_or_none(config.lua_path));
     append_health_line(output, "log", path_or_none(config.log_path));
     append_health_line(output, "control socket", path_or_none(config.control_socket_path));

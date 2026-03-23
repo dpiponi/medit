@@ -688,6 +688,18 @@ std::string tree_sitter_health_summary(const EditorConfig &config) {
     std::ostringstream status;
     status << "syntax config: "
            << (config.syntax_config_path ? config.syntax_config_path->string() : "(default/none)") << "\n";
+    status << "syntax chain: ";
+    if (config.syntax_chain.empty()) {
+        status << "(none)\n";
+    } else {
+        for (std::size_t index = 0; index < config.syntax_chain.size(); ++index) {
+            if (index > 0) {
+                status << " -> ";
+            }
+            status << config.syntax_chain[index].string();
+        }
+        status << "\n";
+    }
     status << "configured languages: " << config.syntax_languages.size() << "\n";
 
     TreeSitterApi &api = tree_sitter_api();

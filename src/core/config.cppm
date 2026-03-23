@@ -43,6 +43,9 @@ export struct SyntaxLanguageConfig {
 
 export struct EditorConfig {
     std::string source_path;
+    std::vector<std::filesystem::path> meditrc_chain;
+    std::vector<std::filesystem::path> lsp_chain;
+    std::vector<std::filesystem::path> syntax_chain;
     std::optional<std::filesystem::path> keybindings_path;
     std::optional<std::filesystem::path> colors_path;
     std::optional<std::filesystem::path> lsp_path;

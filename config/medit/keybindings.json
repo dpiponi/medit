@@ -59,6 +59,7 @@
     "?": "show_key_hints",
     "g d": "goto_definition",
     "g k": "show_hover",
+    "alt-enter": "command:notebook-run-cell",
     "alt-up": "select_enclosing_ast",
     "alt-down": "select_inner_ast",
     "q": "select_enclosing_ast",
@@ -182,6 +183,7 @@
   "insert": {
     "esc": "enter_normal_mode",
     "enter": "insert_newline",
+    "alt-enter": "command:notebook-run-cell",
     "tab": "insert_soft_tab",
     "shift-tab": "insert_outdent",
     "ctrl-p": "show_completion",

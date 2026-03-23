@@ -113,6 +113,22 @@ struct ScopedTestScreen {
     }
 };
 
+std::filesystem::path make_temp_test_dir(const char *pattern) {
+    std::array<char, 256> buffer{};
+    std::snprintf(buffer.data(), buffer.size(), "%s", pattern);
+    char *dir = mkdtemp(buffer.data());
+    expect(dir != nullptr, std::string("mkdtemp should succeed for ") + pattern);
+    return dir;
+}
+
+void write_text_file(const std::filesystem::path &path, const std::string &content) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream output(path);
+    expect(output.good(), "should open file for writing: " + path.string());
+    output << content;
+    expect(output.good(), "should write file: " + path.string());
+}
+
 void test_insert_unicode_and_undo() {
     EditorCore core;
     core.insert_codepoint(U'a');
@@ -1512,6 +1528,226 @@ void test_lsp_config_rejects_duplicate_patterns() {
     std::filesystem::remove_all(root);
 }
 
+void test_layered_config_merges_and_records_chains() {
+    std::filesystem::path root = make_temp_test_dir("/tmp/medit-layered-config-XXXXXX");
+    std::filesystem::path local_config_dir = root / ".config";
+    std::filesystem::path local_medit_dir = local_config_dir / "medit";
+    std::filesystem::path shared_dir = root / "shared";
+    std::filesystem::path shared_medit_dir = shared_dir / "medit";
+
+    write_text_file(
+        shared_dir / "meditrc",
+        "colors = base-colors.json\n"
+        "lsp = base-lsp.json\n"
+        "syntax_config = base-syntax.json\n"
+        "shiftwidth = 2\n");
+    write_text_file(
+        local_config_dir / "meditrc",
+        "include = ../shared/meditrc\n"
+        "shiftwidth = 8\n"
+        "lsp = lsp.local.json\n"
+        "syntax_config = syntax.local.json\n");
+    write_text_file(
+        shared_medit_dir / "base-lsp.json",
+        "{\n"
+        "  \"servers\": [\n"
+        "    {\n"
+        "      \"name\": \"cpp\",\n"
+        "      \"command\": \"clangd\",\n"
+        "      \"language_id\": \"cpp\",\n"
+        "      \"patterns\": [\"*.cpp\"],\n"
+        "      \"workspace\": {\n"
+        "        \"markers\": [\"compile_commands.json\"],\n"
+        "        \"fallback\": \"file_directory\"\n"
+        "      }\n"
+        "    }\n"
+        "  ]\n"
+        "}\n");
+    write_text_file(
+        local_medit_dir / "lsp.local.json",
+        "{\n"
+        "  \"include\": [\"../../shared/medit/base-lsp.json\"],\n"
+        "  \"servers\": [\n"
+        "    {\n"
+        "      \"name\": \"cpp\",\n"
+        "      \"command\": \"/opt/clangd --background-index\"\n"
+        "    }\n"
+        "  ]\n"
+        "}\n");
+    write_text_file(
+        shared_medit_dir / "base-syntax.json",
+        "{\n"
+        "  \"languages\": [\n"
+        "    {\n"
+        "      \"name\": \"cpp\",\n"
+        "      \"patterns\": [\"*.cpp\"],\n"
+        "      \"grammar_path\": \"grammars/base-cpp.so\",\n"
+        "      \"symbol_name\": \"tree_sitter_cpp\",\n"
+        "      \"highlights_path\": \"queries/cpp/highlights.scm\",\n"
+        "      \"editor\": {\n"
+        "        \"shiftwidth\": 2,\n"
+        "        \"expandtab\": true\n"
+        "      }\n"
+        "    }\n"
+        "  ]\n"
+        "}\n");
+    write_text_file(
+        local_medit_dir / "syntax.local.json",
+        "{\n"
+        "  \"include\": [\"../../shared/medit/base-syntax.json\"],\n"
+        "  \"languages\": [\n"
+        "    {\n"
+        "      \"name\": \"cpp\",\n"
+        "      \"grammar_path\": \"grammars/local-cpp.so\",\n"
+        "      \"editor\": {\n"
+        "        \"expandtab\": false,\n"
+        "        \"softtabstop\": 0\n"
+        "      }\n"
+        "    }\n"
+        "  ]\n"
+        "}\n");
+
+    EditorConfig config = load_editor_config_from_path(local_config_dir / "meditrc");
+    expect(config.shiftwidth == 8, "top-level meditrc should override included scalar settings");
+    expect(config.meditrc_chain.size() == 2, "meditrc chain should record both shared and local files");
+    expect(config.meditrc_chain[0] == std::filesystem::absolute(shared_dir / "meditrc"), "meditrc chain should start with shared config");
+    expect(config.meditrc_chain[1] == std::filesystem::absolute(local_config_dir / "meditrc"), "meditrc chain should end with local config");
+    expect(config.lsp_chain.size() == 2, "lsp chain should record include order");
+    expect(config.syntax_chain.size() == 2, "syntax chain should record include order");
+    expect(config.lsp_servers.size() == 1, "layered config should keep one merged lsp server");
+    expect(config.lsp_servers[0].command == "/opt/clangd --background-index", "local lsp override should replace only command");
+    expect(config.lsp_servers[0].language_id == "cpp", "local lsp override should inherit language id");
+    expect(config.lsp_servers[0].patterns.size() == 1 && config.lsp_servers[0].patterns[0] == "*.cpp", "local lsp override should inherit patterns");
+    expect(config.syntax_languages.size() == 1, "layered config should keep one merged syntax language");
+    expect(
+        config.syntax_languages[0].grammar_path == std::filesystem::absolute(local_medit_dir / "grammars" / "local-cpp.so"),
+        "local syntax override should resolve grammar path relative to declaring file");
+    expect(
+        config.syntax_languages[0].highlights_path ==
+            std::filesystem::absolute(shared_medit_dir / "queries" / "cpp" / "highlights.scm"),
+        "inherited syntax highlights path should remain relative to the declaring base file");
+    expect(config.syntax_languages[0].editor.shiftwidth == 2, "syntax editor settings should inherit unspecified keys");
+    expect(config.syntax_languages[0].editor.expandtab == false, "syntax editor settings should override explicit false values");
+    expect(config.syntax_languages[0].editor.softtabstop == 0, "syntax editor settings should override explicit zero values");
+
+    std::filesystem::remove_all(root);
+}
+
+void test_meditrc_include_cycle_is_rejected() {
+    std::filesystem::path root = make_temp_test_dir("/tmp/medit-meditrc-cycle-XXXXXX");
+    write_text_file(root / "a.rc", "include = b.rc\n");
+    write_text_file(root / "b.rc", "include = a.rc\n");
+
+    bool threw = false;
+    try {
+        (void)load_editor_config_from_path(root / "a.rc");
+    } catch (const std::exception &error) {
+        threw = std::string(error.what()).contains("meditrc include cycle");
+    }
+    expect(threw, "meditrc include cycles should be rejected");
+    std::filesystem::remove_all(root);
+}
+
+void test_lsp_include_cycle_is_rejected() {
+    std::filesystem::path root = make_temp_test_dir("/tmp/medit-lsp-cycle-XXXXXX");
+    std::filesystem::path config_dir = root / ".config";
+    std::filesystem::path medit_dir = config_dir / "medit";
+
+    write_text_file(config_dir / "meditrc", "lsp = a.json\n");
+    write_text_file(
+        medit_dir / "a.json",
+        "{\n"
+        "  \"include\": [\"b.json\"],\n"
+        "  \"servers\": [\n"
+        "    {\"name\": \"cpp\", \"command\": \"clangd\", \"language_id\": \"cpp\", \"patterns\": [\"*.cpp\"]}\n"
+        "  ]\n"
+        "}\n");
+    write_text_file(
+        medit_dir / "b.json",
+        "{\n"
+        "  \"include\": [\"a.json\"],\n"
+        "  \"servers\": []\n"
+        "}\n");
+
+    bool threw = false;
+    try {
+        (void)load_editor_config_from_path(config_dir / "meditrc");
+    } catch (const std::exception &error) {
+        threw = std::string(error.what()).contains("lsp config include cycle");
+    }
+    expect(threw, "lsp include cycles should be rejected");
+    std::filesystem::remove_all(root);
+}
+
+void test_syntax_include_cycle_is_rejected() {
+    std::filesystem::path root = make_temp_test_dir("/tmp/medit-syntax-cycle-XXXXXX");
+    std::filesystem::path config_dir = root / ".config";
+    std::filesystem::path medit_dir = config_dir / "medit";
+
+    write_text_file(config_dir / "meditrc", "syntax_config = a.json\n");
+    write_text_file(
+        medit_dir / "a.json",
+        "{\n"
+        "  \"include\": [\"b.json\"],\n"
+        "  \"languages\": [\n"
+        "    {\n"
+        "      \"name\": \"cpp\",\n"
+        "      \"patterns\": [\"*.cpp\"],\n"
+        "      \"grammar_path\": \"grammars/cpp.so\",\n"
+        "      \"symbol_name\": \"tree_sitter_cpp\",\n"
+        "      \"highlights_path\": \"queries/cpp/highlights.scm\"\n"
+        "    }\n"
+        "  ]\n"
+        "}\n");
+    write_text_file(
+        medit_dir / "b.json",
+        "{\n"
+        "  \"include\": [\"a.json\"],\n"
+        "  \"languages\": []\n"
+        "}\n");
+
+    bool threw = false;
+    try {
+        (void)load_editor_config_from_path(config_dir / "meditrc");
+    } catch (const std::exception &error) {
+        threw = std::string(error.what()).contains("syntax config include cycle");
+    }
+    expect(threw, "syntax include cycles should be rejected");
+    std::filesystem::remove_all(root);
+}
+
+void test_layered_lsp_config_rejects_duplicate_patterns_after_merge() {
+    std::filesystem::path root = make_temp_test_dir("/tmp/medit-lsp-merge-dup-XXXXXX");
+    std::filesystem::path config_dir = root / ".config";
+    std::filesystem::path medit_dir = config_dir / "medit";
+
+    write_text_file(config_dir / "meditrc", "lsp = lsp.json\n");
+    write_text_file(
+        medit_dir / "base.json",
+        "{\n"
+        "  \"servers\": [\n"
+        "    {\"name\": \"cpp\", \"command\": \"clangd\", \"language_id\": \"cpp\", \"patterns\": [\"*.cpp\"]}\n"
+        "  ]\n"
+        "}\n");
+    write_text_file(
+        medit_dir / "lsp.json",
+        "{\n"
+        "  \"include\": [\"base.json\"],\n"
+        "  \"servers\": [\n"
+        "    {\"name\": \"other\", \"command\": \"otherls\", \"language_id\": \"other\", \"patterns\": [\"*.cpp\"]}\n"
+        "  ]\n"
+        "}\n");
+
+    bool threw = false;
+    try {
+        (void)load_editor_config_from_path(config_dir / "meditrc");
+    } catch (const std::exception &error) {
+        threw = std::string(error.what()).contains("duplicate lsp pattern mapping");
+    }
+    expect(threw, "duplicate lsp pattern mappings should be rejected after merge");
+    std::filesystem::remove_all(root);
+}
+
 void test_infer_language_id() {
     EditorConfig config;
     config.lsp_servers.push_back(
@@ -1769,6 +2005,159 @@ void test_lua_calc_mode_annotations() {
     std::filesystem::remove_all(root);
 }
 
+void test_lua_events_include_buffer_id() {
+    std::filesystem::path root = std::filesystem::temp_directory_path() / "medit_lua_event_buffer_id";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+
+    std::filesystem::path script_path = root / "init.lua";
+    {
+        std::ofstream script(script_path);
+        script << "medit.on('document_changed', function(event)\n"
+                  "  if event.buffer_id == nil then\n"
+                  "    medit.set_status('buffer missing')\n"
+                  "  else\n"
+                  "    medit.set_status('buffer=' .. event.buffer_id)\n"
+                  "  end\n"
+                  "end)\n";
+    }
+
+    EditorState state;
+    initialize_windows(state);
+    std::string error_message;
+    expect(state.lua.initialize(state, script_path, error_message), "lua runtime should initialize for buffer id event test");
+    expect(state.active_core().insert_text({0, 0}, utf8_to_u32("alpha")), "buffer id event test should edit active buffer");
+    state.dispatch_editor_events(state.active_core());
+    expect(
+        state.status_message == "buffer=" + std::to_string(state.active_buffer().id),
+        "lua event should expose the active buffer id");
+
+    state.lua.shutdown();
+    std::filesystem::remove_all(root);
+}
+
+void test_lua_persistent_process_callbacks_and_status() {
+    std::filesystem::path root = std::filesystem::temp_directory_path() / "medit_lua_process";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+
+    std::filesystem::path script_path = root / "init.lua";
+    {
+        std::ofstream script(script_path);
+        script << "medit.register_command('process-test', function()\n"
+                  "  local output_id = medit.create_buffer('process-output', 'output')\n"
+                  "  medit.clear_buffer(output_id)\n"
+                  "  local pid = medit.process_start({\n"
+                  "    command = \"printf 'ready\\\\n'; cat\",\n"
+                  "    buffer_id = output_id,\n"
+                  "    on_stdout = function(process_id, text)\n"
+                  "      if string.find(text, 'ready', 1, true) then\n"
+                  "        medit.process_send(process_id, 'echo from process\\n')\n"
+                  "        medit.process_close_stdin(process_id)\n"
+                  "      end\n"
+                  "    end,\n"
+                  "    on_exit = function(process_id, exit_code)\n"
+                  "      local status = medit.process_status(process_id)\n"
+                  "      if status ~= nil and status.running == false and exit_code == 0 then\n"
+                  "        medit.set_status('process exit=0')\n"
+                  "      else\n"
+                  "        medit.set_status('process exit=bad')\n"
+                  "      end\n"
+                  "    end\n"
+                  "  })\n"
+                  "  medit.set_status('process=' .. pid)\n"
+                  "end)\n";
+    }
+
+    EditorState state;
+    initialize_windows(state);
+    std::string error_message;
+    expect(state.lua.initialize(state, script_path, error_message), "lua runtime should initialize for process test");
+    expect(state.lua.execute_command(state, "process-test", "", error_message), "lua process test command should execute");
+
+    bool completed = false;
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        state.lua.poll_async(state);
+        if (state.status_message == "process exit=0") {
+            completed = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    expect(completed, "persistent Lua process should finish cleanly");
+
+    auto found = state.named_special_buffers.find("process-output");
+    expect(found != state.named_special_buffers.end(), "persistent process should create an output buffer");
+    EditorBuffer *buffer = state.session.find_buffer_by_id(found->second);
+    expect(buffer != nullptr, "persistent process output buffer should exist");
+    std::string output = buffer_text(buffer->core);
+    expect(output.find("ready\n") != std::string::npos, "persistent process should stream startup output");
+    expect(output.find("echo from process\n") != std::string::npos, "persistent process should echo stdin back");
+
+    state.lua.shutdown();
+    std::filesystem::remove_all(root);
+}
+
+void test_lua_python_notebook_commands() {
+    if (!executable_exists("python3") && !executable_exists("python")) {
+        return;
+    }
+
+    std::filesystem::path root = std::filesystem::temp_directory_path() / "medit_lua_notebook_python";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+
+    std::filesystem::path file_path = root / "notebook.py";
+    {
+        std::ofstream file(file_path);
+        file << "# %%\nvalue = 5\n\n# %%\nvalue * 4\n\n";
+    }
+
+    EditorState state;
+    initialize_windows(state);
+    std::string error_message;
+    expect(
+        state.lua.initialize(state, std::filesystem::current_path() / "config/medit/init.lua", error_message),
+        "lua runtime should initialize for notebook test");
+    expect(error_message.empty(), "lua runtime init should not set an error for notebook test");
+
+    EditorBuffer *buffer = state.session.open_file(file_path.string(), true);
+    expect(buffer != nullptr, "notebook test should open its file");
+    state.show_buffer_in_active_window(buffer->id);
+    state.dispatch_editor_events(buffer->core);
+
+    expect(state.lua.execute_command(state, "notebook-python-on", "", error_message), "notebook should enable");
+    expect(state.lua.execute_command(state, "notebook-run-all", "", error_message), "notebook run all should start");
+
+    bool completed = false;
+    for (int attempt = 0; attempt < 200; ++attempt) {
+        state.lua.poll_async(state);
+        if (state.active_core().lua_annotations().size() == 1 &&
+            u32_to_utf8(state.active_core().lua_annotations()[0].text).find("20") != std::string::npos) {
+            completed = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    expect(completed, "notebook run should produce an inline result annotation");
+    expect(
+        state.active_core().lua_annotations()[0].range.start.row == 4,
+        "notebook annotation should anchor to the last non-blank line of the cell");
+
+    std::string output_name = "notebook-python-" + std::to_string(buffer->id);
+    auto found = state.named_special_buffers.find(output_name);
+    expect(found != state.named_special_buffers.end(), "notebook run should create a linked output buffer");
+    EditorBuffer *output_buffer = state.session.find_buffer_by_id(found->second);
+    expect(output_buffer != nullptr, "notebook output buffer should exist");
+    expect(
+        buffer_text(output_buffer->core).find("=> 20") != std::string::npos,
+        "notebook output buffer should include the final result");
+
+    expect(state.lua.execute_command(state, "notebook-python-off", "", error_message), "notebook should disable");
+    state.lua.shutdown();
+    std::filesystem::remove_all(root);
+}
+
 void test_special_buffers_and_panel_reuse() {
     EditorState state;
     initialize_windows(state);
@@ -2006,6 +2395,69 @@ void test_popup_dismisses_when_buffer_is_closed() {
     expect_editor_state_sane(state, "popup dismissed on buffer close");
 }
 
+void test_key_inspector_reports_enter_and_escape_prefixed_enter() {
+    EditorState state;
+    initialize_windows(state);
+
+    state.key_inspector_armed = true;
+    handle_test_input_sequence(state, {{'\n', false}});
+    expect(state.popup.visible, "key inspector should show a popup for enter");
+    expect(state.popup.title == "Key Inspect", "key inspector popup should use the expected title");
+    std::string popup_text = u32_to_utf8(state.popup.text);
+    expect(popup_text.find("decoded=enter") != std::string::npos, "key inspector should decode enter");
+
+    state.dismiss_popup();
+    state.key_inspector_armed = true;
+    handle_test_input_sequence(state, {{27, false}, {'\n', false}});
+    expect(state.popup.visible, "key inspector should show a popup for escape-prefixed enter");
+    popup_text = u32_to_utf8(state.popup.text);
+    expect(
+        popup_text.find("raw[0]: key=27") != std::string::npos &&
+            popup_text.find("raw[1]: key=10") != std::string::npos,
+        "key inspector should report both escape and enter");
+    expect(
+        popup_text.find("decoded=alt-enter") != std::string::npos,
+        "escape-prefixed enter should decode to alt-enter");
+}
+
+void test_alt_enter_command_keybinding_executes_lua_command() {
+    std::filesystem::path root = std::filesystem::temp_directory_path() / "medit_alt_enter_command_keybinding";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+
+    std::filesystem::path keybindings_path = root / "keybindings.json";
+    {
+        std::ofstream file(keybindings_path);
+        file << "{\n"
+                "  \"normal\": {\n"
+                "    \"alt-enter\": \"command:notebook-run-cell\"\n"
+                "  }\n"
+                "}\n";
+    }
+
+    std::filesystem::path script_path = root / "init.lua";
+    {
+        std::ofstream script(script_path);
+        script << "medit.register_command('notebook-run-cell', function()\n"
+                  "  medit.set_status('cell ran')\n"
+                  "end)\n";
+    }
+
+    EditorState state;
+    initialize_windows(state);
+    state.keybindings = load_keybindings_from_path(keybindings_path);
+
+    std::string error_message;
+    expect(state.lua.initialize(state, script_path, error_message), "lua runtime should initialize for alt-enter binding test");
+    expect(error_message.empty(), "lua init should not fail for alt-enter binding test");
+
+    handle_test_input_sequence(state, {{27, false}, {'\n', false}});
+    expect(state.status_message == "cell ran", "alt-enter command binding should execute the Lua command");
+
+    state.lua.shutdown();
+    std::filesystem::remove_all(root);
+}
+
 void test_command_execution_preserves_command_status() {
     EditorState state;
     initialize_windows(state);
@@ -2092,6 +2544,20 @@ void test_tree_sitter_health_summary_for_empty_config() {
     std::string summary = tree_sitter_health_summary(config);
     expect(summary.contains("configured languages: 0"), "tree-sitter health should report zero configured languages");
     expect(summary.contains("syntax config: (default/none)"), "tree-sitter health should show missing syntax config");
+    expect(summary.contains("syntax chain: (none)"), "tree-sitter health should show missing syntax chain");
+}
+
+void test_tree_sitter_health_summary_reports_layered_chain() {
+    EditorConfig config;
+    config.syntax_config_path = std::filesystem::path("/tmp/final-syntax.json");
+    config.syntax_chain = {
+        std::filesystem::path("/tmp/base-syntax.json"),
+        std::filesystem::path("/tmp/final-syntax.json"),
+    };
+    std::string summary = tree_sitter_health_summary(config);
+    expect(
+        summary.contains("syntax chain: /tmp/base-syntax.json -> /tmp/final-syntax.json"),
+        "tree-sitter health should report layered syntax chains");
 }
 
 void test_infer_workspace_root() {
@@ -3105,6 +3571,11 @@ int main() {
         test_keybinding_hints();
         test_config_file_selects_keybindings_and_colors();
         test_lsp_config_rejects_duplicate_patterns();
+        test_layered_config_merges_and_records_chains();
+        test_meditrc_include_cycle_is_rejected();
+        test_lsp_include_cycle_is_rejected();
+        test_syntax_include_cycle_is_rejected();
+        test_layered_lsp_config_rejects_duplicate_patterns_after_merge();
         test_infer_language_id();
         test_lua_runtime_registers_and_executes_command();
         test_lua_runtime_passes_command_argument();
@@ -3113,6 +3584,9 @@ int main() {
         test_lua_runtime_rejects_invalid_line_annotations();
         test_lua_runtime_rejects_invalid_async_job_buffer();
         test_lua_calc_mode_annotations();
+        test_lua_events_include_buffer_id();
+        test_lua_persistent_process_callbacks_and_status();
+        test_lua_python_notebook_commands();
         test_special_buffers_and_panel_reuse();
         test_lua_async_job_streams_output_to_named_buffer();
         test_closing_buffer_clears_hidden_panel_buffer_reference();
@@ -3120,11 +3594,14 @@ int main() {
         test_invalid_buffer_ids_do_not_corrupt_windows_or_panel();
         test_popup_dismisses_when_buffer_context_changes();
         test_popup_dismisses_when_buffer_is_closed();
+        test_key_inspector_reports_enter_and_escape_prefixed_enter();
+        test_alt_enter_command_keybinding_executes_lua_command();
         test_command_execution_preserves_command_status();
         test_earlier_and_later_commands_step_through_history();
         test_earlier_and_later_commands_validate_arguments();
         test_earlier_and_later_commands_support_time_durations();
         test_tree_sitter_health_summary_for_empty_config();
+        test_tree_sitter_health_summary_reports_layered_chain();
         test_infer_workspace_root();
         test_process_utils_detect_missing_executables();
         test_cpp_syntax_highlighting();
