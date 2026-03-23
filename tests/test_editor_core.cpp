@@ -2017,6 +2017,76 @@ void test_command_execution_preserves_command_status() {
     expect(state.status_message != "NORMAL", "command result status should not be overwritten on exit");
 }
 
+void test_earlier_and_later_commands_step_through_history() {
+    EditorState state;
+    initialize_windows(state);
+
+    expect(state.active_core().insert_text({0, 0}, utf8_to_u32("a")), "seed history test change 1");
+    expect(state.active_core().insert_text({0, 1}, utf8_to_u32("b")), "seed history test change 2");
+    expect(state.active_core().insert_text({0, 2}, utf8_to_u32("c")), "seed history test change 3");
+    expect_text(state.active_core(), "abc", "history seed text should match");
+
+    state.enter_command_mode();
+    state.command_buffer = utf8_to_u32("earlier 2");
+    state.prompt_cursor = state.command_buffer.size();
+    state.execute_command();
+    expect_text(state.active_core(), "a", "earlier 2 should undo two changes");
+    expect(state.status_message == "Earlier 2 changes", "earlier should report completed changes");
+
+    state.enter_command_mode();
+    state.command_buffer = utf8_to_u32("later");
+    state.prompt_cursor = state.command_buffer.size();
+    state.execute_command();
+    expect_text(state.active_core(), "ab", "later without an argument should redo one change");
+    expect(state.status_message == "Later 1 change", "later should default to one change");
+}
+
+void test_earlier_and_later_commands_validate_arguments() {
+    EditorState state;
+    initialize_windows(state);
+
+    expect(state.active_core().insert_text({0, 0}, utf8_to_u32("abc")), "seed invalid history command test");
+
+    state.enter_command_mode();
+    state.command_buffer = utf8_to_u32("earlier foo");
+    state.prompt_cursor = state.command_buffer.size();
+    state.execute_command();
+    expect(state.status_message == "Invalid history step", "earlier should reject invalid history arguments");
+    expect_text(state.active_core(), "abc", "invalid earlier argument should not change the buffer");
+
+    state.enter_command_mode();
+    state.command_buffer = utf8_to_u32("later 0");
+    state.prompt_cursor = state.command_buffer.size();
+    state.execute_command();
+    expect(state.status_message == "History step count must be at least 1", "later should reject zero counts");
+}
+
+void test_earlier_and_later_commands_support_time_durations() {
+    EditorState state;
+    initialize_windows(state);
+
+    expect(state.active_core().insert_text({0, 0}, utf8_to_u32("a")), "seed timed history change 1");
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    expect(state.active_core().insert_text({0, 1}, utf8_to_u32("b")), "seed timed history change 2");
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    expect(state.active_core().insert_text({0, 2}, utf8_to_u32("c")), "seed timed history change 3");
+    expect_text(state.active_core(), "abc", "timed history seed text should match");
+
+    state.enter_command_mode();
+    state.command_buffer = utf8_to_u32("earlier 20ms");
+    state.prompt_cursor = state.command_buffer.size();
+    state.execute_command();
+    expect_text(state.active_core(), "ab", "earlier with a duration should undo recent timed changes");
+    expect(state.status_message == "Earlier 1 change", "timed earlier should report one change");
+
+    state.enter_command_mode();
+    state.command_buffer = utf8_to_u32("later 20ms");
+    state.prompt_cursor = state.command_buffer.size();
+    state.execute_command();
+    expect_text(state.active_core(), "abc", "later with a duration should redo recent timed changes");
+    expect(state.status_message == "Later 1 change", "timed later should report one change");
+}
+
 void test_tree_sitter_health_summary_for_empty_config() {
     EditorConfig config;
     std::string summary = tree_sitter_health_summary(config);
@@ -2093,6 +2163,48 @@ void test_cpp_syntax_highlighting() {
     expect(
         missing_language.error() == "configured syntax language not found: missing",
         "missing configured syntax should return explicit error");
+}
+
+void test_select_enclosing_ast_uses_local_syntax_tree() {
+    EditorState state;
+    initialize_windows(state);
+
+    std::filesystem::path repo_root = std::filesystem::current_path();
+    std::filesystem::path grammar_path = repo_root / "config/medit/grammars/libtree-sitter-python.so";
+    std::filesystem::path highlights_path = repo_root / "config/medit/queries/python/highlights.scm";
+    if (!std::filesystem::exists(grammar_path) || !std::filesystem::exists(highlights_path)) {
+        return;
+    }
+
+    state.config.syntax_languages.push_back(
+        {"python", {"*.py"}, grammar_path, "tree_sitter_python", highlights_path, {}});
+
+    state.active_core().open_empty_file((repo_root / "sample.py").string());
+    expect(
+        state.active_core().insert_text(
+            {0, 0},
+            utf8_to_u32("def f(x):\n    return x + 1\n")),
+        "seed local ast selection buffer");
+    state.active_core().set_cursor({1, 13});
+
+    std::expected<std::vector<Range>, std::string> ranges = selection_ranges_for_document(
+        state.active_core().lines(),
+        state.config,
+        state.active_core().file_path(),
+        state.active_core().cursor());
+    if (!ranges) {
+        if (ranges.error().contains("tree-sitter runtime library not found") ||
+            ranges.error().contains("could not load grammar library")) {
+            return;
+        }
+        throw std::runtime_error("local ast range computation failed: " + ranges.error());
+    }
+    expect(!ranges->empty(), "local syntax tree should provide at least one selection range");
+
+    state.select_enclosing_ast();
+    expect(state.mode == Mode::Visual, "local syntax tree selection should enter visual mode");
+    expect(state.displayed_selection_range(state.windows.active_window_id()).has_value(), "local syntax tree should select a range");
+    expect(state.status_message == "Selected AST node", "local syntax tree selection should report success");
 }
 
 void test_file_uri_normalization() {
@@ -3009,10 +3121,14 @@ int main() {
         test_popup_dismisses_when_buffer_context_changes();
         test_popup_dismisses_when_buffer_is_closed();
         test_command_execution_preserves_command_status();
+        test_earlier_and_later_commands_step_through_history();
+        test_earlier_and_later_commands_validate_arguments();
+        test_earlier_and_later_commands_support_time_durations();
         test_tree_sitter_health_summary_for_empty_config();
         test_infer_workspace_root();
         test_process_utils_detect_missing_executables();
         test_cpp_syntax_highlighting();
+        test_select_enclosing_ast_uses_local_syntax_tree();
         test_file_uri_normalization();
         test_string_utilities();
         test_popup_selection_accept_tokens();

@@ -1,5 +1,6 @@
 module;
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -283,6 +284,10 @@ export class EditorCore {
     bool replace_selection_with_yank();
     bool undo();
     bool redo();
+    std::size_t undo_steps(std::size_t count);
+    std::size_t redo_steps(std::size_t count);
+    std::size_t undo_for(std::chrono::system_clock::duration duration);
+    std::size_t redo_for(std::chrono::system_clock::duration duration);
     void begin_compound_edit();
     void end_compound_edit();
     void set_diagnostics(Diagnostics diagnostics);
@@ -301,14 +306,19 @@ export class EditorCore {
   private:
     friend struct EditorCommandAccess;
 
+    struct HistoryEntry {
+        std::unique_ptr<EditCommand> command;
+        std::chrono::system_clock::time_point committed_at{};
+    };
+
     Lines lines_;
     std::optional<std::string> file_path_;
     Position cursor_;
     std::optional<Position> selection_anchor_;
     SelectionMode selection_mode_ = SelectionMode::Character;
     std::size_t preferred_column_ = 0;
-    std::vector<std::unique_ptr<EditCommand>> undo_stack_;
-    std::vector<std::unique_ptr<EditCommand>> redo_stack_;
+    std::vector<HistoryEntry> undo_stack_;
+    std::vector<HistoryEntry> redo_stack_;
     std::vector<std::unique_ptr<EditCommand>> compound_commands_;
     Lines compound_before_lines_;
     Position compound_before_cursor_;
@@ -343,6 +353,8 @@ export class EditorCore {
     void emit_annotations_changed(const std::string &document_uri);
     void set_cursor_internal(Position position, bool emit_event);
     void restore_view_state_internal(const EditorViewState &view_state, bool emit_cursor_event);
+    std::optional<std::chrono::system_clock::time_point> current_history_time() const;
+    std::optional<std::chrono::system_clock::time_point> next_redo_time() const;
     void update_preferred_column();
     Position position_after_character(Position position) const;
     Position position_before(Position position) const;

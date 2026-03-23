@@ -4,6 +4,7 @@
 #include "lsp_service.hpp"
 #include "process_utils.hpp"
 #include "string_utils.hpp"
+#include "syntax.hpp"
 
 #ifdef _WIN32
 #include "pdcurses_compat.hpp"
@@ -1804,12 +1805,50 @@ void request_selection_range(EditorState &state) {
     state.handle_service_events();
 }
 
+bool apply_ast_selection_ranges(
+    EditorState &state,
+    Position cursor,
+    std::vector<Range> ranges,
+    const char *status_message) {
+    if (ranges.empty()) {
+        return false;
+    }
+
+    EditorState::WindowUiState &ui = state.active_buffer_ui();
+    EditorCore &core = state.active_core();
+    if (!core.set_selection_range(ranges.front(), SelectionMode::Character)) {
+        return false;
+    }
+    state.mode = Mode::Visual;
+    state.sync_window_view_from_core(state.windows.active_window_id());
+    ui.ast_selection_document_uri = core.document_uri();
+    ui.ast_selection_document_version = core.document_version();
+    ui.ast_selection_cursor = cursor;
+    ui.ast_selection_ranges = std::move(ranges);
+    ui.ast_selection_index = 0;
+    state.set_status(status_message);
+    return true;
+}
+
+bool request_local_selection_range(EditorState &state) {
+    EditorCore &core = state.active_core();
+    std::expected<std::vector<Range>, std::string> ranges =
+        selection_ranges_for_document(core.lines(), state.config, core.file_path(), core.cursor());
+    if (!ranges) {
+        return false;
+    }
+    return apply_ast_selection_ranges(state, core.cursor(), std::move(*ranges), "Selected AST node");
+}
+
 void EditorState::select_enclosing_ast() {
 EditorState::WindowUiState &ui = active_buffer_ui();
     EditorCore &core = active_core();
     bool cache_valid = ui.ast_selection_document_uri == core.document_uri() &&
         ui.ast_selection_document_version == core.document_version() && !ui.ast_selection_ranges.empty();
     if (!cache_valid) {
+        if (request_local_selection_range(*this)) {
+            return;
+        }
         request_selection_range(*this);
         return;
     }

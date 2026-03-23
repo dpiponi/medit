@@ -29,6 +29,11 @@ std::expected<std::vector<HighlightSpans>, std::string> highlight_document_synta
     const Lines &lines,
     const EditorConfig &config,
     const SyntaxSelection &selection);
+std::expected<std::vector<Range>, std::string> selection_ranges_for_document(
+    const Lines &lines,
+    const EditorConfig &config,
+    const std::optional<std::string> &file_path,
+    Position position);
 std::string tree_sitter_status_summary(const EditorConfig &config, const std::optional<std::string> &file_path);
 std::string tree_sitter_health_summary(const EditorConfig &config);
 void invalidate_syntax_runtime_cache();

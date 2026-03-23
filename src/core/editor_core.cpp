@@ -4,6 +4,7 @@ module;
 #include "text_encoding_utils.hpp"
 #include "uri_utils.hpp"
 
+#include <chrono>
 #include <codecvt>
 #include <cstddef>
 #include <algorithm>
@@ -26,6 +27,10 @@ namespace {
 std::uint64_t next_untitled_id() {
     static std::uint64_t next_id = 1;
     return next_id++;
+}
+
+std::chrono::system_clock::time_point history_now() {
+    return std::chrono::system_clock::now();
 }
 
 std::u32string buffer_text(const Lines &lines) {
@@ -412,6 +417,20 @@ EditorViewState EditorCore::view_state() const {
 
 void EditorCore::restore_view_state(const EditorViewState &view_state, bool emit_cursor_event) {
     restore_view_state_internal(view_state, emit_cursor_event);
+}
+
+std::optional<std::chrono::system_clock::time_point> EditorCore::current_history_time() const {
+    if (undo_stack_.empty()) {
+        return std::nullopt;
+    }
+    return undo_stack_.back().committed_at;
+}
+
+std::optional<std::chrono::system_clock::time_point> EditorCore::next_redo_time() const {
+    if (redo_stack_.empty()) {
+        return std::nullopt;
+    }
+    return redo_stack_.back().committed_at;
 }
 
 const Diagnostics &EditorCore::diagnostics() const {
@@ -1600,7 +1619,7 @@ void EditorCore::apply_command(std::unique_ptr<EditCommand> command) {
     suppress_cursor_events_ = true;
     command->apply(*this);
     suppress_cursor_events_ = false;
-    undo_stack_.push_back(std::move(command));
+    undo_stack_.push_back({std::move(command), history_now()});
     redo_stack_.clear();
     ++current_revision_;
     ++document_version_;
@@ -1635,7 +1654,7 @@ void EditorCore::end_compound_edit() {
         return;
     }
 
-    undo_stack_.push_back(std::make_unique<CompoundCommand>(std::move(compound_commands_)));
+    undo_stack_.push_back({std::make_unique<CompoundCommand>(std::move(compound_commands_)), history_now()});
     compound_commands_.clear();
     redo_stack_.clear();
     ++current_revision_;
@@ -2036,12 +2055,12 @@ bool EditorCore::undo() {
     }
     Lines before_lines = lines_;
     Position previous_cursor = cursor_;
-    std::unique_ptr<EditCommand> command = std::move(undo_stack_.back());
+    HistoryEntry entry = std::move(undo_stack_.back());
     undo_stack_.pop_back();
     suppress_cursor_events_ = true;
-    command->undo(*this);
+    entry.command->undo(*this);
     suppress_cursor_events_ = false;
-    redo_stack_.push_back(std::move(command));
+    redo_stack_.push_back(std::move(entry));
     if (current_revision_ > 0) {
         --current_revision_;
     }
@@ -2057,15 +2076,80 @@ bool EditorCore::redo() {
     }
     Lines before_lines = lines_;
     Position previous_cursor = cursor_;
-    std::unique_ptr<EditCommand> command = std::move(redo_stack_.back());
+    HistoryEntry entry = std::move(redo_stack_.back());
     redo_stack_.pop_back();
     suppress_cursor_events_ = true;
-    command->apply(*this);
+    entry.command->apply(*this);
     suppress_cursor_events_ = false;
-    undo_stack_.push_back(std::move(command));
+    undo_stack_.push_back(std::move(entry));
     ++current_revision_;
     ++document_version_;
     emit_document_changed(before_lines);
     emit_cursor_moved(previous_cursor);
     return true;
+}
+
+std::size_t EditorCore::undo_steps(std::size_t count) {
+    std::size_t completed = 0;
+    for (; completed < count; ++completed) {
+        if (!undo()) {
+            break;
+        }
+    }
+    return completed;
+}
+
+std::size_t EditorCore::redo_steps(std::size_t count) {
+    std::size_t completed = 0;
+    for (; completed < count; ++completed) {
+        if (!redo()) {
+            break;
+        }
+    }
+    return completed;
+}
+
+std::size_t EditorCore::undo_for(std::chrono::system_clock::duration duration) {
+    std::optional<std::chrono::system_clock::time_point> reference = current_history_time();
+    if (!reference) {
+        return 0;
+    }
+
+    std::chrono::system_clock::time_point target = *reference - duration;
+    std::size_t completed = 0;
+    while (true) {
+        std::optional<std::chrono::system_clock::time_point> current = current_history_time();
+        if (!current || *current <= target) {
+            break;
+        }
+        if (!undo()) {
+            break;
+        }
+        ++completed;
+    }
+    return completed;
+}
+
+std::size_t EditorCore::redo_for(std::chrono::system_clock::duration duration) {
+    std::optional<std::chrono::system_clock::time_point> reference = current_history_time();
+    if (!reference) {
+        reference = next_redo_time();
+    }
+    if (!reference) {
+        return 0;
+    }
+
+    std::chrono::system_clock::time_point target = *reference + duration;
+    std::size_t completed = 0;
+    while (true) {
+        std::optional<std::chrono::system_clock::time_point> current = current_history_time();
+        if (current && *current >= target) {
+            break;
+        }
+        if (!redo()) {
+            break;
+        }
+        ++completed;
+    }
+    return completed;
 }

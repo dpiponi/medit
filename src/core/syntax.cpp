@@ -1,6 +1,7 @@
 #include "syntax.hpp"
 
 #include "logger.hpp"
+#include "position_utils.hpp"
 #include "string_utils.hpp"
 #include "text_encoding_utils.hpp"
 
@@ -73,6 +74,9 @@ struct TreeSitterApi {
     TSTree *(*parser_parse_string)(TSParser *, const TSTree *, const char *, uint32_t) = nullptr;
     void (*tree_delete)(TSTree *) = nullptr;
     TSNode (*tree_root_node)(const TSTree *) = nullptr;
+    bool (*node_is_null)(TSNode) = nullptr;
+    TSNode (*node_parent)(TSNode) = nullptr;
+    TSNode (*node_named_descendant_for_point_range)(TSNode, TSPoint, TSPoint) = nullptr;
     TSPoint (*node_start_point)(TSNode) = nullptr;
     TSPoint (*node_end_point)(TSNode) = nullptr;
     TSQuery *(*query_new)(const TSLanguage *, const char *, uint32_t, uint32_t *, TSQueryError *) = nullptr;
@@ -176,6 +180,9 @@ TreeSitterApi load_tree_sitter_api() {
         !load(api.parser_parse_string, "ts_parser_parse_string") ||
         !load(api.tree_delete, "ts_tree_delete") ||
         !load(api.tree_root_node, "ts_tree_root_node") ||
+        !load(api.node_is_null, "ts_node_is_null") ||
+        !load(api.node_parent, "ts_node_parent") ||
+        !load(api.node_named_descendant_for_point_range, "ts_node_named_descendant_for_point_range") ||
         !load(api.node_start_point, "ts_node_start_point") ||
         !load(api.node_end_point, "ts_node_end_point") ||
         !load(api.query_new, "ts_query_new") ||
@@ -333,6 +340,58 @@ std::size_t codepoint_column_for_utf8_byte(const std::u32string &line, std::size
     return line.size();
 }
 
+std::size_t utf8_byte_column_for_codepoint(const std::u32string &line, std::size_t codepoint_column) {
+    std::size_t bytes = 0;
+    std::size_t clamped = std::min(codepoint_column, line.size());
+    for (std::size_t index = 0; index < clamped; ++index) {
+        bytes += u32_to_utf8(std::u32string(1, line[index])).size();
+    }
+    return bytes;
+}
+
+std::string buffer_text_utf8(const Lines &lines) {
+    std::u32string text;
+    for (std::size_t row = 0; row < lines.size(); ++row) {
+        text += lines[row];
+        if (row + 1 < lines.size()) {
+            text.push_back(U'\n');
+        }
+    }
+    return u32_to_utf8(text);
+}
+
+TSPoint point_for_position(const Lines &lines, Position position) {
+    if (lines.empty()) {
+        return {0, 0};
+    }
+    std::size_t row = std::min(position.row, lines.size() - 1);
+    std::size_t column = std::min(position.column, lines[row].size());
+    return {static_cast<uint32_t>(row), static_cast<uint32_t>(utf8_byte_column_for_codepoint(lines[row], column))};
+}
+
+std::optional<Range> range_from_ts_node(const Lines &lines, const TreeSitterApi &api, TSNode node) {
+    if (lines.empty() || api.node_is_null(node)) {
+        return std::nullopt;
+    }
+
+    TSPoint start = api.node_start_point(node);
+    TSPoint end = api.node_end_point(node);
+    if (start.row >= lines.size()) {
+        return std::nullopt;
+    }
+
+    std::size_t end_row = std::min<std::size_t>(end.row, lines.size() - 1);
+    Range range{
+        {start.row, codepoint_column_for_utf8_byte(lines[start.row], start.column)},
+        {end_row, codepoint_column_for_utf8_byte(lines[end_row], end.column)},
+    };
+    range = normalized_range(range);
+    if (range.start == range.end) {
+        return std::nullopt;
+    }
+    return range;
+}
+
 StyleRole capture_name_to_style_role(std::string_view capture_name) {
     if (capture_name.contains("comment")) {
         return StyleRole::SyntaxComment;
@@ -470,6 +529,42 @@ std::expected<std::vector<HighlightSpans>, std::string> highlight_tree_sitter_do
     return spans_by_line;
 }
 
+std::expected<std::vector<Range>, std::string> selection_ranges_tree_sitter_document(
+    const Lines &lines,
+    const SyntaxLanguageConfig &language,
+    Position position) {
+    std::expected<LoadedTreeSitterLanguage *, std::string> loaded = load_tree_sitter_language(language);
+    if (!loaded) {
+        return std::unexpected(loaded.error());
+    }
+
+    TreeSitterApi &api = tree_sitter_api();
+    std::string source = buffer_text_utf8(lines);
+    TSTree *tree = api.parser_parse_string((*loaded)->parser, nullptr, source.c_str(), static_cast<uint32_t>(source.size()));
+    if (!tree) {
+        return std::unexpected("tree-sitter parse failed for " + language.name);
+    }
+
+    TSNode root = api.tree_root_node(tree);
+    TSNode node = api.node_named_descendant_for_point_range(root, point_for_position(lines, position), point_for_position(lines, position));
+    std::vector<Range> ranges;
+    while (!api.node_is_null(node)) {
+        if (std::optional<Range> range = range_from_ts_node(lines, api, node)) {
+            if (ranges.empty() ||
+                !(ranges.back().start == range->start && ranges.back().end == range->end)) {
+                ranges.push_back(*range);
+            }
+        }
+        node = api.node_parent(node);
+    }
+    api.tree_delete(tree);
+
+    if (ranges.empty()) {
+        return std::unexpected("No enclosing AST range");
+    }
+    return ranges;
+}
+
 std::string syntax_engine_name(SyntaxEngine engine) {
     switch (engine) {
         case SyntaxEngine::None:
@@ -523,6 +618,18 @@ std::expected<std::vector<HighlightSpans>, std::string> highlight_document_synta
             return std::unexpected("configured syntax language not found: " + selection.language_name);
     }
     return std::vector<HighlightSpans>(lines.size());
+}
+
+std::expected<std::vector<Range>, std::string> selection_ranges_for_document(
+    const Lines &lines,
+    const EditorConfig &config,
+    const std::optional<std::string> &file_path,
+    Position position) {
+    const SyntaxLanguageConfig *language = matching_syntax_language(config, file_path);
+    if (!language) {
+        return std::unexpected("No local syntax tree");
+    }
+    return selection_ranges_tree_sitter_document(lines, *language, position);
 }
 
 std::string tree_sitter_status_summary(const EditorConfig &config, const std::optional<std::string> &file_path) {

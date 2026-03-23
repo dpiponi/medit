@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -709,6 +710,8 @@ enum class NamedEditorCommand {
     ForceQuit,
     WriteQuit,
     WriteIfChangedQuit,
+    Earlier,
+    Later,
     Edit,
     Buffers,
     Buffer,
@@ -735,12 +738,119 @@ struct NamedEditorCommandInfo {
     NamedEditorCommand command;
 };
 
-constexpr std::array<NamedEditorCommandInfo, 22> kNamedEditorCommands{{
+std::optional<std::size_t> parse_history_step_count(const std::string &argument, std::string &error_message) {
+    if (argument.empty()) {
+        return 1;
+    }
+
+    std::size_t parsed_length = 0;
+    std::size_t count = 0;
+    try {
+        count = std::stoull(argument, &parsed_length);
+    } catch (const std::exception &) {
+        error_message = "Invalid history step count";
+        return std::nullopt;
+    }
+
+    if (parsed_length != argument.size()) {
+        error_message = "Invalid history step count";
+        return std::nullopt;
+    }
+    if (count == 0) {
+        error_message = "History step count must be at least 1";
+        return std::nullopt;
+    }
+    return count;
+}
+
+std::optional<std::chrono::system_clock::duration> parse_history_step_duration(
+    const std::string &argument,
+    std::string &error_message) {
+    if (argument.empty()) {
+        return std::nullopt;
+    }
+
+    std::size_t digits_end = 0;
+    while (digits_end < argument.size() && std::isdigit(static_cast<unsigned char>(argument[digits_end])) != 0) {
+        ++digits_end;
+    }
+    if (digits_end == 0 || digits_end == argument.size()) {
+        return std::nullopt;
+    }
+
+    std::size_t value = 0;
+    try {
+        value = std::stoull(argument.substr(0, digits_end));
+    } catch (const std::exception &) {
+        error_message = "Invalid history duration";
+        return std::nullopt;
+    }
+    if (value == 0) {
+        error_message = "History duration must be positive";
+        return std::nullopt;
+    }
+
+    std::string unit = argument.substr(digits_end);
+    std::transform(unit.begin(), unit.end(), unit.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    if (unit == "ms") {
+        return std::chrono::milliseconds(value);
+    }
+    if (unit == "s") {
+        return std::chrono::seconds(value);
+    }
+    if (unit == "m") {
+        return std::chrono::minutes(value);
+    }
+    if (unit == "h") {
+        return std::chrono::hours(value);
+    }
+    if (unit == "d") {
+        return std::chrono::hours(24 * value);
+    }
+
+    error_message = "Unsupported history duration suffix";
+    return std::nullopt;
+}
+
+void execute_history_command(EditorState &state, bool earlier, const std::string &argument) {
+    EditorCore &core = state.active_core();
+    std::size_t completed = 0;
+    if (argument.empty() ||
+        std::all_of(argument.begin(), argument.end(), [](unsigned char ch) { return std::isdigit(ch) != 0; })) {
+        std::string error_message;
+        std::optional<std::size_t> requested_count = parse_history_step_count(argument, error_message);
+        if (!requested_count) {
+            state.set_status(error_message);
+            return;
+        }
+        completed = earlier ? core.undo_steps(*requested_count) : core.redo_steps(*requested_count);
+    } else {
+        std::string error_message;
+        std::optional<std::chrono::system_clock::duration> requested_duration =
+            parse_history_step_duration(argument, error_message);
+        if (!requested_duration) {
+            state.set_status(error_message.empty() ? "Invalid history step" : error_message);
+            return;
+        }
+        completed = earlier ? core.undo_for(*requested_duration) : core.redo_for(*requested_duration);
+    }
+
+    if (completed == 0) {
+        state.set_status(earlier ? "Nothing to undo" : "Nothing to redo");
+        return;
+    }
+
+    state.set_status(std::string(earlier ? "Earlier " : "Later ") + count_label(completed, "change"));
+}
+
+constexpr std::array<NamedEditorCommandInfo, 24> kNamedEditorCommands{{
     {"w", "write current buffer", "w", NamedEditorCommand::Write},
     {"q", "quit", "q", NamedEditorCommand::Quit},
     {"q!", "force quit", "q!", NamedEditorCommand::ForceQuit},
     {"wq", "write and quit", "wq", NamedEditorCommand::WriteQuit},
     {"x", "write and quit if modified", "x", NamedEditorCommand::WriteIfChangedQuit},
+    {"earlier", "undo earlier changes by count or time", "earlier ", NamedEditorCommand::Earlier},
+    {"later", "redo later changes by count or time", "later ", NamedEditorCommand::Later},
     {"e", "edit file in active window", "e ", NamedEditorCommand::Edit},
     {"buffers", "list open buffers", "buffers", NamedEditorCommand::Buffers},
     {"buffer", "switch to buffer", "buffer ", NamedEditorCommand::Buffer},
@@ -924,6 +1034,12 @@ void execute_named_editor_command(
             break;
         case NamedEditorCommand::WriteIfChangedQuit:
             state.handle_write_quit_command(argument);
+            break;
+        case NamedEditorCommand::Earlier:
+            execute_history_command(state, true, argument);
+            break;
+        case NamedEditorCommand::Later:
+            execute_history_command(state, false, argument);
             break;
         case NamedEditorCommand::Edit:
             state.handle_edit_command(argument);
