@@ -278,6 +278,7 @@ struct EditorState {
     bool diagnostics_visible = true;
     bool insert_session_active = false;
     bool pending_config_reload = false;
+    bool key_inspector_armed = false;
     std::optional<CommandSelectionSnapshot> command_selection_snapshot;
     PendingInputState pending;
     CommandRecordingState recording;
@@ -371,6 +372,7 @@ struct EditorState {
     void set_search_status(const std::string &suffix = "");
     void show_command_completion();
     void execute_command();
+    void execute_command_text(const std::string &command);
     void dispatch_editor_event(const EditorEvent &event);
     void dispatch_editor_events(EditorCore &core);
     bool handle_popup_input(const std::string &token);

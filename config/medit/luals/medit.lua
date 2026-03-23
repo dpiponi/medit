@@ -18,6 +18,7 @@
 ---@field type string
 ---@field document_uri string
 ---@field document_version integer
+---@field buffer_id integer|nil
 ---@field cursor MeditEventPosition
 ---@field range MeditEventRange|nil
 ---@field text string
@@ -28,6 +29,19 @@
 ---@field on_exit fun(job_id: integer, exit_code: integer)|nil
 
 ---@class MeditJobStatus
+---@field running boolean
+---@field exit_code integer
+---@field command string
+---@field buffer_id integer|nil
+
+---@class MeditProcessSpec
+---@field command string
+---@field buffer_id integer|nil
+---@field on_stdout fun(process_id: integer, text: string)|nil
+---@field on_stderr fun(process_id: integer, text: string)|nil
+---@field on_exit fun(process_id: integer, exit_code: integer)|nil
+
+---@class MeditProcessStatus
 ---@field running boolean
 ---@field exit_code integer
 ---@field command string
@@ -181,6 +195,25 @@ function M.job_start(spec) end
 ---@param job_id integer
 ---@return MeditJobStatus|nil
 function M.job_status(job_id) end
+
+---@param spec MeditProcessSpec
+---@return integer
+function M.process_start(spec) end
+
+---@param process_id integer
+---@param text string
+---@return boolean
+function M.process_send(process_id, text) end
+
+---@param process_id integer
+function M.process_close_stdin(process_id) end
+
+---@param process_id integer
+---@return MeditProcessStatus|nil
+function M.process_status(process_id) end
+
+---@param process_id integer
+function M.process_stop(process_id) end
 
 ---@return string|nil
 function M.resolve_ai_command() end

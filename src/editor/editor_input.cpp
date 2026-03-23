@@ -653,6 +653,40 @@ bool token_is_printable_for_replay(const std::string &token) {
     return true;
 }
 
+struct RawKeySample {
+    wint_t key = 0;
+    bool is_special = false;
+};
+
+std::string describe_raw_key_token(const RawKeySample &sample) {
+    std::optional<std::string> token = key_token(sample.key, sample.is_special);
+    return token ? *token : "(none)";
+}
+
+std::string describe_raw_key_line(const RawKeySample &sample) {
+    return
+        "key=" + std::to_string(static_cast<long long>(sample.key)) +
+        " special=" + std::string(sample.is_special ? "true" : "false") +
+        " token=" + describe_raw_key_token(sample);
+}
+
+void show_key_inspector_result(
+    EditorState &state,
+    const std::vector<RawKeySample> &samples,
+    const std::optional<std::string> &decoded_token,
+    const std::string &note = {}) {
+    std::string body;
+    for (std::size_t index = 0; index < samples.size(); ++index) {
+        body += "raw[" + std::to_string(index) + "]: " + describe_raw_key_line(samples[index]) + "\n";
+    }
+    body += "decoded=" + (decoded_token ? *decoded_token : "(none)") + "\n";
+    if (!note.empty()) {
+        body += "note=" + note + "\n";
+    }
+    state.show_popup("Key Inspect", utf8_to_u32(body));
+    state.set_status("Key inspect captured");
+}
+
 void execute_dispatch(EditorState &state, const KeyDispatch &dispatch, wint_t key);
 void process_input_token(EditorState &state, const std::string &token, wint_t key, bool printable);
 
@@ -692,6 +726,69 @@ std::optional<std::string> shift_home_end_token_from_escape(const std::vector<wi
         default:
             return std::nullopt;
     }
+}
+
+std::vector<RawKeySample> collect_escape_followup_from_terminal(EditorState &state) {
+    std::vector<RawKeySample> samples;
+    wint_t next_key = 0;
+    timeout(0);
+    int next_result = get_wch(&next_key);
+    std::optional<int> timeout_ms = state.runtime.idle_wait_timeout_ms();
+    timeout(timeout_ms.has_value() ? *timeout_ms : -1);
+    if (next_result == ERR) {
+        return samples;
+    }
+
+    bool next_special = next_result == KEY_CODE_YES;
+    samples.push_back({next_key, next_special});
+    if (!next_special) {
+        timeout(0);
+        while (samples.size() < 5) {
+            wint_t extra_key = 0;
+            int extra_result = get_wch(&extra_key);
+            if (extra_result == ERR) {
+                break;
+            }
+            samples.push_back({extra_key, extra_result == KEY_CODE_YES});
+            if (extra_result == KEY_CODE_YES) {
+                break;
+            }
+        }
+        timeout(timeout_ms.has_value() ? *timeout_ms : -1);
+    }
+    return samples;
+}
+
+std::optional<std::string> decode_escape_samples(const std::vector<RawKeySample> &samples) {
+    if (samples.empty()) {
+        return std::nullopt;
+    }
+    if (samples.size() == 1 && samples[0].is_special && samples[0].key == KEY_UP) {
+        return "alt-up";
+    }
+    if (samples.size() == 1 && samples[0].is_special && samples[0].key == KEY_DOWN) {
+        return "alt-down";
+    }
+    if (samples.size() == 1 && !samples[0].is_special &&
+        (samples[0].key == '\n' || samples[0].key == '\r' || samples[0].key == KEY_ENTER)) {
+        return "alt-enter";
+    }
+
+    std::vector<wint_t> keys;
+    keys.reserve(samples.size());
+    for (const RawKeySample &sample : samples) {
+        keys.push_back(sample.key);
+        if (sample.is_special) {
+            break;
+        }
+    }
+    if (std::optional<std::string> shift_token = shift_arrow_token_from_escape(keys)) {
+        return shift_token;
+    }
+    if (std::optional<std::string> shift_token = shift_home_end_token_from_escape(keys)) {
+        return shift_token;
+    }
+    return std::nullopt;
 }
 
 void execute_expansion(EditorState &state, const std::vector<std::string> &expansion) {
@@ -1426,6 +1523,11 @@ void execute_dispatch(EditorState &state, const KeyDispatch &dispatch, wint_t ke
         }
         return;
     }
+    if (dispatch.command) {
+        take_repeat_count(state);
+        state.execute_command_text(*dispatch.command);
+        return;
+    }
     if (dispatch.action) {
         if (action_handles_own_repeat(*dispatch.action)) {
             execute_action(state, *dispatch.action, key);
@@ -1642,6 +1744,23 @@ void EditorState::handle_input() {
     }
     record_input_corpus_event(key, is_special);
 
+    if (key_inspector_armed) {
+        key_inspector_armed = false;
+        std::vector<RawKeySample> samples{{key, is_special}};
+        std::optional<std::string> decoded = key_token(key, is_special);
+        std::string note;
+        if (!is_special && key == 27) {
+            std::vector<RawKeySample> followup = collect_escape_followup_from_terminal(*this);
+            samples.insert(samples.end(), followup.begin(), followup.end());
+            decoded = decode_escape_samples(followup);
+            if (samples.size() > 1 && !decoded) {
+                note = "escape-prefixed input was received, but medit does not currently decode it as a dedicated token";
+            }
+        }
+        show_key_inspector_result(*this, samples, decoded, note);
+        return;
+    }
+
     if (!is_special && key == 27) {
         wint_t next_key = 0;
         std::vector<wint_t> escape_keys;
@@ -1656,6 +1775,8 @@ void EditorState::handle_input() {
                 alt_token = "alt-up";
             } else if (next_special && next_key == KEY_DOWN) {
                 alt_token = "alt-down";
+            } else if (!next_special && (next_key == '\n' || next_key == '\r' || next_key == KEY_ENTER)) {
+                alt_token = "alt-enter";
             }
             if (alt_token) {
                 process_input_token(*this, *alt_token, next_key, false);
@@ -1723,6 +1844,32 @@ void handle_test_input_sequence(EditorState &state, const std::vector<InjectedKe
         bool is_special = events[index].is_special;
         ++index;
 
+        if (state.key_inspector_armed) {
+            state.key_inspector_armed = false;
+            std::vector<RawKeySample> samples{{key, is_special}};
+            std::optional<std::string> decoded = key_token(key, is_special);
+            std::string note;
+            if (!is_special && key == 27) {
+                std::vector<RawKeySample> followup;
+                std::size_t lookahead = index;
+                while (lookahead < events.size() && followup.size() < 5) {
+                    followup.push_back({events[lookahead].key, events[lookahead].is_special});
+                    ++lookahead;
+                    if (followup.back().is_special) {
+                        break;
+                    }
+                }
+                index = lookahead;
+                samples.insert(samples.end(), followup.begin(), followup.end());
+                decoded = decode_escape_samples(followup);
+                if (samples.size() > 1 && !decoded) {
+                    note = "escape-prefixed input was received, but medit does not currently decode it as a dedicated token";
+                }
+            }
+            show_key_inspector_result(state, samples, decoded, note);
+            continue;
+        }
+
         if (!is_special && key == 27 && index < events.size()) {
             const InjectedKeyEvent &next = events[index];
             std::optional<std::string> alt_token;
@@ -1730,6 +1877,8 @@ void handle_test_input_sequence(EditorState &state, const std::vector<InjectedKe
                 alt_token = "alt-up";
             } else if (next.is_special && next.key == KEY_DOWN) {
                 alt_token = "alt-down";
+            } else if (!next.is_special && (next.key == '\n' || next.key == '\r' || next.key == KEY_ENTER)) {
+                alt_token = "alt-enter";
             }
             if (alt_token) {
                 process_input_token(state, *alt_token, next.key, false);

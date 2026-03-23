@@ -26,6 +26,7 @@ enum class NamedEditorCommand {
     Diagnostics,
     LspStatus,
     TreeSitterStatus,
+    InspectKey,
 };
 
 struct NamedEditorCommandInfo {

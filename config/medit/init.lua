@@ -6,6 +6,18 @@ local function home_path(relative)
   return home .. "/" .. relative
 end
 
+local init_script_dir = medit.current_working_directory() .. "/config/medit"
+do
+  local source = debug.getinfo(1, "S").source
+  if source and string.sub(source, 1, 1) == "@" then
+    local script_path = string.sub(source, 2)
+    local dir = string.match(script_path, "^(.*)/[^/]*$")
+    if dir and dir ~= "" then
+      init_script_dir = dir
+    end
+  end
+end
+
 local function show_status_summary()
   local status = medit.status()
   medit.set_status(
@@ -419,6 +431,526 @@ end
 local function calc_mode_health()
   local bc = medit.executable_exists("bc") and "yes" or "no"
   return string.format("bc=%s", bc)
+end
+
+local notebook_modes = {}
+
+local function notebook_python_executable()
+  if medit.executable_exists("python3") then
+    return "python3"
+  end
+  if medit.executable_exists("python") then
+    return "python"
+  end
+  return nil
+end
+
+local function notebook_python_helper_path()
+  return init_script_dir .. "/notebook_python.py"
+end
+
+local function notebook_state_for_buffer(buffer_id)
+  local state = notebook_modes[buffer_id]
+  if not state then
+    state = {
+      enabled = false,
+      cells = {},
+      cell_states = {},
+      queued_cells = {},
+      protocol_buffer = "",
+      kernel_process_id = nil,
+      output_buffer_id = nil
+    }
+    notebook_modes[buffer_id] = state
+  end
+  return state
+end
+
+local function notebook_trim(text)
+  return string.match(text or "", "^%s*(.-)%s*$")
+end
+
+local function notebook_compact_summary(text)
+  local summary = notebook_trim(first_line(text))
+  if summary == "" then
+    return nil
+  end
+  if #summary > 60 then
+    summary = string.sub(summary, 1, 57) .. "..."
+  end
+  return summary
+end
+
+local function notebook_output_buffer_name(buffer_id)
+  return string.format("notebook-python-%d", buffer_id)
+end
+
+local function notebook_output_buffer_id(buffer_id)
+  local state = notebook_state_for_buffer(buffer_id)
+  state.output_buffer_id = medit.create_buffer(notebook_output_buffer_name(buffer_id), "output")
+  return state.output_buffer_id
+end
+
+local function notebook_append_output(buffer_id, text)
+  if not text or text == "" then
+    return
+  end
+  medit.append_buffer(notebook_output_buffer_id(buffer_id), text)
+end
+
+local function notebook_clear_output_buffer(buffer_id)
+  local buffer_id_value = notebook_output_buffer_id(buffer_id)
+  medit.clear_buffer(buffer_id_value)
+end
+
+local function notebook_show_output(buffer_id)
+  medit.show_buffer_in_panel(notebook_output_buffer_id(buffer_id), false)
+end
+
+local function notebook_cell_header(line)
+  return string.match(line or "", "^%s*# %%%%")
+end
+
+local function notebook_non_whitespace_line(line)
+  return notebook_trim(line or "") ~= ""
+end
+
+local function notebook_parse_cells(buffer_id)
+  local state = notebook_state_for_buffer(buffer_id)
+  local cells = {}
+  local lines = split_lines(medit.get_buffer_text())
+  local current = nil
+
+  for row, line in ipairs(lines) do
+    local zero_row = row - 1
+    if notebook_cell_header(line) then
+      if current then
+        current.end_row = zero_row - 1
+        current.code = table.concat(current.code_lines, "\n")
+        table.insert(cells, current)
+      end
+      current = {
+        index = #cells + 1,
+        header_row = zero_row,
+        annotation_row = zero_row,
+        start_row = zero_row,
+        end_row = zero_row,
+        code_lines = {}
+      }
+    elseif current then
+      table.insert(current.code_lines, line)
+      current.end_row = zero_row
+      if notebook_non_whitespace_line(line) then
+        current.annotation_row = zero_row
+      end
+      current.code = table.concat(current.code_lines, "\n")
+    end
+  end
+
+  if current then
+    current.code = table.concat(current.code_lines, "\n")
+    table.insert(cells, current)
+  end
+
+  state.cells = cells
+  local new_states = {}
+  for _, cell in ipairs(cells) do
+    new_states[cell.index] = state.cell_states[cell.index] or {}
+  end
+  state.cell_states = new_states
+end
+
+local function notebook_cell_for_cursor(buffer_id)
+  local state = notebook_state_for_buffer(buffer_id)
+  local cursor = medit.get_cursor()
+  for _, cell in ipairs(state.cells) do
+    if cursor.row >= cell.start_row and cursor.row <= cell.end_row then
+      return cell
+    end
+  end
+  return nil
+end
+
+local function notebook_refresh_annotations(buffer_id)
+  local state = notebook_state_for_buffer(buffer_id)
+  local annotations = {}
+  for _, cell in ipairs(state.cells) do
+    local cell_state = state.cell_states[cell.index] or {}
+    local text = nil
+    local severity = "info"
+    if cell_state.running then
+      text = " running "
+    elseif cell_state.error_summary then
+      text = " error: " .. cell_state.error_summary .. " "
+      severity = "error"
+    elseif cell_state.result_summary then
+      text = " = " .. cell_state.result_summary .. " "
+    elseif cell_state.output_summary then
+      text = " out: " .. cell_state.output_summary .. " "
+    end
+
+    if text then
+      table.insert(annotations, {
+        line = cell.annotation_row or cell.header_row,
+        text = text,
+        severity = severity,
+        source = "notebook-python"
+      })
+    end
+  end
+  set_annotation_source(buffer_id, "notebook-python", annotations)
+end
+
+local function notebook_reset_cell_state(cell_state)
+  cell_state.running = false
+  cell_state.result_summary = nil
+  cell_state.output_summary = nil
+  cell_state.error_summary = nil
+end
+
+local function notebook_kernel_running(buffer_id)
+  local state = notebook_state_for_buffer(buffer_id)
+  if not state.kernel_process_id then
+    return false
+  end
+  local status = medit.process_status(state.kernel_process_id)
+  return status ~= nil and status.running == true
+end
+
+local function notebook_handle_protocol_event(buffer_id, event_name, cell_index, payload)
+  local state = notebook_modes[buffer_id]
+  if not state then
+    return
+  end
+  local cell_state = state.cell_states[cell_index]
+
+  if event_name == "ready" then
+    return
+  end
+  if not cell_state then
+    return
+  end
+
+  if event_name == "started" then
+    notebook_reset_cell_state(cell_state)
+    cell_state.running = true
+    notebook_refresh_annotations(buffer_id)
+    return
+  end
+
+  if event_name == "stdout" then
+    notebook_append_output(buffer_id, payload)
+    cell_state.output_summary = notebook_compact_summary(payload) or cell_state.output_summary
+    notebook_refresh_annotations(buffer_id)
+    return
+  end
+
+  if event_name == "stderr" then
+    notebook_append_output(buffer_id, payload)
+    cell_state.error_summary = notebook_compact_summary(payload) or "stderr"
+    notebook_refresh_annotations(buffer_id)
+    return
+  end
+
+  if event_name == "result" then
+    notebook_append_output(buffer_id, "=> " .. payload .. "\n")
+    cell_state.result_summary = notebook_compact_summary(payload)
+    notebook_refresh_annotations(buffer_id)
+    return
+  end
+
+  if event_name == "error" then
+    notebook_append_output(buffer_id, payload)
+    cell_state.error_summary = notebook_compact_summary(payload) or "error"
+    notebook_refresh_annotations(buffer_id)
+    return
+  end
+
+  if event_name == "done" then
+    cell_state.running = false
+    notebook_refresh_annotations(buffer_id)
+
+    local next_index = nil
+    if payload == "ok" and #state.queued_cells > 0 then
+      next_index = table.remove(state.queued_cells, 1)
+    else
+      state.queued_cells = {}
+    end
+    if next_index then
+      local next_cell = state.cells[next_index]
+      if next_cell then
+        notebook_append_output(buffer_id, string.format("\n# Cell %d\n", next_cell.index))
+        notebook_reset_cell_state(state.cell_states[next_cell.index])
+        medit.process_send(
+          state.kernel_process_id,
+          string.format("MEDIT exec %d %d\n%s", next_cell.index, #next_cell.code, next_cell.code)
+        )
+      end
+    end
+  end
+end
+
+local function notebook_consume_protocol(buffer_id, chunk)
+  local state = notebook_modes[buffer_id]
+  if not state then
+    return
+  end
+  state.protocol_buffer = (state.protocol_buffer or "") .. (chunk or "")
+
+  while true do
+    local header_end = string.find(state.protocol_buffer, "\n", 1, true)
+    if not header_end then
+      return
+    end
+
+    local header = string.sub(state.protocol_buffer, 1, header_end - 1)
+    local event_name, cell_text, length_text = string.match(header, "^MEDIT ([a-z_]+) ([^ ]+) (%d+)$")
+    if not event_name then
+      state.protocol_buffer = ""
+      return
+    end
+
+    local payload_length = tonumber(length_text)
+    local total_length = header_end + payload_length
+    if #state.protocol_buffer < total_length then
+      return
+    end
+
+    local payload = string.sub(state.protocol_buffer, header_end + 1, header_end + payload_length)
+    state.protocol_buffer = string.sub(state.protocol_buffer, total_length + 1)
+    notebook_handle_protocol_event(buffer_id, event_name, tonumber(cell_text) or 0, payload)
+  end
+end
+
+local function notebook_kernel_command()
+  local python = notebook_python_executable()
+  if not python then
+    return nil, "Missing executable: python3/python"
+  end
+
+  local helper_path = notebook_python_helper_path()
+  if not medit.file_exists(helper_path) then
+    return nil, "Missing notebook helper: " .. helper_path
+  end
+
+  return python .. " -u " .. medit.shell_quote(helper_path)
+end
+
+local function notebook_start_kernel(buffer_id)
+  local state = notebook_state_for_buffer(buffer_id)
+  if notebook_kernel_running(buffer_id) then
+    return true
+  end
+
+  local command, err = notebook_kernel_command()
+  if not command then
+    medit.set_status(err)
+    return false
+  end
+
+  state.protocol_buffer = ""
+  state.kernel_process_id = medit.process_start({
+    command = command,
+    on_stdout = function(_, text)
+      notebook_consume_protocol(buffer_id, text)
+    end,
+    on_stderr = function(_, text)
+      notebook_append_output(buffer_id, text)
+      medit.set_status("Notebook kernel stderr")
+    end,
+    on_exit = function(_, exit_code)
+      local current = notebook_modes[buffer_id]
+      if not current then
+        return
+      end
+      current.kernel_process_id = nil
+      current.queued_cells = {}
+      for _, cell_state in pairs(current.cell_states) do
+        cell_state.running = false
+      end
+      notebook_refresh_annotations(buffer_id)
+      medit.set_status(string.format("Notebook kernel exited (%d)", exit_code))
+    end
+  })
+  return true
+end
+
+local function notebook_stop_kernel(buffer_id)
+  local state = notebook_state_for_buffer(buffer_id)
+  if state.kernel_process_id then
+    medit.process_stop(state.kernel_process_id)
+    state.kernel_process_id = nil
+  end
+  state.queued_cells = {}
+  state.protocol_buffer = ""
+end
+
+local function notebook_submit_cell(buffer_id, cell)
+  local state = notebook_state_for_buffer(buffer_id)
+  if not cell then
+    medit.set_status("No notebook cell under cursor")
+    return false
+  end
+  if notebook_trim(cell.code or "") == "" then
+    medit.set_status("Notebook cell is empty")
+    return false
+  end
+  if not notebook_start_kernel(buffer_id) then
+    return false
+  end
+
+  notebook_append_output(buffer_id, string.format("\n# Cell %d\n", cell.index))
+  notebook_reset_cell_state(state.cell_states[cell.index])
+  local ok = medit.process_send(
+    state.kernel_process_id,
+    string.format("MEDIT exec %d %d\n%s", cell.index, #cell.code, cell.code)
+  )
+  if not ok then
+    medit.set_status("Notebook kernel is not accepting input")
+    return false
+  end
+  return true
+end
+
+local function notebook_refresh_active_buffer(event)
+  local buffer_id = event and event.buffer_id or current_buffer_id()
+  if buffer_id ~= current_buffer_id() then
+    return
+  end
+  local state = notebook_modes[buffer_id]
+  if not state or not state.enabled then
+    return
+  end
+  notebook_parse_cells(buffer_id)
+  notebook_refresh_annotations(buffer_id)
+end
+
+local function notebook_python_on()
+  local buffer_id = current_buffer_id()
+  local state = notebook_state_for_buffer(buffer_id)
+  state.enabled = true
+  notebook_parse_cells(buffer_id)
+  notebook_refresh_annotations(buffer_id)
+  if not notebook_start_kernel(buffer_id) then
+    return
+  end
+  medit.set_status("Notebook Python on")
+end
+
+local function notebook_python_off()
+  local buffer_id = current_buffer_id()
+  local state = notebook_modes[buffer_id]
+  if not state then
+    return
+  end
+  notebook_stop_kernel(buffer_id)
+  notebook_modes[buffer_id] = nil
+  set_annotation_source(buffer_id, "notebook-python", nil)
+  medit.set_status("Notebook Python off")
+end
+
+local function notebook_run_cell()
+  local buffer_id = current_buffer_id()
+  local state = notebook_state_for_buffer(buffer_id)
+  if not state.enabled then
+    medit.set_status("Notebook Python is off")
+    return
+  end
+  if #state.queued_cells > 0 then
+    medit.set_status("Notebook run already in progress")
+    return
+  end
+  notebook_parse_cells(buffer_id)
+  local cell = notebook_cell_for_cursor(buffer_id)
+  if notebook_submit_cell(buffer_id, cell) then
+    medit.set_status(string.format("Notebook cell %d running", cell.index))
+  end
+end
+
+local function notebook_run_all()
+  local buffer_id = current_buffer_id()
+  local state = notebook_state_for_buffer(buffer_id)
+  if not state.enabled then
+    medit.set_status("Notebook Python is off")
+    return
+  end
+  if #state.queued_cells > 0 then
+    medit.set_status("Notebook run already in progress")
+    return
+  end
+  notebook_parse_cells(buffer_id)
+  if #state.cells == 0 then
+    medit.set_status("No notebook cells found")
+    return
+  end
+
+  state.queued_cells = {}
+  for index = 2, #state.cells do
+    table.insert(state.queued_cells, index)
+  end
+  if notebook_submit_cell(buffer_id, state.cells[1]) then
+    medit.set_status("Notebook run all started")
+  else
+    state.queued_cells = {}
+  end
+end
+
+local function notebook_clear_output()
+  local buffer_id = current_buffer_id()
+  local state = notebook_modes[buffer_id]
+  if not state then
+    medit.set_status("Notebook Python is off")
+    return
+  end
+  notebook_clear_output_buffer(buffer_id)
+  for _, cell_state in pairs(state.cell_states) do
+    notebook_reset_cell_state(cell_state)
+  end
+  notebook_refresh_annotations(buffer_id)
+  medit.set_status("Notebook output cleared")
+end
+
+local function notebook_restart_kernel()
+  local buffer_id = current_buffer_id()
+  local state = notebook_modes[buffer_id]
+  if not state or not state.enabled then
+    medit.set_status("Notebook Python is off")
+    return
+  end
+  notebook_stop_kernel(buffer_id)
+  if notebook_start_kernel(buffer_id) then
+    medit.set_status("Notebook kernel restarted")
+  end
+end
+
+local function notebook_show_output_command()
+  local buffer_id = current_buffer_id()
+  local state = notebook_modes[buffer_id]
+  if not state or not state.enabled then
+    medit.set_status("Notebook Python is off")
+    return
+  end
+  notebook_show_output(buffer_id)
+  medit.set_status("Notebook output")
+end
+
+local function notebook_cleanup(event)
+  local buffer_id = event and event.buffer_id
+  if not buffer_id then
+    return
+  end
+  local state = notebook_modes[buffer_id]
+  if not state then
+    return
+  end
+  notebook_stop_kernel(buffer_id)
+  notebook_modes[buffer_id] = nil
+end
+
+local function notebook_python_health()
+  local python = notebook_python_executable() and "yes" or "no"
+  local helper = medit.file_exists(notebook_python_helper_path()) and "yes" or "no"
+  return string.format("python=%s helper=%s", python, helper)
 end
 
 local function dirname(path)
@@ -836,21 +1368,35 @@ medit.register_command("calc-mode-on", enable_calc_mode)
 medit.register_command("calc-mode-off", disable_calc_mode)
 medit.register_command("calc-mode-toggle", toggle_calc_mode)
 medit.register_command("calc-refresh", calc_refresh)
+medit.register_command("notebook-python-on", notebook_python_on)
+medit.register_command("notebook-python-off", notebook_python_off)
+medit.register_command("notebook-run-cell", notebook_run_cell)
+medit.register_command("notebook-run-all", notebook_run_all)
+medit.register_command("notebook-clear-output", notebook_clear_output)
+medit.register_command("notebook-restart-kernel", notebook_restart_kernel)
+medit.register_command("notebook-show-output", notebook_show_output_command)
 medit.register_health_check("find-file", find_file_health)
 medit.register_health_check("grep", grep_health)
 medit.register_health_check("pick-theme", pick_theme_health)
 medit.register_health_check("ai", ai_health)
 medit.register_health_check("make", make_health)
 medit.register_health_check("calc-mode", calc_mode_health)
+medit.register_health_check("notebook-python", notebook_python_health)
 medit.on("document_opened", function(event)
   refresh_theme_preview()
   refresh_calc_mode(event)
+  notebook_refresh_active_buffer(event)
 end)
 medit.on("document_changed", function(event)
   refresh_theme_preview()
   refresh_calc_mode(event)
+  notebook_refresh_active_buffer(event)
 end)
 medit.on("document_saved", function(event)
   refresh_theme_preview()
   refresh_calc_mode(event)
+  notebook_refresh_active_buffer(event)
+end)
+medit.on("document_closed", function(event)
+  notebook_cleanup(event)
 end)

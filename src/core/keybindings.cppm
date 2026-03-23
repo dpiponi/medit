@@ -139,6 +139,7 @@ export struct KeyBinding {
     std::string mode;
     std::vector<std::string> sequence;
     std::optional<EditorAction> action;
+    std::optional<std::string> command;
     std::vector<std::string> expansion;
 };
 
@@ -151,6 +152,7 @@ export struct KeyDispatch {
     bool matched = false;
     bool waiting_for_more = false;
     std::optional<EditorAction> action;
+    std::optional<std::string> command;
     std::vector<std::string> expansion;
 };
 
@@ -565,6 +567,9 @@ std::string describe_binding(const KeyBinding &binding) {
     if (binding.action) {
         return humanize_action_name(action_name_impl(*binding.action));
     }
+    if (binding.command) {
+        return "command " + *binding.command;
+    }
     return "exec " + join_tokens(binding.expansion, 0);
 }
 
@@ -602,11 +607,24 @@ KeyBindings parse_keybindings_source(const std::string &source, const std::strin
         }
         for (const auto &binding_entry : mode_entry.value().items()) {
             if (binding_entry.value().is_string()) {
-                std::optional<EditorAction> action = action_from_name(binding_entry.value().get<std::string>());
-                if (!action) {
-                    throw std::runtime_error("unknown action in keybindings: " + binding_entry.value().get<std::string>());
+                std::string value = binding_entry.value().get<std::string>();
+                constexpr std::string_view command_prefix = "command:";
+                if (value.starts_with(command_prefix)) {
+                    std::string command = value.substr(command_prefix.size());
+                    if (command.empty()) {
+                        throw std::runtime_error("command binding must not be empty");
+                    }
+                    keybindings.bindings.push_back(
+                        {mode_entry.key(), split_key_sequence(binding_entry.key()), std::nullopt, std::move(command), {}});
+                    continue;
                 }
-                keybindings.bindings.push_back({mode_entry.key(), split_key_sequence(binding_entry.key()), *action, {}});
+
+                std::optional<EditorAction> action = action_from_name(value);
+                if (!action) {
+                    throw std::runtime_error("unknown action in keybindings: " + value);
+                }
+                keybindings.bindings.push_back(
+                    {mode_entry.key(), split_key_sequence(binding_entry.key()), *action, std::nullopt, {}});
                 continue;
             }
             if (binding_entry.value().is_array()) {
@@ -620,7 +638,8 @@ KeyBindings parse_keybindings_source(const std::string &source, const std::strin
                 if (expansion.empty()) {
                     throw std::runtime_error("binding sequence aliases must not be empty");
                 }
-                keybindings.bindings.push_back({mode_entry.key(), split_key_sequence(binding_entry.key()), std::nullopt, expansion});
+                keybindings.bindings.push_back(
+                    {mode_entry.key(), split_key_sequence(binding_entry.key()), std::nullopt, std::nullopt, expansion});
                 continue;
             }
             throw std::runtime_error("binding values must be strings or arrays");
@@ -662,7 +681,7 @@ KeyDispatch dispatch_single_attempt(
             continue;
         }
         if (binding.sequence == tokens) {
-            return {true, false, binding.action, binding.expansion};
+            return {true, false, binding.action, binding.command, binding.expansion};
         }
         if (sequence_matches_prefix(binding.sequence, tokens)) {
             has_prefix = true;
@@ -670,17 +689,17 @@ KeyDispatch dispatch_single_attempt(
     }
 
     if (has_prefix) {
-        return {true, true, std::nullopt, {}};
+        return {true, true, std::nullopt, std::nullopt, {}};
     }
 
     if (tokens.size() == 1 && printable) {
         std::optional<EditorAction> wildcard = wildcard_action_for_mode(keybindings, mode);
         if (wildcard) {
-            return {true, false, wildcard, {}};
+            return {true, false, wildcard, std::nullopt, {}};
         }
     }
 
-    return {false, false, std::nullopt, {}};
+    return {false, false, std::nullopt, std::nullopt, {}};
 }
 
 }  // namespace

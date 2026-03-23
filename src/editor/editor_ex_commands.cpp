@@ -728,6 +728,7 @@ enum class NamedEditorCommand {
     Diagnostics,
     LspStatus,
     TreeSitterStatus,
+    InspectKey,
     LuaCommand,
 };
 
@@ -843,7 +844,7 @@ void execute_history_command(EditorState &state, bool earlier, const std::string
     state.set_status(std::string(earlier ? "Earlier " : "Later ") + count_label(completed, "change"));
 }
 
-constexpr std::array<NamedEditorCommandInfo, 24> kNamedEditorCommands{{
+constexpr std::array<NamedEditorCommandInfo, 25> kNamedEditorCommands{{
     {"w", "write current buffer", "w", NamedEditorCommand::Write},
     {"q", "quit", "q", NamedEditorCommand::Quit},
     {"q!", "force quit", "q!", NamedEditorCommand::ForceQuit},
@@ -867,6 +868,7 @@ constexpr std::array<NamedEditorCommandInfo, 24> kNamedEditorCommands{{
     {"diagnostics", "show diagnostics summary", "diagnostics", NamedEditorCommand::Diagnostics},
     {"lsp-status", "show language server status", "lsp-status", NamedEditorCommand::LspStatus},
     {"tree-sitter-status", "show tree-sitter status", "tree-sitter-status", NamedEditorCommand::TreeSitterStatus},
+    {"inspect-key", "inspect the next key sequence", "inspect-key", NamedEditorCommand::InspectKey},
     {"lua-command", "run registered Lua command", "lua-command ", NamedEditorCommand::LuaCommand},
 }};
 
@@ -1115,6 +1117,10 @@ void execute_named_editor_command(
         case NamedEditorCommand::TreeSitterStatus:
             state.show_tree_sitter_status();
             break;
+        case NamedEditorCommand::InspectKey:
+            state.key_inspector_armed = true;
+            state.set_status("Press key to inspect");
+            break;
         case NamedEditorCommand::LuaCommand:
             state.handle_lua_command(argument);
             break;
@@ -1177,17 +1183,16 @@ void EditorState::show_command_completion() {
         PopupFilterMode::PrefixLabelOnly);
 }
 
-void EditorState::execute_command() {
-    if (command_prompt_kind == CommandPromptKind::FilterSelection) {
-        execute_filter_command();
+void execute_command_text_impl(EditorState &state, const std::u32string &command_text, bool add_history) {
+    if (state.command_prompt_kind == CommandPromptKind::FilterSelection) {
+        state.execute_filter_command();
         return;
     }
-    if (command_prompt_kind == CommandPromptKind::SedSelection) {
-        execute_sed_command();
+    if (state.command_prompt_kind == CommandPromptKind::SedSelection) {
+        state.execute_sed_command();
         return;
     }
 
-    std::u32string command_text = command_buffer;
     std::string command = u32_to_utf8(command_text);
     log_debug("ex command=" + command);
     std::istringstream parser(command);
@@ -1201,52 +1206,63 @@ void EditorState::execute_command() {
     }
 
     if (verb.empty()) {
-        enter_normal_mode();
+        state.enter_normal_mode();
         return;
     }
-    add_prompt_history_entry(command_text);
+    if (add_history) {
+        state.add_prompt_history_entry(command_text);
+    }
     SubstituteCommand substitute;
     std::string substitute_error;
     if (parse_substitute_command(command, substitute, substitute_error)) {
-        handle_substitute_command(substitute);
+        state.handle_substitute_command(substitute);
     } else if (!substitute_error.empty()) {
-        set_status(substitute_error);
+        state.set_status(substitute_error);
     } else if (std::all_of(verb.begin(), verb.end(), [](unsigned char ch) { return std::isdigit(ch) != 0; })) {
-        handle_goto_line_command(verb);
+        state.handle_goto_line_command(verb);
     } else if (std::optional<NamedEditorCommand> named = named_editor_command_from_verb(verb)) {
-        execute_named_editor_command(*this, *named, argument);
+        execute_named_editor_command(state, *named, argument);
     } else if (argument.empty()) {
         std::string error_message;
-        if (lua.execute_command(*this, verb, std::string(), error_message)) {
-            if (!apply_pending_config_reload()) {
-                enter_normal_mode(true);
+        if (state.lua.execute_command(state, verb, std::string(), error_message)) {
+            if (!state.apply_pending_config_reload()) {
+                state.enter_normal_mode(true);
                 return;
             }
-            if (status_message.empty() || status_message == ":") {
-                set_status("Lua command: " + verb);
+            if (state.status_message.empty() || state.status_message == ":") {
+                state.set_status("Lua command: " + verb);
             }
         } else {
             if (error_message == "No such Lua command: " + verb) {
-                set_status("Unknown command: " + verb);
+                state.set_status("Unknown command: " + verb);
             } else {
-                set_status(error_message);
+                state.set_status(error_message);
             }
         }
-    } else if (std::vector<std::string> commands = lua_command_names(lua); std::binary_search(commands.begin(), commands.end(), verb)) {
+    } else if (std::vector<std::string> commands = lua_command_names(state.lua);
+               std::binary_search(commands.begin(), commands.end(), verb)) {
         std::string error_message;
-        if (lua.execute_command(*this, verb, argument, error_message)) {
-            if (!apply_pending_config_reload()) {
-                enter_normal_mode(true);
+        if (state.lua.execute_command(state, verb, argument, error_message)) {
+            if (!state.apply_pending_config_reload()) {
+                state.enter_normal_mode(true);
                 return;
             }
-            if (status_message.empty() || status_message == ":") {
-                set_status("Lua command: " + verb);
+            if (state.status_message.empty() || state.status_message == ":") {
+                state.set_status("Lua command: " + verb);
             }
         } else {
-            set_status(error_message);
+            state.set_status(error_message);
         }
     } else {
-        set_status("Unknown command: " + verb);
+        state.set_status("Unknown command: " + verb);
     }
-    enter_normal_mode(true);
+    state.enter_normal_mode(true);
+}
+
+void EditorState::execute_command() {
+    execute_command_text_impl(*this, command_buffer, true);
+}
+
+void EditorState::execute_command_text(const std::string &command) {
+    execute_command_text_impl(*this, utf8_to_u32(command), false);
 }

@@ -26,6 +26,7 @@ constexpr std::array<NamedEditorCommandInfo, 21> kNamedEditorCommands{{
     {"diagnostics", "show diagnostics summary", "diagnostics", NamedEditorCommand::Diagnostics},
     {"lsp-status", "show language server status", "lsp-status", NamedEditorCommand::LspStatus},
     {"tree-sitter-status", "show tree-sitter syntax status", "tree-sitter-status", NamedEditorCommand::TreeSitterStatus},
+    {"inspect-key", "inspect the next key sequence", "inspect-key", NamedEditorCommand::InspectKey},
 }};
 
 }  // namespace

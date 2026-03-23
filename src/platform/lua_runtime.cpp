@@ -6,6 +6,8 @@
 #include "string_utils.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cerrno>
 #include <cstdio>
 #include <deque>
 #include <fstream>
@@ -30,6 +32,9 @@ extern "C" {
 #endif
 
 #if defined(__unix__) || defined(__APPLE__)
+#include <csignal>
+#include <sys/types.h>
+#include <unistd.h>
 #include <sys/wait.h>
 #endif
 
@@ -229,14 +234,20 @@ InlineAnnotations lua_check_line_annotations(lua_State *lua, EditorBuffer &buffe
     return annotations;
 }
 
-void push_editor_event(lua_State *lua, const EditorEvent &event) {
-    lua_createtable(lua, 0, 6);
+void push_editor_event(lua_State *lua, const EditorEvent &event, std::optional<std::size_t> buffer_id) {
+    lua_createtable(lua, 0, 7);
     lua_pushstring(lua, event_name(event.type));
     lua_setfield(lua, -2, "type");
     lua_pushlstring(lua, event.document_uri.data(), event.document_uri.size());
     lua_setfield(lua, -2, "document_uri");
     lua_pushinteger(lua, static_cast<lua_Integer>(event.document_version));
     lua_setfield(lua, -2, "document_version");
+    if (buffer_id) {
+        lua_pushinteger(lua, static_cast<lua_Integer>(*buffer_id));
+    } else {
+        lua_pushnil(lua);
+    }
+    lua_setfield(lua, -2, "buffer_id");
     push_position(lua, event.cursor);
     lua_setfield(lua, -2, "cursor");
     if (event.range) {
@@ -484,6 +495,24 @@ struct AsyncJobQueue {
     std::deque<AsyncJobEvent> events;
 };
 
+struct ProcessEvent {
+    enum class Type {
+        Stdout,
+        Stderr,
+        Exit,
+    };
+
+    Type type = Type::Stdout;
+    std::size_t process_id = 0;
+    std::string text;
+    int exit_code = -1;
+};
+
+struct ProcessEventQueue {
+    std::mutex mutex;
+    std::deque<ProcessEvent> events;
+};
+
 void push_async_job_event(
     const std::shared_ptr<AsyncJobQueue> &queue,
     AsyncJobEvent::Type type,
@@ -492,6 +521,16 @@ void push_async_job_event(
     int exit_code = -1) {
     std::lock_guard<std::mutex> lock(queue->mutex);
     queue->events.push_back({type, job_id, std::move(text), exit_code});
+}
+
+void push_process_event(
+    const std::shared_ptr<ProcessEventQueue> &queue,
+    ProcessEvent::Type type,
+    std::size_t process_id,
+    std::string text = {},
+    int exit_code = -1) {
+    std::lock_guard<std::mutex> lock(queue->mutex);
+    queue->events.push_back({type, process_id, std::move(text), exit_code});
 }
 
 int decode_process_exit_code(int status) {
@@ -505,6 +544,103 @@ int decode_process_exit_code(int status) {
 #endif
     return status;
 }
+
+#if defined(__unix__) || defined(__APPLE__)
+void forward_process_stream(
+    std::shared_ptr<ProcessEventQueue> queue,
+    std::size_t process_id,
+    int fd,
+    ProcessEvent::Type type) {
+    std::array<char, 4096> buffer{};
+    for (;;) {
+        ssize_t bytes = read(fd, buffer.data(), buffer.size());
+        if (bytes > 0) {
+            push_process_event(queue, type, process_id, std::string(buffer.data(), static_cast<std::size_t>(bytes)));
+            continue;
+        }
+        if (bytes < 0 && errno == EINTR) {
+            continue;
+        }
+        break;
+    }
+    close(fd);
+}
+
+void wait_for_process_exit(
+    std::shared_ptr<ProcessEventQueue> queue,
+    std::size_t process_id,
+    pid_t pid) {
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0) {
+        if (errno == EINTR) {
+            continue;
+        }
+        push_process_event(queue, ProcessEvent::Type::Exit, process_id, {}, -1);
+        return;
+    }
+    push_process_event(queue, ProcessEvent::Type::Exit, process_id, {}, decode_process_exit_code(status));
+}
+
+bool spawn_shell_process(
+    const std::shared_ptr<ProcessEventQueue> &queue,
+    std::size_t process_id,
+    const std::string &command,
+    pid_t &pid,
+    int &stdin_fd,
+    std::string &error_message) {
+    int stdin_pipe[2] = {-1, -1};
+    int stdout_pipe[2] = {-1, -1};
+    int stderr_pipe[2] = {-1, -1};
+    if (pipe(stdin_pipe) != 0 || pipe(stdout_pipe) != 0 || pipe(stderr_pipe) != 0) {
+        error_message = "could not create process pipes";
+        if (stdin_pipe[0] >= 0) close(stdin_pipe[0]);
+        if (stdin_pipe[1] >= 0) close(stdin_pipe[1]);
+        if (stdout_pipe[0] >= 0) close(stdout_pipe[0]);
+        if (stdout_pipe[1] >= 0) close(stdout_pipe[1]);
+        if (stderr_pipe[0] >= 0) close(stderr_pipe[0]);
+        if (stderr_pipe[1] >= 0) close(stderr_pipe[1]);
+        return false;
+    }
+
+    pid = fork();
+    if (pid < 0) {
+        error_message = "could not fork process";
+        close(stdin_pipe[0]);
+        close(stdin_pipe[1]);
+        close(stdout_pipe[0]);
+        close(stdout_pipe[1]);
+        close(stderr_pipe[0]);
+        close(stderr_pipe[1]);
+        return false;
+    }
+
+    if (pid == 0) {
+        dup2(stdin_pipe[0], STDIN_FILENO);
+        dup2(stdout_pipe[1], STDOUT_FILENO);
+        dup2(stderr_pipe[1], STDERR_FILENO);
+
+        close(stdin_pipe[0]);
+        close(stdin_pipe[1]);
+        close(stdout_pipe[0]);
+        close(stdout_pipe[1]);
+        close(stderr_pipe[0]);
+        close(stderr_pipe[1]);
+
+        execl("/bin/sh", "sh", "-lc", command.c_str(), static_cast<char *>(nullptr));
+        _exit(127);
+    }
+
+    close(stdin_pipe[0]);
+    close(stdout_pipe[1]);
+    close(stderr_pipe[1]);
+    stdin_fd = stdin_pipe[1];
+
+    std::thread(forward_process_stream, queue, process_id, stdout_pipe[0], ProcessEvent::Type::Stdout).detach();
+    std::thread(forward_process_stream, queue, process_id, stderr_pipe[0], ProcessEvent::Type::Stderr).detach();
+    std::thread(wait_for_process_exit, queue, process_id, pid).detach();
+    return true;
+}
+#endif
 
 void run_async_shell_command(
     std::shared_ptr<AsyncJobQueue> queue,
@@ -547,9 +683,26 @@ struct LuaRuntime::Impl {
         bool running = false;
         int exit_code = -1;
     };
+    struct ProcessInfo {
+        std::size_t id = 0;
+        std::string command;
+        std::optional<std::size_t> buffer_id;
+        int on_stdout_ref = LUA_NOREF;
+        int on_stderr_ref = LUA_NOREF;
+        int on_exit_ref = LUA_NOREF;
+        bool running = false;
+        int exit_code = -1;
+#if defined(__unix__) || defined(__APPLE__)
+        pid_t pid = -1;
+        int stdin_fd = -1;
+#endif
+    };
     std::shared_ptr<AsyncJobQueue> async_job_queue = std::make_shared<AsyncJobQueue>();
+    std::shared_ptr<ProcessEventQueue> process_event_queue = std::make_shared<ProcessEventQueue>();
     std::map<std::size_t, AsyncJobInfo> async_jobs;
+    std::map<std::size_t, ProcessInfo> processes;
     std::size_t next_async_job_id = 1;
+    std::size_t next_process_id = 1;
 
     static LuaRuntime::Impl *from_upvalue(lua_State *lua_state) {
         void *raw = lua_touserdata(lua_state, lua_upvalueindex(1));
@@ -562,6 +715,43 @@ struct LuaRuntime::Impl {
         }
         lua_pushstring(lua_state, "medit API unavailable outside editor callback");
         return false;
+    }
+
+    void close_process_stdin(ProcessInfo &process) {
+#if defined(__unix__) || defined(__APPLE__)
+        if (process.stdin_fd >= 0) {
+            close(process.stdin_fd);
+            process.stdin_fd = -1;
+        }
+#else
+        (void)process;
+#endif
+    }
+
+    void stop_process(ProcessInfo &process) {
+#if defined(__unix__) || defined(__APPLE__)
+        close_process_stdin(process);
+        if (process.pid > 0 && process.running) {
+            kill(process.pid, SIGTERM);
+        }
+#else
+        (void)process;
+#endif
+    }
+
+    void release_process_refs(ProcessInfo &process) {
+        if (lua == nullptr) {
+            process.on_stdout_ref = LUA_NOREF;
+            process.on_stderr_ref = LUA_NOREF;
+            process.on_exit_ref = LUA_NOREF;
+            return;
+        }
+        for (int *ref : {&process.on_stdout_ref, &process.on_stderr_ref, &process.on_exit_ref}) {
+            if (*ref != LUA_NOREF) {
+                luaL_unref(lua, LUA_REGISTRYINDEX, *ref);
+                *ref = LUA_NOREF;
+            }
+        }
     }
 
     static int lua_status(lua_State *lua_state) {
@@ -1233,6 +1423,182 @@ struct LuaRuntime::Impl {
         return 1;
     }
 
+    static int lua_process_start(lua_State *lua_state) {
+        LuaRuntime::Impl *impl = from_upvalue(lua_state);
+        if (!impl->with_current_state(lua_state)) {
+            return lua_error(lua_state);
+        }
+
+#if !defined(__unix__) && !defined(__APPLE__)
+        return luaL_error(lua_state, "persistent processes are unsupported on this platform");
+#else
+        luaL_checktype(lua_state, 1, LUA_TTABLE);
+        lua_getfield(lua_state, 1, "command");
+        std::string command = luaL_checkstring(lua_state, -1);
+        lua_pop(lua_state, 1);
+
+        std::optional<std::size_t> buffer_id;
+        lua_getfield(lua_state, 1, "buffer_id");
+        if (!lua_isnil(lua_state, -1)) {
+            lua_Integer raw_buffer_id = luaL_checkinteger(lua_state, -1);
+            if (raw_buffer_id <= 0) {
+                lua_pop(lua_state, 1);
+                return luaL_error(lua_state, "buffer_id must be positive");
+            }
+            buffer_id = static_cast<std::size_t>(raw_buffer_id);
+            if (impl->current_state->session.find_buffer_by_id(*buffer_id) == nullptr) {
+                lua_pop(lua_state, 1);
+                return luaL_error(lua_state, "buffer_id not found");
+            }
+        }
+        lua_pop(lua_state, 1);
+
+        auto load_callback_ref = [&](const char *field_name) {
+            int ref = LUA_NOREF;
+            lua_getfield(lua_state, 1, field_name);
+            if (!lua_isnil(lua_state, -1)) {
+                luaL_checktype(lua_state, -1, LUA_TFUNCTION);
+                ref = luaL_ref(lua_state, LUA_REGISTRYINDEX);
+            } else {
+                lua_pop(lua_state, 1);
+            }
+            return ref;
+        };
+
+        int on_stdout_ref = load_callback_ref("on_stdout");
+        int on_stderr_ref = load_callback_ref("on_stderr");
+        int on_exit_ref = load_callback_ref("on_exit");
+
+        const std::size_t process_id = impl->next_process_id++;
+        ProcessInfo process;
+        process.id = process_id;
+        process.command = command;
+        process.buffer_id = buffer_id;
+        process.on_stdout_ref = on_stdout_ref;
+        process.on_stderr_ref = on_stderr_ref;
+        process.on_exit_ref = on_exit_ref;
+        process.running = true;
+        process.exit_code = -1;
+
+        std::string error_message;
+        if (!spawn_shell_process(
+                impl->process_event_queue,
+                process_id,
+                command,
+                process.pid,
+                process.stdin_fd,
+                error_message)) {
+            impl->release_process_refs(process);
+            return luaL_error(lua_state, "%s", error_message.c_str());
+        }
+
+        impl->processes[process_id] = std::move(process);
+        lua_pushinteger(lua_state, static_cast<lua_Integer>(process_id));
+        return 1;
+#endif
+    }
+
+    static int lua_process_send(lua_State *lua_state) {
+        LuaRuntime::Impl *impl = from_upvalue(lua_state);
+#if !defined(__unix__) && !defined(__APPLE__)
+        (void)impl;
+        return luaL_error(lua_state, "persistent processes are unsupported on this platform");
+#else
+        lua_Integer raw_process_id = luaL_checkinteger(lua_state, 1);
+        if (raw_process_id <= 0) {
+            return luaL_error(lua_state, "process id must be positive");
+        }
+        std::string text = luaL_checkstring(lua_state, 2);
+        auto found = impl->processes.find(static_cast<std::size_t>(raw_process_id));
+        if (found == impl->processes.end()) {
+            return luaL_error(lua_state, "process not found");
+        }
+
+        ProcessInfo &process = found->second;
+        if (!process.running || process.stdin_fd < 0) {
+            lua_pushboolean(lua_state, 0);
+            return 1;
+        }
+
+        const char *data = text.data();
+        std::size_t remaining = text.size();
+        while (remaining > 0) {
+            ssize_t written = write(process.stdin_fd, data, remaining);
+            if (written > 0) {
+                data += written;
+                remaining -= static_cast<std::size_t>(written);
+                continue;
+            }
+            if (written < 0 && errno == EINTR) {
+                continue;
+            }
+            lua_pushboolean(lua_state, 0);
+            return 1;
+        }
+        lua_pushboolean(lua_state, 1);
+        return 1;
+#endif
+    }
+
+    static int lua_process_close_stdin(lua_State *lua_state) {
+        LuaRuntime::Impl *impl = from_upvalue(lua_state);
+        lua_Integer raw_process_id = luaL_checkinteger(lua_state, 1);
+        if (raw_process_id <= 0) {
+            return luaL_error(lua_state, "process id must be positive");
+        }
+        auto found = impl->processes.find(static_cast<std::size_t>(raw_process_id));
+        if (found == impl->processes.end()) {
+            return luaL_error(lua_state, "process not found");
+        }
+        impl->close_process_stdin(found->second);
+        return 0;
+    }
+
+    static int lua_process_status(lua_State *lua_state) {
+        LuaRuntime::Impl *impl = from_upvalue(lua_state);
+        lua_Integer raw_process_id = luaL_checkinteger(lua_state, 1);
+        if (raw_process_id <= 0) {
+            return luaL_error(lua_state, "process id must be positive");
+        }
+
+        auto found = impl->processes.find(static_cast<std::size_t>(raw_process_id));
+        if (found == impl->processes.end()) {
+            lua_pushnil(lua_state);
+            return 1;
+        }
+
+        const ProcessInfo &process = found->second;
+        lua_createtable(lua_state, 0, 4);
+        lua_pushboolean(lua_state, process.running ? 1 : 0);
+        lua_setfield(lua_state, -2, "running");
+        lua_pushinteger(lua_state, static_cast<lua_Integer>(process.exit_code));
+        lua_setfield(lua_state, -2, "exit_code");
+        lua_pushlstring(lua_state, process.command.data(), process.command.size());
+        lua_setfield(lua_state, -2, "command");
+        if (process.buffer_id) {
+            lua_pushinteger(lua_state, static_cast<lua_Integer>(*process.buffer_id));
+        } else {
+            lua_pushnil(lua_state);
+        }
+        lua_setfield(lua_state, -2, "buffer_id");
+        return 1;
+    }
+
+    static int lua_process_stop(lua_State *lua_state) {
+        LuaRuntime::Impl *impl = from_upvalue(lua_state);
+        lua_Integer raw_process_id = luaL_checkinteger(lua_state, 1);
+        if (raw_process_id <= 0) {
+            return luaL_error(lua_state, "process id must be positive");
+        }
+
+        auto found = impl->processes.find(static_cast<std::size_t>(raw_process_id));
+        if (found == impl->processes.end()) {
+            return luaL_error(lua_state, "process not found");
+        }
+        impl->stop_process(found->second);
+        return 0;
+    }
+
     static int lua_on(lua_State *lua_state) {
         LuaRuntime::Impl *impl = from_upvalue(lua_state);
         const char *name = luaL_checkstring(lua_state, 1);
@@ -1257,6 +1623,7 @@ struct LuaRuntime::Impl {
             event_refs.clear();
             health_check_refs.clear();
             async_jobs.clear();
+            processes.clear();
             return;
         }
         for (auto &[_, ref] : command_refs) {
@@ -1279,6 +1646,11 @@ struct LuaRuntime::Impl {
             }
         }
         async_jobs.clear();
+        for (auto &[_, process] : processes) {
+            stop_process(process);
+            release_process_refs(process);
+        }
+        processes.clear();
     }
 
     void register_api() {
@@ -1445,6 +1817,26 @@ struct LuaRuntime::Impl {
         lua_setfield(lua, -2, "job_status");
 
         lua_pushlightuserdata(lua, this);
+        lua_pushcclosure(lua, &LuaRuntime::Impl::lua_process_start, 1);
+        lua_setfield(lua, -2, "process_start");
+
+        lua_pushlightuserdata(lua, this);
+        lua_pushcclosure(lua, &LuaRuntime::Impl::lua_process_send, 1);
+        lua_setfield(lua, -2, "process_send");
+
+        lua_pushlightuserdata(lua, this);
+        lua_pushcclosure(lua, &LuaRuntime::Impl::lua_process_close_stdin, 1);
+        lua_setfield(lua, -2, "process_close_stdin");
+
+        lua_pushlightuserdata(lua, this);
+        lua_pushcclosure(lua, &LuaRuntime::Impl::lua_process_status, 1);
+        lua_setfield(lua, -2, "process_status");
+
+        lua_pushlightuserdata(lua, this);
+        lua_pushcclosure(lua, &LuaRuntime::Impl::lua_process_stop, 1);
+        lua_setfield(lua, -2, "process_stop");
+
+        lua_pushlightuserdata(lua, this);
         lua_pushcclosure(lua, &LuaRuntime::Impl::lua_on, 1);
         lua_setfield(lua, -2, "on");
 
@@ -1577,6 +1969,11 @@ void LuaRuntime::detach_async_buffer(std::size_t buffer_id) {
             job.buffer_id.reset();
         }
     }
+    for (auto &[_, process] : impl_->processes) {
+        if (process.buffer_id == buffer_id) {
+            process.buffer_id.reset();
+        }
+    }
 #else
     (void)buffer_id;
 #endif
@@ -1592,6 +1989,11 @@ void LuaRuntime::poll_async(EditorState &state) {
     {
         std::lock_guard<std::mutex> lock(impl_->async_job_queue->mutex);
         events.swap(impl_->async_job_queue->events);
+    }
+    std::deque<ProcessEvent> process_events;
+    {
+        std::lock_guard<std::mutex> lock(impl_->process_event_queue->mutex);
+        process_events.swap(impl_->process_event_queue->events);
     }
 
     for (const AsyncJobEvent &event : events) {
@@ -1623,6 +2025,49 @@ void LuaRuntime::poll_async(EditorState &state) {
             job.on_exit_ref = LUA_NOREF;
         }
     }
+
+    for (const ProcessEvent &event : process_events) {
+        auto found = impl_->processes.find(event.process_id);
+        if (found == impl_->processes.end()) {
+            continue;
+        }
+        LuaRuntime::Impl::ProcessInfo &process = found->second;
+
+        if (event.type == ProcessEvent::Type::Stdout || event.type == ProcessEvent::Type::Stderr) {
+            if (process.buffer_id && !event.text.empty()) {
+                state.append_to_buffer(*process.buffer_id, utf8_to_u32(event.text));
+            }
+            int callback_ref =
+                event.type == ProcessEvent::Type::Stdout ? process.on_stdout_ref : process.on_stderr_ref;
+            if (callback_ref != LUA_NOREF) {
+                lua_rawgeti(impl_->lua, LUA_REGISTRYINDEX, callback_ref);
+                lua_pushinteger(impl_->lua, static_cast<lua_Integer>(process.id));
+                lua_pushlstring(impl_->lua, event.text.data(), event.text.size());
+                std::string error_message;
+                if (!impl_->protected_call(state, 2, 0, error_message)) {
+                    log_debug(
+                        "lua process callback failed id=" + std::to_string(process.id) + " error=" + error_message);
+                    state.set_status("Lua process callback failed: " + error_message);
+                }
+            }
+            continue;
+        }
+
+        process.running = false;
+        process.exit_code = event.exit_code;
+        impl_->close_process_stdin(process);
+        if (process.on_exit_ref != LUA_NOREF) {
+            lua_rawgeti(impl_->lua, LUA_REGISTRYINDEX, process.on_exit_ref);
+            lua_pushinteger(impl_->lua, static_cast<lua_Integer>(process.id));
+            lua_pushinteger(impl_->lua, static_cast<lua_Integer>(process.exit_code));
+            std::string error_message;
+            if (!impl_->protected_call(state, 2, 0, error_message)) {
+                log_debug("lua process on_exit failed id=" + std::to_string(process.id) + " error=" + error_message);
+                state.set_status("Lua process callback failed: " + error_message);
+            }
+        }
+        impl_->release_process_refs(process);
+    }
 #else
     (void)state;
 #endif
@@ -1632,6 +2077,11 @@ std::optional<int> LuaRuntime::idle_wait_timeout_ms() const {
 #if defined(MEDIT_HAS_LUA) && MEDIT_HAS_LUA
     for (const auto &[_, job] : impl_->async_jobs) {
         if (job.running) {
+            return 50;
+        }
+    }
+    for (const auto &[_, process] : impl_->processes) {
+        if (process.running) {
             return 50;
         }
     }
@@ -1650,9 +2100,16 @@ void LuaRuntime::dispatch_editor_event(EditorState &state, const EditorEvent &ev
         return;
     }
 
+    std::optional<std::size_t> buffer_id;
+    if (!event.document_uri.empty()) {
+        if (EditorBuffer *buffer = state.session.find_buffer_by_uri(event.document_uri)) {
+            buffer_id = buffer->id;
+        }
+    }
+
     for (int ref : found->second) {
         lua_rawgeti(impl_->lua, LUA_REGISTRYINDEX, ref);
-        push_editor_event(impl_->lua, event);
+        push_editor_event(impl_->lua, event, buffer_id);
         std::string error_message;
         if (!impl_->protected_call(state, 1, 0, error_message)) {
             log_debug("lua hook error event=" + std::string(event_name(event.type)) + " error=" + error_message);
