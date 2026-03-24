@@ -227,7 +227,8 @@ function M.resolve_ai_model(provider) end
 
 ---@param name string
 ---@param fn fun(argument: string)
-function M.register_command(name, fn) end
+---@param opts? {detail?: string, completion_text?: string, aliases?: string[]}
+function M.register_command(name, fn, opts) end
 
 ---@param name string
 ---@param fn fun(): string

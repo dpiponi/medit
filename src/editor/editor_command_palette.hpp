@@ -10,6 +10,8 @@ enum class NamedEditorCommand {
     ForceQuit,
     WriteQuit,
     WriteIfChangedQuit,
+    Earlier,
+    Later,
     Edit,
     Buffers,
     Buffer,
@@ -27,6 +29,7 @@ enum class NamedEditorCommand {
     LspStatus,
     TreeSitterStatus,
     InspectKey,
+    LuaCommand,
 };
 
 struct NamedEditorCommandInfo {

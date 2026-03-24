@@ -672,7 +672,12 @@ struct LuaRuntime::Impl {
 #if defined(MEDIT_HAS_LUA) && MEDIT_HAS_LUA
     lua_State *lua = nullptr;
     EditorState *current_state = nullptr;
-    std::map<std::string, int> command_refs;
+    struct RegisteredLuaCommand {
+        int ref = LUA_NOREF;
+        LuaCommandInfo info;
+    };
+    std::map<std::string, RegisteredLuaCommand> commands;
+    std::map<std::string, std::string> command_aliases;
     std::map<std::string, std::vector<int>> event_refs;
     std::map<std::string, int> health_check_refs;
     struct AsyncJobInfo {
@@ -707,6 +712,28 @@ struct LuaRuntime::Impl {
     static LuaRuntime::Impl *from_upvalue(lua_State *lua_state) {
         void *raw = lua_touserdata(lua_state, lua_upvalueindex(1));
         return static_cast<LuaRuntime::Impl *>(raw);
+    }
+
+    void unregister_command_aliases(const std::string &name) {
+        for (auto it = command_aliases.begin(); it != command_aliases.end();) {
+            if (it->second == name) {
+                it = command_aliases.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    std::optional<std::string> resolve_command_name(std::string_view name) const {
+        std::string key(name);
+        if (commands.contains(key)) {
+            return key;
+        }
+        auto found = command_aliases.find(key);
+        if (found != command_aliases.end()) {
+            return found->second;
+        }
+        return std::nullopt;
     }
 
     bool with_current_state(lua_State *lua_state) const {
@@ -1316,13 +1343,52 @@ struct LuaRuntime::Impl {
         const char *name = luaL_checkstring(lua_state, 1);
         luaL_checktype(lua_state, 2, LUA_TFUNCTION);
 
+        LuaCommandInfo info;
+        info.name = name;
+        info.completion_text = name;
+        if (lua_gettop(lua_state) >= 3 && !lua_isnil(lua_state, 3)) {
+            luaL_checktype(lua_state, 3, LUA_TTABLE);
+
+            lua_getfield(lua_state, 3, "detail");
+            if (!lua_isnil(lua_state, -1)) {
+                info.detail = luaL_checkstring(lua_state, -1);
+            }
+            lua_pop(lua_state, 1);
+
+            lua_getfield(lua_state, 3, "completion_text");
+            if (!lua_isnil(lua_state, -1)) {
+                info.completion_text = luaL_checkstring(lua_state, -1);
+            }
+            lua_pop(lua_state, 1);
+
+            lua_getfield(lua_state, 3, "aliases");
+            if (!lua_isnil(lua_state, -1)) {
+                luaL_checktype(lua_state, -1, LUA_TTABLE);
+                lua_pushnil(lua_state);
+                while (lua_next(lua_state, -2) != 0) {
+                    const char *alias_text = luaL_checkstring(lua_state, -1);
+                    std::string alias = alias_text;
+                    if (!alias.empty() && alias != info.name &&
+                        std::find(info.aliases.begin(), info.aliases.end(), alias) == info.aliases.end()) {
+                        info.aliases.push_back(std::move(alias));
+                    }
+                    lua_pop(lua_state, 1);
+                }
+            }
+            lua_pop(lua_state, 1);
+        }
+
         lua_pushvalue(lua_state, 2);
         int ref = luaL_ref(lua_state, LUA_REGISTRYINDEX);
-        auto existing = impl->command_refs.find(name);
-        if (existing != impl->command_refs.end()) {
-            luaL_unref(lua_state, LUA_REGISTRYINDEX, existing->second);
+        auto existing = impl->commands.find(info.name);
+        if (existing != impl->commands.end()) {
+            impl->unregister_command_aliases(existing->first);
+            luaL_unref(lua_state, LUA_REGISTRYINDEX, existing->second.ref);
         }
-        impl->command_refs[name] = ref;
+        impl->commands[info.name] = {ref, std::move(info)};
+        for (const std::string &alias : impl->commands[info.name].info.aliases) {
+            impl->command_aliases[alias] = impl->commands[info.name].info.name;
+        }
         return 0;
     }
 
@@ -1619,17 +1685,19 @@ struct LuaRuntime::Impl {
 
     void clear_refs() {
         if (lua == nullptr) {
-            command_refs.clear();
+            commands.clear();
+            command_aliases.clear();
             event_refs.clear();
             health_check_refs.clear();
             async_jobs.clear();
             processes.clear();
             return;
         }
-        for (auto &[_, ref] : command_refs) {
-            luaL_unref(lua, LUA_REGISTRYINDEX, ref);
+        for (auto &[_, command] : commands) {
+            luaL_unref(lua, LUA_REGISTRYINDEX, command.ref);
         }
-        command_refs.clear();
+        commands.clear();
+        command_aliases.clear();
         for (auto &[_, ref] : health_check_refs) {
             luaL_unref(lua, LUA_REGISTRYINDEX, ref);
         }
@@ -1944,13 +2012,13 @@ bool LuaRuntime::execute_command(
         return false;
     }
 
-    auto found = impl_->command_refs.find(name);
-    if (found == impl_->command_refs.end()) {
+    std::optional<std::string> resolved_name = impl_->resolve_command_name(name);
+    if (!resolved_name) {
         error_message = "No such Lua command: " + name;
         return false;
     }
 
-    lua_rawgeti(impl_->lua, LUA_REGISTRYINDEX, found->second);
+    lua_rawgeti(impl_->lua, LUA_REGISTRYINDEX, impl_->commands[*resolved_name].ref);
     lua_pushlstring(impl_->lua, argument.data(), argument.size());
     return impl_->protected_call(state, 1, 0, error_message);
 #else
@@ -2125,13 +2193,27 @@ void LuaRuntime::dispatch_editor_event(EditorState &state, const EditorEvent &ev
 std::vector<std::string> LuaRuntime::registered_commands() const {
     std::vector<std::string> names;
 #if defined(MEDIT_HAS_LUA) && MEDIT_HAS_LUA
-    names.reserve(impl_->command_refs.size());
-    for (const auto &[name, _] : impl_->command_refs) {
+    names.reserve(impl_->commands.size());
+    for (const auto &[name, _] : impl_->commands) {
         names.push_back(name);
     }
 #endif
     std::sort(names.begin(), names.end());
     return names;
+}
+
+std::vector<LuaCommandInfo> LuaRuntime::registered_command_infos() const {
+    std::vector<LuaCommandInfo> infos;
+#if defined(MEDIT_HAS_LUA) && MEDIT_HAS_LUA
+    infos.reserve(impl_->commands.size());
+    for (const auto &[_, command] : impl_->commands) {
+        infos.push_back(command.info);
+    }
+#endif
+    std::sort(infos.begin(), infos.end(), [](const LuaCommandInfo &left, const LuaCommandInfo &right) {
+        return left.name < right.name;
+    });
+    return infos;
 }
 
 std::vector<std::pair<std::string, std::string>> LuaRuntime::run_health_checks(EditorState &state) const {

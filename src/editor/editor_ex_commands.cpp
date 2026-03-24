@@ -1,4 +1,5 @@
 #include "editor_internal.hpp"
+#include "editor_command_palette.hpp"
 #include "editor_ex_command_completion.hpp"
 
 #include "logger.hpp"
@@ -705,41 +706,6 @@ void EditorState::execute_sed_command() {
     set_status(count_label(substitutions, "substitution"));
 }
 
-enum class NamedEditorCommand {
-    Write,
-    Quit,
-    ForceQuit,
-    WriteQuit,
-    WriteIfChangedQuit,
-    Earlier,
-    Later,
-    Edit,
-    Buffers,
-    Buffer,
-    NextBuffer,
-    PreviousBuffer,
-    DeleteBuffer,
-    ForceDeleteBuffer,
-    ReloadConfig,
-    Panel,
-    PanelToggle,
-    PanelFocus,
-    PanelClose,
-    PanelClear,
-    Diagnostics,
-    LspStatus,
-    TreeSitterStatus,
-    InspectKey,
-    LuaCommand,
-};
-
-struct NamedEditorCommandInfo {
-    std::string_view name;
-    std::string_view detail;
-    std::string_view completion_text;
-    NamedEditorCommand command;
-};
-
 std::optional<std::size_t> parse_history_step_count(const std::string &argument, std::string &error_message) {
     if (argument.empty()) {
         return 1;
@@ -844,34 +810,6 @@ void execute_history_command(EditorState &state, bool earlier, const std::string
 
     state.set_status(std::string(earlier ? "Earlier " : "Later ") + count_label(completed, "change"));
 }
-
-constexpr std::array<NamedEditorCommandInfo, 25> kNamedEditorCommands{{
-    {"w", "write current buffer", "w", NamedEditorCommand::Write},
-    {"q", "quit", "q", NamedEditorCommand::Quit},
-    {"q!", "force quit", "q!", NamedEditorCommand::ForceQuit},
-    {"wq", "write and quit", "wq", NamedEditorCommand::WriteQuit},
-    {"x", "write and quit if modified", "x", NamedEditorCommand::WriteIfChangedQuit},
-    {"earlier", "undo earlier changes by count or time", "earlier ", NamedEditorCommand::Earlier},
-    {"later", "redo later changes by count or time", "later ", NamedEditorCommand::Later},
-    {"e", "edit file in active window", "e ", NamedEditorCommand::Edit},
-    {"buffers", "list open buffers", "buffers", NamedEditorCommand::Buffers},
-    {"buffer", "switch to buffer", "buffer ", NamedEditorCommand::Buffer},
-    {"bnext", "next buffer", "bnext", NamedEditorCommand::NextBuffer},
-    {"bprev", "previous buffer", "bprev", NamedEditorCommand::PreviousBuffer},
-    {"bd", "close current buffer", "bd", NamedEditorCommand::DeleteBuffer},
-    {"bd!", "force close current buffer", "bd!", NamedEditorCommand::ForceDeleteBuffer},
-    {"reload-config", "reload medit configuration", "reload-config", NamedEditorCommand::ReloadConfig},
-    {"panel", "show or focus panel", "panel", NamedEditorCommand::Panel},
-    {"panel-toggle", "toggle panel visibility", "panel-toggle", NamedEditorCommand::PanelToggle},
-    {"panel-focus", "focus panel", "panel-focus", NamedEditorCommand::PanelFocus},
-    {"panel-close", "close panel", "panel-close", NamedEditorCommand::PanelClose},
-    {"panel-clear", "clear panel buffer", "panel-clear", NamedEditorCommand::PanelClear},
-    {"diagnostics", "show diagnostics summary", "diagnostics", NamedEditorCommand::Diagnostics},
-    {"lsp-status", "show language server status", "lsp-status", NamedEditorCommand::LspStatus},
-    {"tree-sitter-status", "show tree-sitter status", "tree-sitter-status", NamedEditorCommand::TreeSitterStatus},
-    {"inspect-key", "inspect the next key sequence", "inspect-key", NamedEditorCommand::InspectKey},
-    {"lua-command", "run registered Lua command", "lua-command ", NamedEditorCommand::LuaCommand},
-}};
 
 bool parse_substitute_component(
     std::string_view command,
@@ -985,8 +923,9 @@ void EditorState::handle_lua_command(const std::string &argument) {
 
 PopupMenuItems command_completion_items() {
     PopupMenuItems items;
-    items.reserve(kNamedEditorCommands.size() + 2);
-    for (const NamedEditorCommandInfo &command : kNamedEditorCommands) {
+    std::span<const NamedEditorCommandInfo> commands = named_editor_commands();
+    items.reserve(commands.size() + 2);
+    for (const NamedEditorCommandInfo &command : commands) {
         items.push_back(
             {std::string(command.name), std::string(command.detail), std::string(command.completion_text), std::nullopt});
     }
@@ -995,27 +934,21 @@ PopupMenuItems command_completion_items() {
     return items;
 }
 
-std::vector<std::string> lua_command_names(const LuaRuntime &lua) {
-    return lua.registered_commands();
-}
-
 void append_lua_command_completion_items(PopupMenuItems &items, const LuaRuntime &lua) {
-    std::vector<std::string> commands = lua_command_names(lua);
-    items.reserve(items.size() + commands.size());
-    for (const std::string &name : commands) {
-        items.push_back({name, "Lua command", name, std::nullopt});
+    std::vector<LuaCommandInfo> commands = lua.registered_command_infos();
+    std::size_t alias_count = 0;
+    for (const LuaCommandInfo &command : commands) {
+        alias_count += command.aliases.size();
     }
-}
-
-std::optional<NamedEditorCommand> named_editor_command_from_verb(std::string_view verb) {
-    auto found = std::find_if(
-        kNamedEditorCommands.begin(),
-        kNamedEditorCommands.end(),
-        [verb](const NamedEditorCommandInfo &command) { return command.name == verb; });
-    if (found == kNamedEditorCommands.end()) {
-        return std::nullopt;
+    items.reserve(items.size() + commands.size() + alias_count);
+    for (const LuaCommandInfo &command : commands) {
+        std::string detail = command.detail.empty() ? "Lua command" : command.detail;
+        std::string completion_text = command.completion_text.empty() ? command.name : command.completion_text;
+        items.push_back({command.name, detail, completion_text, std::nullopt});
+        for (const std::string &alias : command.aliases) {
+            items.push_back({alias, "alias for " + command.name, alias, std::nullopt});
+        }
     }
-    return found->command;
 }
 
 void execute_named_editor_command(
@@ -1151,8 +1084,12 @@ void EditorState::show_command_completion() {
     if (command.starts_with(lua_prefix)) {
         PopupMenuItems items;
         std::string filter = command.substr(lua_prefix.size());
-        for (const std::string &name : lua_command_names(lua)) {
-            items.push_back({name, "Lua command", "lua-command " + name, std::nullopt});
+        for (const LuaCommandInfo &lua_command : lua.registered_command_infos()) {
+            std::string detail = lua_command.detail.empty() ? "Lua command" : lua_command.detail;
+            items.push_back({lua_command.name, detail, "lua-command " + lua_command.name, std::nullopt});
+            for (const std::string &alias : lua_command.aliases) {
+                items.push_back({alias, "alias for " + lua_command.name, "lua-command " + alias, std::nullopt});
+            }
         }
         if (items.empty()) {
             set_status("No Lua commands");
@@ -1221,8 +1158,8 @@ void execute_command_text_impl(EditorState &state, const std::u32string &command
         state.set_status(substitute_error);
     } else if (std::all_of(verb.begin(), verb.end(), [](unsigned char ch) { return std::isdigit(ch) != 0; })) {
         state.handle_goto_line_command(verb);
-    } else if (std::optional<NamedEditorCommand> named = named_editor_command_from_verb(verb)) {
-        execute_named_editor_command(state, *named, argument);
+    } else if (NamedEditorCommandResolution named = resolve_named_editor_command(verb); named.command) {
+        execute_named_editor_command(state, *named.command, argument);
     } else if (argument.empty()) {
         std::string error_message;
         if (state.lua.execute_command(state, verb, std::string(), error_message)) {
@@ -1240,8 +1177,7 @@ void execute_command_text_impl(EditorState &state, const std::u32string &command
                 state.set_status(error_message);
             }
         }
-    } else if (std::vector<std::string> commands = lua_command_names(state.lua);
-               std::binary_search(commands.begin(), commands.end(), verb)) {
+    } else {
         std::string error_message;
         if (state.lua.execute_command(state, verb, argument, error_message)) {
             if (!state.apply_pending_config_reload()) {
@@ -1251,11 +1187,11 @@ void execute_command_text_impl(EditorState &state, const std::u32string &command
             if (state.status_message.empty() || state.status_message == ":") {
                 state.set_status("Lua command: " + verb);
             }
+        } else if (error_message == "No such Lua command: " + verb) {
+            state.set_status("Unknown command: " + verb);
         } else {
             state.set_status(error_message);
         }
-    } else {
-        state.set_status("Unknown command: " + verb);
     }
     state.enter_normal_mode(true);
 }

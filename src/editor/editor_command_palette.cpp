@@ -4,12 +4,14 @@
 
 namespace {
 
-constexpr std::array<NamedEditorCommandInfo, 21> kNamedEditorCommands{{
+constexpr std::array<NamedEditorCommandInfo, 25> kNamedEditorCommands{{
     {"w", "write current buffer", "w", NamedEditorCommand::Write},
     {"q", "quit", "q", NamedEditorCommand::Quit},
     {"q!", "force quit", "q!", NamedEditorCommand::ForceQuit},
     {"wq", "write and quit", "wq", NamedEditorCommand::WriteQuit},
     {"x", "write and quit if modified", "x", NamedEditorCommand::WriteIfChangedQuit},
+    {"earlier", "undo earlier changes by count or time", "earlier ", NamedEditorCommand::Earlier},
+    {"later", "redo later changes by count or time", "later ", NamedEditorCommand::Later},
     {"e", "edit file in active window", "e ", NamedEditorCommand::Edit},
     {"buffers", "list open buffers", "buffers", NamedEditorCommand::Buffers},
     {"buffer", "switch to buffer", "buffer ", NamedEditorCommand::Buffer},
@@ -25,8 +27,9 @@ constexpr std::array<NamedEditorCommandInfo, 21> kNamedEditorCommands{{
     {"panel-clear", "clear panel buffer", "panel-clear", NamedEditorCommand::PanelClear},
     {"diagnostics", "show diagnostics summary", "diagnostics", NamedEditorCommand::Diagnostics},
     {"lsp-status", "show language server status", "lsp-status", NamedEditorCommand::LspStatus},
-    {"tree-sitter-status", "show tree-sitter syntax status", "tree-sitter-status", NamedEditorCommand::TreeSitterStatus},
+    {"tree-sitter-status", "show tree-sitter status", "tree-sitter-status", NamedEditorCommand::TreeSitterStatus},
     {"inspect-key", "inspect the next key sequence", "inspect-key", NamedEditorCommand::InspectKey},
+    {"lua-command", "run registered Lua command", "lua-command ", NamedEditorCommand::LuaCommand},
 }};
 
 }  // namespace

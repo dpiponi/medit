@@ -11,6 +11,13 @@ import editor_core;
 
 struct EditorState;
 
+struct LuaCommandInfo {
+    std::string name;
+    std::string detail;
+    std::string completion_text;
+    std::vector<std::string> aliases;
+};
+
 class LuaRuntime {
   public:
     LuaRuntime();
@@ -36,6 +43,7 @@ class LuaRuntime {
     std::optional<int> idle_wait_timeout_ms() const;
     void dispatch_editor_event(EditorState &state, const EditorEvent &event);
     std::vector<std::string> registered_commands() const;
+    std::vector<LuaCommandInfo> registered_command_infos() const;
     std::vector<std::pair<std::string, std::string>> run_health_checks(EditorState &state) const;
 
   private:
