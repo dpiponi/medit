@@ -156,15 +156,23 @@ local function apply_annotation_sources(buffer_id)
 end
 
 local function set_annotation_source(buffer_id, source_name, annotations)
-  if not annotation_sources[buffer_id] then
-    annotation_sources[buffer_id] = {}
+  local sources = annotation_sources[buffer_id]
+  local had_source = sources ~= nil and sources[source_name] ~= nil
+
+  if (not annotations or #annotations == 0) and not had_source then
+    return
+  end
+
+  if not sources then
+    sources = {}
+    annotation_sources[buffer_id] = sources
   end
   if annotations and #annotations > 0 then
-    annotation_sources[buffer_id][source_name] = annotations
+    sources[source_name] = annotations
   else
-    annotation_sources[buffer_id][source_name] = nil
+    sources[source_name] = nil
   end
-  if next(annotation_sources[buffer_id]) == nil then
+  if next(sources) == nil then
     annotation_sources[buffer_id] = nil
   end
 

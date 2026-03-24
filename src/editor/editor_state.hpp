@@ -78,6 +78,20 @@ struct VisualRow {
 
 using VisualRows = std::vector<VisualRow>;
 
+struct WrapSegmentLayout {
+    std::size_t start_column = 0;
+    std::size_t start_width = 0;
+};
+
+using WrapLineLayout = std::vector<WrapSegmentLayout>;
+
+struct WrapLayoutCache {
+    int buffer_cols = -1;
+    std::size_t tabstop = 0;
+    std::size_t text_revision = std::numeric_limits<std::size_t>::max();
+    std::vector<WrapLineLayout> lines;
+};
+
 struct VisualRowsCache {
     int buffer_cols = -1;
     std::size_t text_revision = std::numeric_limits<std::size_t>::max();
@@ -85,6 +99,7 @@ struct VisualRowsCache {
     std::size_t annotations_revision = std::numeric_limits<std::size_t>::max();
     bool show_diagnostics = true;
     VisualRows rows;
+    std::vector<std::size_t> first_visual_row_by_buffer_row;
 };
 
 struct SubstituteCommand {
@@ -144,6 +159,7 @@ struct EditorState {
         std::string compiled_search_pattern_utf8;
         std::unique_ptr<std::regex> compiled_search_regex;
         std::size_t search_matches_version = 0;
+        std::map<std::pair<int, std::size_t>, WrapLayoutCache> wrap_layout_caches;
         std::map<std::pair<int, bool>, VisualRowsCache> visual_rows_caches;
         std::size_t sorted_diagnostics_revision = std::numeric_limits<std::size_t>::max();
         std::vector<DiagnosticEntryView> sorted_diagnostics;

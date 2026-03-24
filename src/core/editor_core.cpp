@@ -561,6 +561,10 @@ std::size_t EditorCore::current_revision() const {
     return current_revision_;
 }
 
+std::size_t EditorCore::content_revision() const {
+    return content_revision_;
+}
+
 std::size_t EditorCore::saved_revision() const {
     return saved_revision_;
 }
@@ -923,6 +927,7 @@ void EditorCore::reset_history() {
     undo_stack_.clear();
     redo_stack_.clear();
     current_revision_ = 0;
+    content_revision_ = 0;
     saved_revision_ = 0;
     document_version_ = 0;
     saved_document_version_ = 0;
@@ -1605,6 +1610,7 @@ void EditorCore::apply_command(std::unique_ptr<EditCommand> command) {
         suppress_cursor_events_ = true;
         command->apply(*this);
         suppress_cursor_events_ = false;
+        ++content_revision_;
         compound_commands_.push_back(std::move(command));
         redo_stack_.clear();
         return;
@@ -1622,6 +1628,7 @@ void EditorCore::apply_command(std::unique_ptr<EditCommand> command) {
     undo_stack_.push_back({std::move(command), history_now()});
     redo_stack_.clear();
     ++current_revision_;
+    ++content_revision_;
     ++document_version_;
     if (incremental_change) {
         emit_document_changed(incremental_change->range, incremental_change->text);
@@ -2064,6 +2071,7 @@ bool EditorCore::undo() {
     if (current_revision_ > 0) {
         --current_revision_;
     }
+    ++content_revision_;
     ++document_version_;
     emit_document_changed(before_lines);
     emit_cursor_moved(previous_cursor);
@@ -2083,6 +2091,7 @@ bool EditorCore::redo() {
     suppress_cursor_events_ = false;
     undo_stack_.push_back(std::move(entry));
     ++current_revision_;
+    ++content_revision_;
     ++document_version_;
     emit_document_changed(before_lines);
     emit_cursor_moved(previous_cursor);

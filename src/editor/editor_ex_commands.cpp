@@ -168,6 +168,7 @@ void EditorState::handle_goto_line_command(const std::string &argument) {
     EditorCore &core = active_core();
     std::size_t target_row = std::min(line_number - 1, core.line_count() - 1);
     core.set_cursor({target_row, 0});
+    sync_window_view_from_core(windows.active_window_id());
     set_status("Line " + std::to_string(target_row + 1));
 }
 

@@ -193,6 +193,7 @@ export class EditorCore {
     std::size_t line_count() const;
     std::size_t line_length(std::size_t row) const;
     std::size_t current_revision() const;
+    std::size_t content_revision() const;
     std::size_t saved_revision() const;
     std::size_t document_version() const;
     std::size_t saved_document_version() const;
@@ -324,6 +325,7 @@ export class EditorCore {
     Position compound_before_cursor_;
     std::size_t compound_depth_ = 0;
     std::size_t current_revision_ = 0;
+    std::size_t content_revision_ = 0;
     std::size_t saved_revision_ = 0;
     std::size_t document_version_ = 0;
     std::size_t saved_document_version_ = 0;

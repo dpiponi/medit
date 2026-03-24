@@ -43,6 +43,11 @@ void browse_prompt_history(EditorState &state, bool previous);
 std::size_t popup_menu_visible_rows_for_screen(int screen_rows);
 bool should_render_diagnostics(const EditorState &state, std::size_t window_id);
 Lines wrap_annotation_text(const std::u32string &text, int max_cols);
+const WrapLineLayout &wrap_segments_for_line(
+    const EditorState &state,
+    std::size_t window_id,
+    int buffer_cols,
+    std::size_t row);
 std::vector<std::size_t> source_line_wrap_starts(const std::u32string &line, int buffer_cols, std::size_t tabstop);
 std::size_t source_line_wrap_index_for_column(
     const std::u32string &line,
@@ -51,6 +56,12 @@ std::size_t source_line_wrap_index_for_column(
     std::size_t tabstop);
 bool move_cursor_by_visual_rows(EditorState &state, std::size_t window_id, int delta);
 const VisualRows &visual_rows_for_window(const EditorState &state, std::size_t window_id, int buffer_cols);
+std::size_t visual_row_for_position(
+    const EditorState &state,
+    std::size_t window_id,
+    const VisualRows &rows,
+    int buffer_cols,
+    Position position);
 std::size_t visual_row_for_buffer_row(const VisualRows &rows, std::size_t buffer_row);
 void show_diagnostics_summary(EditorState &state);
 void navigate_diagnostic(EditorState &state, bool forward);
@@ -121,6 +132,10 @@ void update_input_timeout(const EditorState &state);
 void handle_service_events(EditorState &state);
 std::string handle_control_request(EditorState &state, std::string_view request_text);
 std::optional<Position> matching_pair_cursor(const EditorCore &core);
+std::optional<Position> matching_pair_position_impl(
+    const EditorCore &core,
+    Position pair_position,
+    std::optional<std::size_t> max_positions_to_scan);
 std::optional<Position> matching_pair_position(const EditorCore &core, Position pair_position);
 bool jump_to_matching_pair(EditorState &state, bool extend_selection);
 void run_editor(EditorState &state);

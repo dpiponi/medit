@@ -160,35 +160,18 @@ int wrapped_line_content_cols(int buffer_cols, bool continuation) {
 }
 
 std::size_t wrap_segment_start_width(
-    const std::u32string &line,
+    const EditorState &state,
+    std::size_t window_id,
+    std::size_t row,
     std::size_t wrap_index,
     int buffer_cols,
     std::size_t tabstop) {
-    std::vector<std::size_t> starts = source_line_wrap_starts(line, buffer_cols, tabstop);
-    if (wrap_index >= starts.size()) {
-        return starts.empty() ? 0 : starts.back();
+    (void)tabstop;
+    const WrapLineLayout &segments = wrap_segments_for_line(state, window_id, buffer_cols, row);
+    if (wrap_index >= segments.size()) {
+        return segments.empty() ? 0 : segments.back().start_width;
     }
-    return starts[wrap_index];
-}
-
-std::size_t visual_row_for_position(
-    const EditorState &state,
-    std::size_t window_id,
-    const VisualRows &rows,
-    int buffer_cols,
-    Position position) {
-    const EditorCore &core = state.window_core(window_id);
-    std::size_t tabstop = effective_tabstop(state.config, core.file_path());
-    const std::u32string &line = core.lines()[position.row];
-    std::size_t wrap_index = source_line_wrap_index_for_column(line, position.column, buffer_cols, tabstop);
-    for (std::size_t index = 0; index < rows.size(); ++index) {
-        if (rows[index].kind == VisualRowKind::SourceLine &&
-            rows[index].buffer_row == position.row &&
-            rows[index].wrap_offset == wrap_index) {
-            return index;
-        }
-    }
-    return visual_row_for_buffer_row(rows, position.row);
+    return segments[wrap_index].start_width;
 }
 
 }  // namespace
@@ -341,7 +324,26 @@ StyleRole resolve_style_role(Position position, const HighlightSpans &spans, Sty
     return resolved_role;
 }
 
-HighlightSpans collect_line_highlights(const EditorState &state, std::size_t window_id, std::size_t row) {
+struct PairHighlightState {
+    std::optional<Position> pair;
+    std::optional<Position> match;
+};
+
+PairHighlightState pair_highlight_state(const EditorCore &core) {
+    constexpr std::size_t kPairHighlightScanBudget = 12000;
+    PairHighlightState result;
+    result.pair = matching_pair_cursor(core);
+    if (result.pair) {
+        result.match = matching_pair_position_impl(core, *result.pair, kPairHighlightScanBudget);
+    }
+    return result;
+}
+
+HighlightSpans collect_line_highlights(
+    const EditorState &state,
+    std::size_t window_id,
+    std::size_t row,
+    const PairHighlightState &pair_state) {
     const EditorCore &core = state.window_core(window_id);
     const EditorState::WindowUiState &window_state = state.window_ui(window_id);
     const EditorState::BufferUiState &buffer_ui = state.buffer_ui_state(state.window_buffer(window_id).id);
@@ -354,14 +356,14 @@ HighlightSpans collect_line_highlights(const EditorState &state, std::size_t win
     if (state.displayed_cursor(window_id).row == row) {
         spans.push_back({entire_line, StyleRole::CursorLine, 10});
     }
-    if (std::optional<Position> pair = matching_pair_cursor(core)) {
-        if (std::optional<Position> match = matching_pair_position(core, *pair)) {
-            if (pair->row == row) {
-                spans.push_back({{*pair, {pair->row, pair->column + 1}}, StyleRole::SearchMatchCurrent, 96});
-            }
-            if (match->row == row) {
-                spans.push_back({{*match, {match->row, match->column + 1}}, StyleRole::SearchMatchCurrent, 96});
-            }
+    if (pair_state.pair && pair_state.match) {
+        if (pair_state.pair->row == row) {
+            spans.push_back(
+                {{*pair_state.pair, {pair_state.pair->row, pair_state.pair->column + 1}}, StyleRole::SearchMatchCurrent, 96});
+        }
+        if (pair_state.match->row == row) {
+            spans.push_back(
+                {{*pair_state.match, {pair_state.match->row, pair_state.match->column + 1}}, StyleRole::SearchMatchCurrent, 96});
         }
     }
     std::optional<Range> selection = core.selection_range();
@@ -430,6 +432,7 @@ void render_styled_tab(const Theme &theme, int screen_row, int screen_col, int w
 
 void draw_wrapped_styled_line(
     const EditorState &state,
+    std::size_t window_id,
     int screen_row,
     int start_col,
     const std::u32string &line,
@@ -439,18 +442,57 @@ void draw_wrapped_styled_line(
     std::size_t wrap_index,
     int max_cols) {
     bool continuation = wrap_index > 0;
-    std::size_t start_width = wrap_segment_start_width(line, wrap_index, max_cols, tabstop);
+    const WrapLineLayout &segments = wrap_segments_for_line(state, window_id, max_cols, row);
+    const WrapSegmentLayout &segment = wrap_index < segments.size() ? segments[wrap_index] : segments.back();
+    std::size_t start_width = segment.start_width;
     std::size_t end_width = start_width + static_cast<std::size_t>(wrapped_line_content_cols(max_cols, continuation));
     int screen_col = start_col;
 
-    std::size_t absolute_width = 0;
-    for (std::size_t column = 0; column < line.size(); ++column) {
+    bool uniform_full_line_role = false;
+    StyleRole uniform_role = StyleRole::DefaultText;
+    if (spans.empty()) {
+        uniform_full_line_role = true;
+    } else if (spans.size() == 1) {
+        const HighlightSpan &span = spans.front();
+        if (span.range.start.row == row && span.range.end.row == row &&
+            span.range.start.column == 0 && span.range.end.column >= line.size()) {
+            uniform_full_line_role = true;
+            uniform_role = span.role;
+        }
+    }
+
+    if (uniform_full_line_role) {
+        std::u32string visible_text;
+        visible_text.reserve(static_cast<std::size_t>(max_cols));
+        std::size_t absolute_width = start_width;
+        bool has_tab = false;
+        for (std::size_t column = segment.start_column; column < line.size(); ++column) {
+            char32_t codepoint = line[column];
+            int width = static_cast<int>(codepoint_display_width(codepoint, absolute_width, tabstop));
+            if (codepoint == U'\t') {
+                has_tab = true;
+                break;
+            }
+            if (absolute_width >= end_width || screen_col + width > start_col + max_cols) {
+                break;
+            }
+            visible_text.push_back(codepoint);
+            absolute_width += static_cast<std::size_t>(width);
+        }
+        if (!has_tab) {
+            TextStyle style = theme_style(state.theme, uniform_role);
+            attr_t attrs = static_cast<attr_t>(curses_attributes(style, uniform_role));
+            attron(attrs);
+            mvaddnwstr(screen_row, start_col, u32_to_wstring(visible_text).c_str(), max_cols);
+            attroff(attrs);
+            return;
+        }
+    }
+
+    std::size_t absolute_width = start_width;
+    for (std::size_t column = segment.start_column; column < line.size(); ++column) {
         char32_t codepoint = line[column];
         int width = static_cast<int>(codepoint_display_width(codepoint, absolute_width, tabstop));
-        if (absolute_width + static_cast<std::size_t>(width) <= start_width) {
-            absolute_width += static_cast<std::size_t>(width);
-            continue;
-        }
         if (absolute_width >= end_width || screen_col + width > start_col + max_cols) {
             break;
         }
@@ -664,27 +706,6 @@ bool move_cursor_by_visual_rows(EditorState &state, std::size_t window_id, int d
         }
         return width;
     };
-    auto wrap_segment_start_width_local = [](const std::u32string &line, std::size_t wrap_index, int buffer_cols, std::size_t tabstop) {
-        std::vector<std::size_t> starts = source_line_wrap_starts(line, buffer_cols, tabstop);
-        if (wrap_index >= starts.size()) {
-            return starts.empty() ? std::size_t{0} : starts.back();
-        }
-        return starts[wrap_index];
-    };
-    auto visual_row_for_position_local = [&](const VisualRows &rows, int buffer_cols, Position position) {
-        const EditorCore &core = state.window_core(window_id);
-        std::size_t tabstop = effective_tabstop(state.config, core.file_path());
-        const std::u32string &line = core.lines()[position.row];
-        std::size_t wrap_index = source_line_wrap_index_for_column(line, position.column, buffer_cols, tabstop);
-        for (std::size_t index = 0; index < rows.size(); ++index) {
-            if (rows[index].kind == VisualRowKind::SourceLine &&
-                rows[index].buffer_row == position.row &&
-                rows[index].wrap_offset == wrap_index) {
-                return index;
-            }
-        }
-        return visual_row_for_buffer_row(rows, position.row);
-    };
     auto adjacent_source_visual_row_local = [](const VisualRows &rows, std::size_t start_index, int step) -> std::optional<std::size_t> {
         if (step == 0 || rows.empty()) {
             return std::nullopt;
@@ -738,8 +759,9 @@ bool move_cursor_by_visual_rows(EditorState &state, std::size_t window_id, int d
     std::size_t tabstop = effective_tabstop(state.config, core.file_path());
     const std::u32string &line = core.lines()[cursor.row];
     std::size_t wrap_index = source_line_wrap_index_for_column(line, cursor.column, buffer_cols, tabstop);
-    std::size_t current_visual_row = visual_row_for_position_local(rows, buffer_cols, cursor);
-    std::size_t current_start_width = wrap_segment_start_width_local(line, wrap_index, buffer_cols, tabstop);
+    std::size_t current_visual_row = visual_row_for_position(state, window_id, rows, buffer_cols, cursor);
+    std::size_t current_start_width =
+        wrap_segment_start_width(state, window_id, cursor.row, wrap_index, buffer_cols, tabstop);
     std::size_t desired_visual_column = display_width_until_local(line, cursor.column, tabstop) - current_start_width;
 
     std::optional<std::size_t> target_visual_row = current_visual_row;
@@ -754,7 +776,8 @@ bool move_cursor_by_visual_rows(EditorState &state, std::size_t window_id, int d
 
     const VisualRow &target_row = rows[*target_visual_row];
     const std::u32string &target_line = core.lines()[target_row.buffer_row];
-    std::size_t target_start_width = wrap_segment_start_width_local(target_line, target_row.wrap_offset, buffer_cols, tabstop);
+    std::size_t target_start_width =
+        wrap_segment_start_width(state, window_id, target_row.buffer_row, target_row.wrap_offset, buffer_cols, tabstop);
     std::size_t target_width = target_start_width + desired_visual_column;
     Position target_position{target_row.buffer_row, column_for_display_width(target_line, target_width, tabstop)};
 
@@ -896,6 +919,9 @@ void draw_buffer_rows(const EditorState &state, std::size_t window_id, const Win
     }
     std::size_t tabstop = effective_tabstop(state.config, core.file_path());
     const VisualRows &visual_rows = visual_rows_for_window(state, window_id, buffer_cols);
+    PairHighlightState pair_state = pair_highlight_state(core);
+    std::optional<std::size_t> cached_highlight_row;
+    HighlightSpans cached_highlight_spans;
     for (int row_offset = 0; row_offset < buffer_rows; ++row_offset) {
         int screen_row = rect.top + row_offset;
         std::size_t visual_row_index = buffer_ui.row_offset + static_cast<std::size_t>(row_offset);
@@ -917,13 +943,17 @@ void draw_buffer_rows(const EditorState &state, std::size_t window_id, const Win
                 draw_wrap_gutter_marker(state.theme, screen_row, rect.left, line_number_width_value);
             }
             const std::u32string &line = core.lines()[visual_row.buffer_row];
-            HighlightSpans spans = collect_line_highlights(state, window_id, visual_row.buffer_row);
+            if (cached_highlight_row != visual_row.buffer_row) {
+                cached_highlight_spans = collect_line_highlights(state, window_id, visual_row.buffer_row, pair_state);
+                cached_highlight_row = visual_row.buffer_row;
+            }
             draw_wrapped_styled_line(
                 state,
+                window_id,
                 screen_row,
                 rect.left + line_number_width_value + 1,
                 line,
-                spans,
+                cached_highlight_spans,
                 visual_row.buffer_row,
                 tabstop,
                 visual_row.wrap_offset,
@@ -1224,7 +1254,7 @@ std::pair<int, int> cursor_screen_position(const EditorState &state, const Windo
     std::size_t tabstop = effective_tabstop(state.config, core.file_path());
     std::size_t wrap_index = source_line_wrap_index_for_column(line, cursor.column, buffer_cols, tabstop);
     std::size_t width = display_width_until(line, cursor.column, tabstop);
-    std::size_t start_width = wrap_segment_start_width(line, wrap_index, buffer_cols, tabstop);
+    std::size_t start_width = wrap_segment_start_width(state, window_id, cursor.row, wrap_index, buffer_cols, tabstop);
     int screen_row = rect.top + static_cast<int>(visual_row_index - buffer_ui.row_offset);
     int screen_col = rect.left + static_cast<int>(width - start_width) + line_number_cols + 1;
     return {screen_row, screen_col};
@@ -1268,7 +1298,8 @@ std::optional<ClickedBufferPosition> buffer_position_from_screen_point(const Edi
         std::size_t row = visual_row.buffer_row;
         const std::u32string &line = core.lines()[row];
         std::size_t tabstop = effective_tabstop(state.config, core.file_path());
-        std::size_t visual_column = wrap_segment_start_width(line, visual_row.wrap_offset, buffer_cols, tabstop);
+        std::size_t visual_column =
+            wrap_segment_start_width(state, rect.window_id, row, visual_row.wrap_offset, buffer_cols, tabstop);
         int gutter_start = rect.left + line_number_cols + 1;
         if (screen_col > gutter_start) {
             visual_column += static_cast<std::size_t>(screen_col - gutter_start);
@@ -1317,7 +1348,7 @@ void EditorState::refresh_syntax_highlights(std::size_t window_id) {
     constexpr auto kInsertSyntaxDebounce = std::chrono::milliseconds(120);
     EditorCore &core = window_core(window_id);
     SyntaxUiState &syntax_ui = buffer_syntax_ui(window_buffer(window_id).id);
-    std::size_t current_revision = core.current_revision();
+    std::size_t current_revision = core.content_revision();
     SyntaxSelection selection;
     try {
         selection = resolve_syntax_selection(config, core.file_path());
