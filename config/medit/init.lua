@@ -37,14 +37,20 @@ local function edit_lua_init()
   medit.set_status("Opened Lua init")
 end
 
-local function project_file_list_command()
+local function project_file_list_command(root)
+  local command
   if medit.executable_exists("fd") then
-    return "fd -t f -H -I -E .git"
+    command = "fd -t f -H -I -E .git"
+  elseif medit.executable_exists("fdfind") then
+    command = "fdfind -t f -H -I -E .git"
+  else
+    command = "rg --files --hidden --no-ignore -g '!.git'"
   end
-  if medit.executable_exists("fdfind") then
-    return "fdfind -t f -H -I -E .git"
+
+  if root and root ~= "" then
+    return "cd " .. medit.shell_quote(root) .. " && " .. command
   end
-  return "rg --files --hidden --no-ignore -g '!.git'"
+  return command
 end
 
 local function find_file()
@@ -61,6 +67,28 @@ local function find_file()
 
   medit.open_file(selection)
   medit.set_status("Opened " .. selection)
+end
+
+local function handle_startup(event)
+  if not event.directory or #event.args ~= 1 then
+    return false
+  end
+  if not medit.executable_exists("fzf") then
+    medit.set_status("Missing executable: fzf")
+    return true
+  end
+
+  local selection, err = medit.run_picker(project_file_list_command(event.directory) .. " | fzf")
+  if not selection or selection == "" then
+    if err and err ~= "" then
+      medit.set_status(err)
+    end
+    return true
+  end
+
+  medit.open_location(event.directory .. "/" .. selection, { row = 0, column = 0 })
+  medit.set_status("Opened " .. event.directory .. "/" .. selection)
+  return true
 end
 
 local function find_file_health()
@@ -443,25 +471,6 @@ end
 
 local notebook_modes = {}
 
-local notebook_kernel_specs = {
-  python = {
-    label = "Python",
-    source = "notebook-python",
-    output_prefix = "notebook-python",
-    helper_name = "notebook_python.py"
-  },
-  sage = {
-    label = "Sage",
-    source = "notebook-sage",
-    output_prefix = "notebook-sage",
-    helper_name = "notebook_sage.py"
-  }
-}
-
-local function notebook_kernel_spec(kind)
-  return notebook_kernel_specs[kind or "python"]
-end
-
 local function notebook_python_executable()
   if medit.executable_exists("python3") then
     return "python3"
@@ -472,31 +481,8 @@ local function notebook_python_executable()
   return nil
 end
 
-local function notebook_sage_executable()
-  if medit.executable_exists("sage") then
-    return "sage"
-  end
-  return nil
-end
-
-local function notebook_helper_path(kind)
-  local spec = notebook_kernel_spec(kind)
-  return init_script_dir .. "/" .. spec.helper_name
-end
-
-local function notebook_state_kind(buffer_id)
-  local state = notebook_modes[buffer_id]
-  return state and state.kind or "python"
-end
-
-local function notebook_kernel_label(buffer_id)
-  local spec = notebook_kernel_spec(notebook_state_kind(buffer_id))
-  return spec.label
-end
-
-local function notebook_annotation_source(buffer_id)
-  local spec = notebook_kernel_spec(notebook_state_kind(buffer_id))
-  return spec.source
+local function notebook_helper_path()
+  return init_script_dir .. "/notebook_python.py"
 end
 
 local function notebook_state_for_buffer(buffer_id)
@@ -504,7 +490,6 @@ local function notebook_state_for_buffer(buffer_id)
   if not state then
     state = {
       enabled = false,
-      kind = "python",
       cells = {},
       cell_states = {},
       queued_cells = {},
@@ -534,8 +519,7 @@ local function notebook_compact_summary(text)
 end
 
 local function notebook_output_buffer_name(buffer_id)
-  local spec = notebook_kernel_spec(notebook_state_kind(buffer_id))
-  return string.format("%s-%d", spec.output_prefix, buffer_id)
+  return string.format("notebook-python-%d", buffer_id)
 end
 
 local function notebook_output_buffer_id(buffer_id)
@@ -647,11 +631,11 @@ local function notebook_refresh_annotations(buffer_id)
         line = cell.annotation_row or cell.header_row,
         text = text,
         severity = severity,
-        source = notebook_annotation_source(buffer_id)
+        source = "notebook-python"
       })
     end
   end
-  set_annotation_source(buffer_id, notebook_annotation_source(buffer_id), annotations)
+  set_annotation_source(buffer_id, "notebook-python", annotations)
 end
 
 local function notebook_reset_cell_state(cell_state)
@@ -803,18 +787,9 @@ local function notebook_consume_protocol(buffer_id, chunk)
 end
 
 local function notebook_kernel_command(buffer_id)
-  local kind = notebook_state_kind(buffer_id)
-  local helper_path = notebook_helper_path(kind)
+  local helper_path = notebook_helper_path()
   if not medit.file_exists(helper_path) then
     return nil, "Missing notebook helper: " .. helper_path
-  end
-
-  if kind == "sage" then
-    local sage = notebook_sage_executable()
-    if not sage then
-      return nil, "Missing executable: sage"
-    end
-    return sage .. " -python -u " .. medit.shell_quote(helper_path)
   end
 
   local python = notebook_python_executable()
@@ -845,7 +820,7 @@ local function notebook_start_kernel(buffer_id)
     end,
     on_stderr = function(_, text)
       notebook_append_output(buffer_id, text)
-      medit.set_status(string.format("Notebook %s kernel stderr", notebook_kernel_label(buffer_id)))
+      medit.set_status("Notebook Python kernel stderr")
     end,
     on_exit = function(_, exit_code)
       local current = notebook_modes[buffer_id]
@@ -858,7 +833,7 @@ local function notebook_start_kernel(buffer_id)
         cell_state.running = false
       end
       notebook_refresh_annotations(buffer_id)
-      medit.set_status(string.format("Notebook %s kernel exited (%d)", notebook_kernel_label(buffer_id), exit_code))
+      medit.set_status(string.format("Notebook Python kernel exited (%d)", exit_code))
     end
   })
   return true
@@ -919,11 +894,6 @@ end
 local function notebook_python_on()
   local buffer_id = current_buffer_id()
   local state = notebook_state_for_buffer(buffer_id)
-  if state.enabled and state.kind ~= "python" then
-    set_annotation_source(buffer_id, notebook_annotation_source(buffer_id), nil)
-    notebook_stop_kernel(buffer_id)
-  end
-  state.kind = "python"
   state.enabled = true
   notebook_parse_cells(buffer_id)
   notebook_refresh_annotations(buffer_id)
@@ -933,38 +903,16 @@ local function notebook_python_on()
   medit.set_status("Notebook Python on")
 end
 
-local function notebook_sage_on()
-  local buffer_id = current_buffer_id()
-  local state = notebook_state_for_buffer(buffer_id)
-  if state.enabled and state.kind ~= "sage" then
-    set_annotation_source(buffer_id, notebook_annotation_source(buffer_id), nil)
-    notebook_stop_kernel(buffer_id)
-  end
-  state.kind = "sage"
-  state.enabled = true
-  notebook_parse_cells(buffer_id)
-  notebook_refresh_annotations(buffer_id)
-  if not notebook_start_kernel(buffer_id) then
-    return
-  end
-  medit.set_status("Notebook Sage on")
-end
-
 local function notebook_python_off()
   local buffer_id = current_buffer_id()
   local state = notebook_modes[buffer_id]
   if not state then
     return
   end
-  local source_name = notebook_annotation_source(buffer_id)
   notebook_stop_kernel(buffer_id)
   notebook_modes[buffer_id] = nil
-  set_annotation_source(buffer_id, source_name, nil)
+  set_annotation_source(buffer_id, "notebook-python", nil)
   medit.set_status("Notebook off")
-end
-
-local function notebook_sage_off()
-  notebook_python_off()
 end
 
 local function notebook_run_cell()
@@ -1065,7 +1013,7 @@ local function notebook_restart_kernel()
   end
   notebook_stop_kernel(buffer_id)
   if notebook_start_kernel(buffer_id) then
-    medit.set_status(string.format("Notebook %s kernel restarted", notebook_kernel_label(buffer_id)))
+    medit.set_status("Notebook Python kernel restarted")
   end
 end
 
@@ -1095,14 +1043,8 @@ end
 
 local function notebook_python_health()
   local python = notebook_python_executable() and "yes" or "no"
-  local helper = medit.file_exists(notebook_helper_path("python")) and "yes" or "no"
+  local helper = medit.file_exists(notebook_helper_path()) and "yes" or "no"
   return string.format("python=%s helper=%s", python, helper)
-end
-
-local function notebook_sage_health()
-  local sage = notebook_sage_executable() and "yes" or "no"
-  local helper = medit.file_exists(notebook_helper_path("sage")) and "yes" or "no"
-  return string.format("sage=%s helper=%s", sage, helper)
 end
 
 local function dirname(path)
@@ -1525,8 +1467,6 @@ medit.register_command("calc-mode-toggle", toggle_calc_mode, { detail = "toggle 
 medit.register_command("calc-refresh", calc_refresh, { detail = "refresh calc annotations" })
 medit.register_command("notebook-python-on", notebook_python_on, { detail = "enable Python notebook mode" })
 medit.register_command("notebook-python-off", notebook_python_off, { detail = "disable Python notebook mode" })
-medit.register_command("notebook-sage-on", notebook_sage_on, { detail = "enable Sage notebook mode" })
-medit.register_command("notebook-sage-off", notebook_sage_off, { detail = "disable Sage notebook mode" })
 medit.register_command("notebook-run-cell", notebook_run_cell, { detail = "run current notebook cell" })
 medit.register_command("notebook-run-all", notebook_run_all, { detail = "run all notebook cells" })
 medit.register_command("notebook-clear-output", notebook_clear_output, { detail = "clear notebook output annotations" })
@@ -1539,7 +1479,7 @@ medit.register_health_check("ai", ai_health)
 medit.register_health_check("make", make_health)
 medit.register_health_check("calc-mode", calc_mode_health)
 medit.register_health_check("notebook-python", notebook_python_health)
-medit.register_health_check("notebook-sage", notebook_sage_health)
+medit.on_startup(handle_startup)
 medit.on("document_opened", function(event)
   refresh_theme_preview()
   refresh_calc_mode(event)
