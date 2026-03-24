@@ -2123,7 +2123,8 @@ void test_lua_python_notebook_commands() {
 
     EditorBuffer *buffer = state.session.open_file(file_path.string(), true);
     expect(buffer != nullptr, "notebook test should open its file");
-    state.show_buffer_in_active_window(buffer->id);
+    std::size_t notebook_buffer_id = buffer->id;
+    state.show_buffer_in_active_window(notebook_buffer_id);
     state.dispatch_editor_events(buffer->core);
 
     expect(state.lua.execute_command(state, "notebook-python-on", "", error_message), "notebook should enable");
@@ -2144,7 +2145,7 @@ void test_lua_python_notebook_commands() {
         state.active_core().lua_annotations()[0].range.start.row == 4,
         "notebook annotation should anchor to the last non-blank line of the cell");
 
-    std::string output_name = "notebook-python-" + std::to_string(buffer->id);
+    std::string output_name = "notebook-python-" + std::to_string(notebook_buffer_id);
     auto found = state.named_special_buffers.find(output_name);
     expect(found != state.named_special_buffers.end(), "notebook run should create a linked output buffer");
     EditorBuffer *output_buffer = state.session.find_buffer_by_id(found->second);
@@ -2154,6 +2155,72 @@ void test_lua_python_notebook_commands() {
         "notebook output buffer should include the final result");
 
     expect(state.lua.execute_command(state, "notebook-python-off", "", error_message), "notebook should disable");
+    state.lua.shutdown();
+    std::filesystem::remove_all(root);
+}
+
+void test_lua_sage_notebook_commands() {
+    if (!executable_exists("sage")) {
+        return;
+    }
+
+    std::filesystem::path root = std::filesystem::temp_directory_path() / "medit_lua_notebook_sage";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+
+    std::filesystem::path file_path = root / "notebook.sage";
+    {
+        std::ofstream file(file_path);
+        file << "# %%\n"
+                "x = 5\n"
+                "\n"
+                "# %%\n"
+                "x^2\n"
+                "\n";
+    }
+
+    EditorState state;
+    initialize_windows(state);
+    std::string error_message;
+    expect(
+        state.lua.initialize(state, std::filesystem::current_path() / "config/medit/init.lua", error_message),
+        "lua runtime should initialize for sage notebook test");
+    expect(error_message.empty(), "lua runtime init should not set an error for sage notebook test");
+
+    EditorBuffer *buffer = state.session.open_file(file_path.string(), true);
+    expect(buffer != nullptr, "sage notebook test should open its file");
+    std::size_t notebook_buffer_id = buffer->id;
+    state.show_buffer_in_active_window(notebook_buffer_id);
+    state.dispatch_editor_events(buffer->core);
+
+    expect(state.lua.execute_command(state, "notebook-sage-on", "", error_message), "sage notebook should enable");
+    expect(state.lua.execute_command(state, "notebook-run-all", "", error_message), "sage notebook run all should start");
+
+    bool completed = false;
+    for (int attempt = 0; attempt < 600; ++attempt) {
+        state.lua.poll_async(state);
+        if (state.active_core().lua_annotations().size() == 1 &&
+            u32_to_utf8(state.active_core().lua_annotations()[0].text).find("25") != std::string::npos) {
+            completed = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    expect(completed, "sage notebook run should produce an inline result annotation");
+    expect(
+        state.active_core().lua_annotations()[0].range.start.row == 4,
+        "sage notebook annotation should anchor to the last non-blank line of the cell");
+
+    std::string output_name = "notebook-sage-" + std::to_string(notebook_buffer_id);
+    auto found = state.named_special_buffers.find(output_name);
+    expect(found != state.named_special_buffers.end(), "sage notebook run should create a linked output buffer");
+    EditorBuffer *output_buffer = state.session.find_buffer_by_id(found->second);
+    expect(output_buffer != nullptr, "sage notebook output buffer should exist");
+    expect(
+        buffer_text(output_buffer->core).find("=> 25") != std::string::npos,
+        "sage notebook output buffer should include the final result");
+
+    expect(state.lua.execute_command(state, "notebook-sage-off", "", error_message), "sage notebook should disable");
     state.lua.shutdown();
     std::filesystem::remove_all(root);
 }
@@ -3587,6 +3654,7 @@ int main() {
         test_lua_events_include_buffer_id();
         test_lua_persistent_process_callbacks_and_status();
         test_lua_python_notebook_commands();
+        test_lua_sage_notebook_commands();
         test_special_buffers_and_panel_reuse();
         test_lua_async_job_streams_output_to_named_buffer();
         test_closing_buffer_clears_hidden_panel_buffer_reference();

@@ -435,6 +435,25 @@ end
 
 local notebook_modes = {}
 
+local notebook_kernel_specs = {
+  python = {
+    label = "Python",
+    source = "notebook-python",
+    output_prefix = "notebook-python",
+    helper_name = "notebook_python.py"
+  },
+  sage = {
+    label = "Sage",
+    source = "notebook-sage",
+    output_prefix = "notebook-sage",
+    helper_name = "notebook_sage.py"
+  }
+}
+
+local function notebook_kernel_spec(kind)
+  return notebook_kernel_specs[kind or "python"]
+end
+
 local function notebook_python_executable()
   if medit.executable_exists("python3") then
     return "python3"
@@ -445,8 +464,31 @@ local function notebook_python_executable()
   return nil
 end
 
-local function notebook_python_helper_path()
-  return init_script_dir .. "/notebook_python.py"
+local function notebook_sage_executable()
+  if medit.executable_exists("sage") then
+    return "sage"
+  end
+  return nil
+end
+
+local function notebook_helper_path(kind)
+  local spec = notebook_kernel_spec(kind)
+  return init_script_dir .. "/" .. spec.helper_name
+end
+
+local function notebook_state_kind(buffer_id)
+  local state = notebook_modes[buffer_id]
+  return state and state.kind or "python"
+end
+
+local function notebook_kernel_label(buffer_id)
+  local spec = notebook_kernel_spec(notebook_state_kind(buffer_id))
+  return spec.label
+end
+
+local function notebook_annotation_source(buffer_id)
+  local spec = notebook_kernel_spec(notebook_state_kind(buffer_id))
+  return spec.source
 end
 
 local function notebook_state_for_buffer(buffer_id)
@@ -454,9 +496,11 @@ local function notebook_state_for_buffer(buffer_id)
   if not state then
     state = {
       enabled = false,
+      kind = "python",
       cells = {},
       cell_states = {},
       queued_cells = {},
+      last_protocol_activity_at = 0,
       protocol_buffer = "",
       kernel_process_id = nil,
       output_buffer_id = nil
@@ -482,7 +526,8 @@ local function notebook_compact_summary(text)
 end
 
 local function notebook_output_buffer_name(buffer_id)
-  return string.format("notebook-python-%d", buffer_id)
+  local spec = notebook_kernel_spec(notebook_state_kind(buffer_id))
+  return string.format("%s-%d", spec.output_prefix, buffer_id)
 end
 
 local function notebook_output_buffer_id(buffer_id)
@@ -594,11 +639,11 @@ local function notebook_refresh_annotations(buffer_id)
         line = cell.annotation_row or cell.header_row,
         text = text,
         severity = severity,
-        source = "notebook-python"
+        source = notebook_annotation_source(buffer_id)
       })
     end
   end
-  set_annotation_source(buffer_id, "notebook-python", annotations)
+  set_annotation_source(buffer_id, notebook_annotation_source(buffer_id), annotations)
 end
 
 local function notebook_reset_cell_state(cell_state)
@@ -617,11 +662,38 @@ local function notebook_kernel_running(buffer_id)
   return status ~= nil and status.running == true
 end
 
+local function notebook_running_cell_index(buffer_id)
+  local state = notebook_modes[buffer_id]
+  if not state then
+    return nil
+  end
+  for cell_index, cell_state in pairs(state.cell_states) do
+    if cell_state.running then
+      return cell_index
+    end
+  end
+  return nil
+end
+
+local function notebook_run_is_stale(buffer_id, stale_seconds)
+  local state = notebook_modes[buffer_id]
+  if not state then
+    return false
+  end
+  local running_index = notebook_running_cell_index(buffer_id)
+  if not running_index then
+    return false
+  end
+  local last_activity = state.last_protocol_activity_at or 0
+  return os.time() - last_activity >= stale_seconds
+end
+
 local function notebook_handle_protocol_event(buffer_id, event_name, cell_index, payload)
   local state = notebook_modes[buffer_id]
   if not state then
     return
   end
+  state.last_protocol_activity_at = os.time()
   local cell_state = state.cell_states[cell_index]
 
   if event_name == "ready" then
@@ -722,15 +794,24 @@ local function notebook_consume_protocol(buffer_id, chunk)
   end
 end
 
-local function notebook_kernel_command()
+local function notebook_kernel_command(buffer_id)
+  local kind = notebook_state_kind(buffer_id)
+  local helper_path = notebook_helper_path(kind)
+  if not medit.file_exists(helper_path) then
+    return nil, "Missing notebook helper: " .. helper_path
+  end
+
+  if kind == "sage" then
+    local sage = notebook_sage_executable()
+    if not sage then
+      return nil, "Missing executable: sage"
+    end
+    return sage .. " -python -u " .. medit.shell_quote(helper_path)
+  end
+
   local python = notebook_python_executable()
   if not python then
     return nil, "Missing executable: python3/python"
-  end
-
-  local helper_path = notebook_python_helper_path()
-  if not medit.file_exists(helper_path) then
-    return nil, "Missing notebook helper: " .. helper_path
   end
 
   return python .. " -u " .. medit.shell_quote(helper_path)
@@ -742,7 +823,7 @@ local function notebook_start_kernel(buffer_id)
     return true
   end
 
-  local command, err = notebook_kernel_command()
+  local command, err = notebook_kernel_command(buffer_id)
   if not command then
     medit.set_status(err)
     return false
@@ -756,7 +837,7 @@ local function notebook_start_kernel(buffer_id)
     end,
     on_stderr = function(_, text)
       notebook_append_output(buffer_id, text)
-      medit.set_status("Notebook kernel stderr")
+      medit.set_status(string.format("Notebook %s kernel stderr", notebook_kernel_label(buffer_id)))
     end,
     on_exit = function(_, exit_code)
       local current = notebook_modes[buffer_id]
@@ -769,7 +850,7 @@ local function notebook_start_kernel(buffer_id)
         cell_state.running = false
       end
       notebook_refresh_annotations(buffer_id)
-      medit.set_status(string.format("Notebook kernel exited (%d)", exit_code))
+      medit.set_status(string.format("Notebook %s kernel exited (%d)", notebook_kernel_label(buffer_id), exit_code))
     end
   })
   return true
@@ -783,6 +864,7 @@ local function notebook_stop_kernel(buffer_id)
   end
   state.queued_cells = {}
   state.protocol_buffer = ""
+  state.last_protocol_activity_at = 0
 end
 
 local function notebook_submit_cell(buffer_id, cell)
@@ -801,6 +883,7 @@ local function notebook_submit_cell(buffer_id, cell)
 
   notebook_append_output(buffer_id, string.format("\n# Cell %d\n", cell.index))
   notebook_reset_cell_state(state.cell_states[cell.index])
+  state.last_protocol_activity_at = os.time()
   local ok = medit.process_send(
     state.kernel_process_id,
     string.format("MEDIT exec %d %d\n%s", cell.index, #cell.code, cell.code)
@@ -828,6 +911,11 @@ end
 local function notebook_python_on()
   local buffer_id = current_buffer_id()
   local state = notebook_state_for_buffer(buffer_id)
+  if state.enabled and state.kind ~= "python" then
+    set_annotation_source(buffer_id, notebook_annotation_source(buffer_id), nil)
+    notebook_stop_kernel(buffer_id)
+  end
+  state.kind = "python"
   state.enabled = true
   notebook_parse_cells(buffer_id)
   notebook_refresh_annotations(buffer_id)
@@ -837,24 +925,60 @@ local function notebook_python_on()
   medit.set_status("Notebook Python on")
 end
 
+local function notebook_sage_on()
+  local buffer_id = current_buffer_id()
+  local state = notebook_state_for_buffer(buffer_id)
+  if state.enabled and state.kind ~= "sage" then
+    set_annotation_source(buffer_id, notebook_annotation_source(buffer_id), nil)
+    notebook_stop_kernel(buffer_id)
+  end
+  state.kind = "sage"
+  state.enabled = true
+  notebook_parse_cells(buffer_id)
+  notebook_refresh_annotations(buffer_id)
+  if not notebook_start_kernel(buffer_id) then
+    return
+  end
+  medit.set_status("Notebook Sage on")
+end
+
 local function notebook_python_off()
   local buffer_id = current_buffer_id()
   local state = notebook_modes[buffer_id]
   if not state then
     return
   end
+  local source_name = notebook_annotation_source(buffer_id)
   notebook_stop_kernel(buffer_id)
   notebook_modes[buffer_id] = nil
-  set_annotation_source(buffer_id, "notebook-python", nil)
-  medit.set_status("Notebook Python off")
+  set_annotation_source(buffer_id, source_name, nil)
+  medit.set_status("Notebook off")
+end
+
+local function notebook_sage_off()
+  notebook_python_off()
 end
 
 local function notebook_run_cell()
   local buffer_id = current_buffer_id()
   local state = notebook_state_for_buffer(buffer_id)
   if not state.enabled then
-    medit.set_status("Notebook Python is off")
+    medit.set_status("Notebook is off")
     return
+  end
+  local running_index = notebook_running_cell_index(buffer_id)
+  if running_index then
+    if notebook_run_is_stale(buffer_id, 5) then
+      notebook_stop_kernel(buffer_id)
+      for _, cell_state in pairs(state.cell_states) do
+        cell_state.running = false
+      end
+      notebook_refresh_annotations(buffer_id)
+      medit.set_status("Notebook kernel restarted after stalled run")
+    else
+      medit.set_status("Notebook run already in progress")
+      return
+    end
   end
   if #state.queued_cells > 0 then
     medit.set_status("Notebook run already in progress")
@@ -871,8 +995,22 @@ local function notebook_run_all()
   local buffer_id = current_buffer_id()
   local state = notebook_state_for_buffer(buffer_id)
   if not state.enabled then
-    medit.set_status("Notebook Python is off")
+    medit.set_status("Notebook is off")
     return
+  end
+  local running_index = notebook_running_cell_index(buffer_id)
+  if running_index then
+    if notebook_run_is_stale(buffer_id, 5) then
+      notebook_stop_kernel(buffer_id)
+      for _, cell_state in pairs(state.cell_states) do
+        cell_state.running = false
+      end
+      notebook_refresh_annotations(buffer_id)
+      medit.set_status("Notebook kernel restarted after stalled run")
+    else
+      medit.set_status("Notebook run already in progress")
+      return
+    end
   end
   if #state.queued_cells > 0 then
     medit.set_status("Notebook run already in progress")
@@ -899,7 +1037,7 @@ local function notebook_clear_output()
   local buffer_id = current_buffer_id()
   local state = notebook_modes[buffer_id]
   if not state then
-    medit.set_status("Notebook Python is off")
+    medit.set_status("Notebook is off")
     return
   end
   notebook_clear_output_buffer(buffer_id)
@@ -914,12 +1052,12 @@ local function notebook_restart_kernel()
   local buffer_id = current_buffer_id()
   local state = notebook_modes[buffer_id]
   if not state or not state.enabled then
-    medit.set_status("Notebook Python is off")
+    medit.set_status("Notebook is off")
     return
   end
   notebook_stop_kernel(buffer_id)
   if notebook_start_kernel(buffer_id) then
-    medit.set_status("Notebook kernel restarted")
+    medit.set_status(string.format("Notebook %s kernel restarted", notebook_kernel_label(buffer_id)))
   end
 end
 
@@ -927,7 +1065,7 @@ local function notebook_show_output_command()
   local buffer_id = current_buffer_id()
   local state = notebook_modes[buffer_id]
   if not state or not state.enabled then
-    medit.set_status("Notebook Python is off")
+    medit.set_status("Notebook is off")
     return
   end
   notebook_show_output(buffer_id)
@@ -949,8 +1087,14 @@ end
 
 local function notebook_python_health()
   local python = notebook_python_executable() and "yes" or "no"
-  local helper = medit.file_exists(notebook_python_helper_path()) and "yes" or "no"
+  local helper = medit.file_exists(notebook_helper_path("python")) and "yes" or "no"
   return string.format("python=%s helper=%s", python, helper)
+end
+
+local function notebook_sage_health()
+  local sage = notebook_sage_executable() and "yes" or "no"
+  local helper = medit.file_exists(notebook_helper_path("sage")) and "yes" or "no"
+  return string.format("sage=%s helper=%s", sage, helper)
 end
 
 local function dirname(path)
@@ -1370,6 +1514,8 @@ medit.register_command("calc-mode-toggle", toggle_calc_mode)
 medit.register_command("calc-refresh", calc_refresh)
 medit.register_command("notebook-python-on", notebook_python_on)
 medit.register_command("notebook-python-off", notebook_python_off)
+medit.register_command("notebook-sage-on", notebook_sage_on)
+medit.register_command("notebook-sage-off", notebook_sage_off)
 medit.register_command("notebook-run-cell", notebook_run_cell)
 medit.register_command("notebook-run-all", notebook_run_all)
 medit.register_command("notebook-clear-output", notebook_clear_output)
@@ -1382,6 +1528,7 @@ medit.register_health_check("ai", ai_health)
 medit.register_health_check("make", make_health)
 medit.register_health_check("calc-mode", calc_mode_health)
 medit.register_health_check("notebook-python", notebook_python_health)
+medit.register_health_check("notebook-sage", notebook_sage_health)
 medit.on("document_opened", function(event)
   refresh_theme_preview()
   refresh_calc_mode(event)
